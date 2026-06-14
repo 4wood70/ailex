@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#060A12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>AILEX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#060A12; --panel:#0C1322; --panel2:#101A2E; --line:#1A2540;
+  --ink:#E8EDF7; --dim:#8B97AE; --faint:#5A6680;
+  --blue:#2F7DF6; --cyan:#41B8FF; --orange:#FF8A3C; --violet:#8A5CFF;
+  --ok:#3DD68C; --err:#FF5C6C;
+  --grad:linear-gradient(135deg,#41B8FF 0%,#8A5CFF 48%,#FF8A3C 100%);
+  --r:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  font-size:16px; line-height:1.5; overflow-x:hidden;
+}
+body::before{ /* circuit atmosphere */
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(600px 360px at 85% -5%, rgba(255,138,60,.07), transparent 60%),
+    radial-gradient(700px 420px at -10% 10%, rgba(47,125,246,.10), transparent 60%),
+    radial-gradient(500px 500px at 50% 110%, rgba(138,92,255,.06), transparent 60%);
+}
+#app{position:relative;z-index:1;max-width:480px;margin:0 auto;min-height:100%;
+  display:flex;flex-direction:column;padding:0 18px calc(24px + env(safe-area-inset-bottom))}
+.topbar{display:flex;align-items:center;gap:10px;padding:18px 2px 14px;position:sticky;top:0;
+  background:linear-gradient(var(--bg) 78%,transparent);z-index:5}
+.logo-badge{width:34px;height:34px;border-radius:9px;background:#0B1020;border:1px solid var(--line);
+  display:grid;place-items:center;flex:none;box-shadow:0 0 18px rgba(65,184,255,.18)}
+.logo-badge span{font-family:'Chakra Petch';font-weight:700;font-size:19px;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.logo-word{font-family:'Chakra Petch';font-weight:700;font-size:21px;letter-spacing:.12em}
+.logo-word b{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.top-status{margin-left:auto;font-size:11px;color:var(--faint);letter-spacing:.14em;text-transform:uppercase;
+  font-family:'Chakra Petch'}
+.top-status.online{color:var(--ok)}
+.back-btn{background:none;border:none;color:var(--dim);font-size:22px;padding:4px 10px 4px 0;cursor:pointer}
+.screen{flex:1;display:flex;flex-direction:column;animation:fadeUp .28s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+h1{font-family:'Chakra Petch';font-weight:600;font-size:22px;line-height:1.3;margin-bottom:6px}
+h2{font-family:'Chakra Petch';font-weight:600;font-size:17px;margin-bottom:4px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:18px}
+.eyebrow{font-family:'Chakra Petch';font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);margin-bottom:8px}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:14px}
+.card.glow{box-shadow:0 0 0 1px rgba(65,184,255,.12),0 8px 40px rgba(47,125,246,.10)}
+
+.btn{display:block;width:100%;border:none;border-radius:13px;padding:15px 18px;font-size:16px;font-weight:600;
+  font-family:'Inter';cursor:pointer;text-align:center;transition:transform .08s ease,filter .15s}
+.btn:active{transform:scale(.985)}
+.btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.btn-primary{background:linear-gradient(135deg,#2F7DF6,#1E5FD0);color:#fff;
+  box-shadow:0 4px 24px rgba(47,125,246,.35),inset 0 1px 0 rgba(255,255,255,.18)}
+.btn-accent{background:linear-gradient(135deg,#FF9A4D,#F0742A);color:#23150A;
+  box-shadow:0 4px 24px rgba(255,138,60,.28)}
+.btn-ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+.btn-row{display:flex;gap:10px}.btn-row .btn{flex:1}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.btn + .btn{margin-top:10px}
+.btn-mini{display:inline-block;width:auto;padding:8px 14px;font-size:13px;border-radius:9px}
+
+label.fld{display:block;margin-bottom:14px}
+label.fld span{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+input[type=text],input[type=number],input[type=password],select,textarea{
+  width:100%;background:#0A1120;border:1px solid var(--line);border-radius:11px;color:var(--ink);
+  padding:13px 14px;font-size:16px;font-family:'Inter'}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(47,125,246,.18)}
+
+/* mastery ring (signature) */
+.ring-wrap{display:grid;place-items:center;padding:10px 0 6px}
+.ring{position:relative;width:210px;height:210px}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring .core{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.ring .core .lbl{font-size:12px;color:var(--dim);letter-spacing:.08em}
+.ring .core .pct{font-family:'Chakra Petch';font-weight:700;font-size:46px;line-height:1.05;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ring .ticks{position:absolute;inset:-9px;border-radius:50%;
+  background:repeating-conic-gradient(rgba(91,113,160,.5) 0 .6deg,transparent .6deg 6deg);
+  -webkit-mask:radial-gradient(circle, transparent 64%, #000 65%, #000 68%, transparent 69%);
+  mask:radial-gradient(circle, transparent 64%, #000 65%, #000 68%, transparent 69%)}
+
+/* segmented progress (like screenshot) */
+.segbar{display:flex;gap:4px;margin:10px 0 4px}
+.segbar i{flex:1;height:9px;border-radius:3px;background:#16203A}
+.segbar i.on{background:linear-gradient(90deg,var(--cyan),var(--blue))}
+.segbar i.on.hot{background:linear-gradient(90deg,var(--orange),#FFB071)}
+
+.menu-list{display:flex;flex-direction:column;gap:10px}
+.menu-item{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;padding:15px 16px;cursor:pointer;text-align:left;width:100%;color:var(--ink);font-family:'Inter'}
+.menu-item:active{transform:scale(.985)}
+.menu-item .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:18px;flex:none;
+  background:#0A1120;border:1px solid var(--line)}
+.menu-item .t b{display:block;font-size:15px;font-weight:600}
+.menu-item .t small{color:var(--dim);font-size:12.5px}
+.menu-item .chev{margin-left:auto;color:var(--faint)}
+
+.chiplist{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}
+.chip{font-size:12.5px;color:var(--cyan);background:rgba(65,184,255,.08);border:1px solid rgba(65,184,255,.25);
+  border-radius:999px;padding:5px 11px}
+.chip.warn{color:var(--orange);background:rgba(255,138,60,.08);border-color:rgba(255,138,60,.3)}
+
+/* drills */
+.drill-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+.drill-head .n{font-family:'Chakra Petch';font-size:12px;letter-spacing:.14em;color:var(--cyan)}
+.drill-head .ph{font-size:12px;color:var(--faint)}
+.task-text{font-size:18px;font-weight:600;margin:8px 0 14px;line-height:1.45}
+.opt{display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  border-radius:12px;padding:14px;font-size:16px;margin-bottom:9px;cursor:pointer;font-family:'Inter'}
+.opt:active{transform:scale(.99)}
+.opt.right{border-color:var(--ok);background:rgba(61,214,140,.10)}
+.opt.wrong{border-color:var(--err);background:rgba(255,92,108,.10)}
+.feedback{border-radius:12px;padding:13px 14px;font-size:14.5px;margin-top:10px;display:none;line-height:1.55}
+.feedback.ok{display:block;background:rgba(61,214,140,.10);border:1px solid rgba(61,214,140,.35)}
+.feedback.bad{display:block;background:rgba(255,92,108,.08);border:1px solid rgba(255,92,108,.32)}
+
+.vocab-row{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid var(--line)}
+.vocab-row:last-child{border-bottom:none}
+.vocab-row .emoji{font-size:24px;flex:none}
+.vocab-row .w b{font-size:16.5px}
+.vocab-row .w .tr{color:var(--orange);font-size:13px;margin-left:6px}
+.vocab-row .w small{display:block;color:var(--dim);font-size:13.5px}
+.tts{margin-left:auto;background:#0A1120;border:1px solid var(--line);color:var(--cyan);width:38px;height:38px;
+  border-radius:10px;font-size:16px;cursor:pointer;flex:none}
+
+/* quest */
+.scene{background:linear-gradient(180deg,var(--panel),#0A101E);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px;margin-bottom:12px}
+.scene .target{font-size:17px;line-height:1.6;margin-bottom:8px}
+.scene .hint{color:var(--dim);font-size:13.5px;font-style:italic}
+.must{margin:8px 0}
+
+/* chat (dialogue) */
+.chat{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:6px 0 12px}
+.msg{max-width:84%;padding:11px 14px;border-radius:14px;font-size:15.5px;line-height:1.5}
+.msg.ai{background:var(--panel);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+.msg.ai small{display:block;color:var(--dim);font-size:12.5px;margin-top:5px}
+.msg.user{background:linear-gradient(135deg,#2F7DF6,#1E5FD0);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.chat-input{display:flex;gap:8px;align-items:center;padding-top:8px;border-top:1px solid var(--line)}
+.chat-input input{flex:1}
+.mic{width:50px;height:50px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);color:var(--ink);
+  font-size:20px;cursor:pointer;flex:none}
+.mic.rec{background:var(--err);border-color:var(--err);animation:pulse 1s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 10px rgba(255,92,108,.15)}}
+
+/* toast */
+#toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:50;
+  background:#0E1A12;border:1px solid rgba(61,214,140,.4);color:#BFF3DA;padding:11px 20px;border-radius:999px;
+  font-size:14.5px;transition:.3s;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%)}
+#toast.neutral{background:var(--panel2);border-color:var(--line);color:var(--ink)}
+
+/* loader */
+.loader{display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px 0;color:var(--dim);font-size:14px}
+.spin{width:46px;height:46px;border-radius:50%;border:3px solid #1A2540;border-top-color:var(--cyan);
+  border-right-color:var(--orange);animation:rot .9s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+.kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.kpi .box{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px 14px}
+.kpi .box b{font-family:'Chakra Petch';font-size:21px;display:block}
+.kpi .box small{color:var(--dim);font-size:12px}
+.note{font-size:13px;color:var(--faint);line-height:1.55;margin-top:10px}
+.divider{height:1px;background:var(--line);margin:14px 0}
+.steps-guide{counter-reset:s;margin:10px 0}
+.steps-guide p{position:relative;padding-left:34px;margin-bottom:12px;font-size:14.5px;color:var(--ink)}
+.steps-guide p::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:1px;width:23px;height:23px;
+  border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);
+  font-family:'Chakra Petch';font-size:12px;display:grid;place-items:center}
+a{color:var(--cyan)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar" id="topbar">
+    <button class="back-btn" id="btnBack" style="display:none" aria-label="Назад">‹</button>
+    <div class="logo-badge"><span>A</span></div>
+    <div class="logo-word">AI<b>LEX</b></div>
+    <div class="top-status" id="sysStatus">SYSTEM ONLINE</div>
+  </div>
+  <div class="screen" id="screen"></div>
+</div>
+<div id="toast"></div>
+<script>
+/* ===================================================================
+   AILEX 4.1 — реализация методической конституции.
+   Принципы: логика → приложение (state machine), контент → Gemini,
+   хранилище → изолированный модуль Storage (сейчас локально + экспорт
+   JSON «AILEX_StatusDB»; слой подменяется на Google Sheets без
+   изменения остального кода). Gemini не знает о базе и не пишет в неё.
+   =================================================================== */
+"use strict";
+/* ---------- утилиты ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today = () => { const d = new Date(); return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getFullYear()).slice(2); };
+const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/[.,!?;:«»"'’\-–—()]/g,' ').replace(/\s+/g,' ').trim()
+  .replace(/ß/g,'ss');
+const shuffle = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+const pick = (a,n) => shuffle(a).slice(0,n);
+
+let toastTimer = null;
+function toast(msg, neutral) {
+  const t = $('#toast'); t.textContent = msg;
+  t.className = neutral ? 'neutral show' : 'show';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ---------- языки ---------- */
+const LANGS = [
+  {c:'ru', n:'Русский',     bcp:'ru-RU'},
+  {c:'en', n:'English',     bcp:'en-US'},
+  {c:'de', n:'Deutsch',     bcp:'de-DE'},
+  {c:'fr', n:'Français',    bcp:'fr-FR'},
+  {c:'es', n:'Español',     bcp:'es-ES'},
+  {c:'it', n:'Italiano',    bcp:'it-IT'},
+  {c:'pt', n:'Português',   bcp:'pt-PT'},
+  {c:'pl', n:'Polski',      bcp:'pl-PL'},
+  {c:'tr', n:'Türkçe',      bcp:'tr-TR'},
+  {c:'ar', n:'العربية',     bcp:'ar-SA'},
+  {c:'zh', n:'中文',         bcp:'zh-CN'},
+  {c:'ja', n:'日本語',       bcp:'ja-JP'},
+  {c:'ko', n:'한국어',       bcp:'ko-KR'},
+  {c:'uk', n:'Українська',  bcp:'uk-UA'},
+  {c:'he', n:'עברית',       bcp:'he-IL'},
+];
+const langName = c => (LANGS.find(l=>l.c===c)||{}).n || c;
+const langBcp  = c => (LANGS.find(l=>l.c===c)||{}).bcp || c;
+
+/* ---------- баланс лексики по CEFR (раздел 5.0, бытовое/интересы) ---------- */
+const SURVIVAL_SHARE = { A1:0.40, A2:0.35, B1:0.30, B2:0.25, C1:0.20, C2:0.20 };
+
+/* =====================================================================
+   STORAGE — изолированный слой хранения (раздел 2.0–2.4).
+   Сейчас: локальная база устройства + экспорт/импорт файла
+   «AILEX_StatusDB.json». Замена на Google Sheets (OAuth drive.file)
+   меняет ТОЛЬКО этот объект — остальной код о хранилище не знает.
+   Структура повторяет четыре листа: Профиль / Прогресс / Словарь / Аналитика.
+   ===================================================================== */
+const Storage = {
+  DB_KEY: 'AILEX_StatusDB',
+  API_KEY: 'AILEX_GEMINI_KEY',
+  load()  { try { return JSON.parse(localStorage.getItem(this.DB_KEY)); } catch(e){ return null; } },
+  save(d) { localStorage.setItem(this.DB_KEY, JSON.stringify(d)); },
+  wipe()  { localStorage.removeItem(this.DB_KEY); },
+  getKey(){ return localStorage.getItem(this.API_KEY) || ''; },
+  setKey(k){ localStorage.setItem(this.API_KEY, k.trim()); },
+  newDB(profile) {
+    return {
+      meta: { app:'AILEX', schema:'4.1', created: today() },
+      profile,                       // лист «Профиль» (6 полей, раздел 2.2)
+      progress: [],                  // лист «Прогресс» (раздел 2.3)
+      vocab: [],                     // лист «Словарь» (раздел 2.3-С) = KNOWN_VOCAB
+      analytics: [],                 // лист «Аналитика» (раздел 2.6)
+      nextStage: '',                 // код следующего этапа
+      reviewQueue: [],               // очередь повторения (трудные слова)
+      examAttempts: {},              // попытки экзаменов по уровню
+    };
+  },
+  exportFile() {
+    const blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'AILEX_StatusDB.json';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  },
+  importFile(file, cb) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        if (!d.profile || !Array.isArray(d.vocab)) throw 0;
+        Storage.save(d); cb(true);
+      } catch(e){ cb(false); }
+    };
+    r.readAsText(file);
+  }
+};
+
+let DB = null;
+
+/* =====================================================================
+   GEMINI — единственная роль: язык. Строгий JSON-контракт (раздел 2.5).
+   Модель не знает о базе, не пишет в неё, получает задание на один шаг.
+   ===================================================================== */
+const Gemini = {
+  MODELS: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+  SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
+        + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
+        + 'Все пояснения для ученика — строго на языке native_lang. Жёстко держи уровень CEFR. Никакого оффтопа.',
+  async validateKey() {
+    // Простой GET к списку моделей: status 400/403 = плохой ключ,
+    // TypeError (Failed to fetch) = блокировка сети/просмотрщика, а не ключ.
+    const key = Storage.getKey();
+    if (!key) throw new Error('NO_KEY');
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+    if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    return true;
+  },
+  async call(contract, schema) {
+    const key = Storage.getKey();
+    if (!key) throw new Error('NO_KEY');
+    const body = {
+      systemInstruction: { parts: [{ text: this.SYSTEM }] },
+      contents: [{ role:'user', parts: [{ text:
+        'ЗАДАНИЕ (строгий контракт):\n' + JSON.stringify(contract) +
+        '\n\nСХЕМА ОТВЕТА (верни ровно такой JSON):\n' + schema }] }],
+      generationConfig: { temperature: 0.7, responseMimeType: 'application/json' }
+    };
+    let lastErr = null;
+    for (const m of this.MODELS) {
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
+          { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
+        if (!r.ok) { lastErr = new Error('HTTP '+r.status); continue; }
+        const j = await r.json();
+        const txt = (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
+        const clean = txt.replace(/```json|```/g,'').trim();
+        return JSON.parse(clean);
+      } catch(e) {
+        if (String(e.message).startsWith('KEY:')) throw e;
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('GEMINI_FAIL');
+  }
+};
+
+/* ---------- TTS / STT (раздел 5.0 «Чтение и звучание», 5.B) ---------- */
+function speak(text, langCode) {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = langBcp(langCode); u.rate = 0.92;
+    speechSynthesis.speak(u);
+  } catch(e){}
+}
+function makeRecognizer(langCode, onResult, onEnd) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const r = new SR();
+  r.lang = langBcp(langCode); r.interimResults = false; r.maxAlternatives = 1;
+  r.onresult = e => onResult(e.results[0][0].transcript);
+  r.onend = onEnd; r.onerror = onEnd;
+  return r;
+}
+
+/* ---------- навигация ---------- */
+const Screen = {
+  stack: [],
+  show(html, { back=null } = {}) {
+    const s = $('#screen');
+    s.innerHTML = html;
+    const b = $('#btnBack');
+    b.style.display = back ? '' : 'none';
+    b.onclick = back || null;
+    window.scrollTo(0,0);
+  },
+  loader(msg) {
+    this.show(`<div class="loader"><div class="spin"></div><div>${esc(msg||'Запрос к Gemini…')}</div></div>`);
+  }
+};
+
+/* ---------- коды этапов (раздел 2.1, 7) ---------- */
+const LEVELS = ['A1','A2','B1','B2','C1','C2'];
+const LESSONS_PER_SUB = 25;          // Checkpoint после 25, Final после 50
+const EXAM_PASS = 0.85;              // порог 85%
+function parseCode(code){ const m = code.match(/^([ABC][12])\.(\d)\.(\d+)$/); return m ? {lvl:m[1], sub:+m[2], n:+m[3]} : null; }
+function fmtCode(lvl,sub,n){ return `${lvl}.${sub}.${String(n).padStart(2,'0')}`; }
+function nextAfterLesson(code) {
+  const p = parseCode(code); if (!p) return code;
+  if (p.n >= LESSONS_PER_SUB) return `EXAM_${p.lvl}.${p.sub}`;     // экзамен подуровня
+  return fmtCode(p.lvl, p.sub, p.n+1);
+}
+function nextAfterExamPass(examCode) {
+  const m = examCode.match(/^EXAM_([ABC][12])\.(\d)$/); if (!m) return 'A1.1.01';
+  const lvl = m[1], sub = +m[2];
+  if (sub === 1) return fmtCode(lvl, 2, 1);
+  const i = LEVELS.indexOf(lvl);
+  return fmtCode(LEVELS[Math.min(i+1, LEVELS.length-1)], 1, 1);
+}
+function masteryPercent() {
+  const a = DB?.analytics || [];
+  if (!a.length) return 0;
+  const last = a.slice(-5);
+  return Math.round(last.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/last.length*100);
+}
+
+/* =====================================================================
+   BOOT SEQUENCE (раздел 3)
+   ===================================================================== */
+function boot() {
+  DB = Storage.load();
+  if (!Storage.getKey()) return keyWizard();
+  if (!DB || !DB.profile)  return onboardingIntro();
+  mainMenu();
+}
+
+/* ---------- раздел 0: мастер получения ключа Gemini ---------- */
+function keyWizard(afterFail) {
+  Screen.show(`
+    <div class="eyebrow">Шаг 1 из 1 · делается один раз</div>
+    <h1>Ключ доступа к Gemini</h1>
+    <p class="sub">Чтобы AILEX мог учить вас, нужен бесплатный ключ Gemini API. Это займёт около минуты.${afterFail?'<br><b style="color:var(--err)">Прежний ключ не работает — получите или вставьте новый.</b>':''}</p>
+    <div class="card glow">
+      <div class="steps-guide">
+        <p>Нажмите «Получить ключ» — откроется Google AI Studio (войдите в свой Google-аккаунт, если попросит).</p>
+        <p>Нажмите там «Create API key» — ключ создаётся в один-два тапа.</p>
+        <p>Скопируйте ключ и вставьте его в поле ниже. Больше вы его не увидите — он хранится на устройстве.</p>
+      </div>
+      <button class="btn btn-ghost" onclick="window.open('https://aistudio.google.com/app/apikey','_blank')">Получить ключ в Google AI Studio ↗</button>
+      <div class="divider"></div>
+      <label class="fld"><span>Вставьте ключ API</span>
+        <input type="password" id="apiKeyInput" placeholder="AIza..." autocomplete="off">
+      </label>
+      <button class="btn btn-primary" id="saveKey">Сохранить и продолжить</button>
+      <p class="note">Ключ привязан к вашему аккаунту Google и оплачивается вами (бесплатной квоты достаточно для занятий). AILEX хранит его только на этом устройстве.</p>
+    </div>`);
+  $('#saveKey').onclick = async () => {
+    const k = $('#apiKeyInput').value.trim();
+    if (k.length < 20) return toast('Похоже, это не ключ — проверьте', true);
+    Storage.setKey(k);
+    Screen.loader('Проверяю ключ…');
+    try {
+      await Gemini.validateKey();
+      toast('Ключ работает ✓');
+      boot();
+    } catch(e) {
+      if (String(e.message).startsWith('KEY:')) { toast('Ключ не принят сервером Google', true); keyWizard(true); }
+      else { networkBlocked(); }   // не ключ, а доступ к сети
+    }
+  };
+}
+
+/* Экран при сетевом сбое: чаще всего файл открыт во встроенном
+   просмотрщике, который блокирует запросы к Google. */
+function networkBlocked() {
+  Screen.show(`
+    <div class="eyebrow" style="color:var(--orange)">Нет доступа к Gemini</div>
+    <h1>Похоже, заблокирована сеть</h1>
+    <p class="sub">Ключ сохранён, но запрос к серверам Google не прошёл. Чаще всего так бывает, когда файл открыт во встроенном просмотрщике приложения.</p>
+    <div class="card glow">
+      <div class="steps-guide">
+        <p>Скачайте AILEX.html на телефон («Поделиться» → «Сохранить в Файлы»).</p>
+        <p>Откройте «Файлы» или «Загрузки» и тапните по AILEX.html.</p>
+        <p>Выберите «Открыть с помощью» → <b>Chrome</b>. В Chrome связь с Gemini заработает.</p>
+      </div>
+      <p class="note">Для микрофона и полной надёжности файл можно выложить на бесплатный хостинг (например, GitHub Pages) — тогда адрес будет начинаться с https://.</p>
+    </div>
+    <button class="btn btn-primary" id="retry">Проверить ещё раз</button>
+    <button class="btn btn-ghost" id="anyway">Сохранить ключ и продолжить без проверки</button>`);
+  $('#retry').onclick = async () => {
+    Screen.loader('Проверяю связь…');
+    try { await Gemini.validateKey(); toast('Ключ работает ✓'); boot(); }
+    catch(e) { if (String(e.message).startsWith('KEY:')) { toast('Ключ не принят', true); keyWizard(true); } else networkBlocked(); }
+  };
+  $('#anyway').onclick = () => { toast('Ключ сохранён', true); boot(); };
+}
+
+/* =====================================================================
+   ОНБОРДИНГ (раздел 4): анкета → placement-тест → создание базы
+   ===================================================================== */
+function onboardingIntro() {
+  Screen.show(`
+    <div class="eyebrow">Новый профиль</div>
+    <h1>Здравствуйте! Я — AILEX.</h1>
+    <p class="sub">Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.</p>
+    <div class="card glow">
+      <p style="font-size:14.5px;color:var(--dim);line-height:1.6">Прогресс сохраняется автоматически в базу <b style="color:var(--ink)">AILEX_StatusDB</b> — вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.</p>
+    </div>
+    <button class="btn btn-primary" id="go">Начать</button>`);
+  $('#go').onclick = () => askProfile(0, {});
+}
+
+const PROFILE_Q = [
+  { k:'name',       q:'Как вас зовут?',                  type:'text',   ph:'Имя' },
+  { k:'nativeLang', q:'Ваш родной язык?',                type:'lang' },
+  { k:'targetLang', q:'Какой язык будем изучать?',       type:'lang' },
+  { k:'age',        q:'Сколько вам лет?',                type:'number', ph:'Возраст' },
+  { k:'interests',  q:'Ваши интересы и сфера деятельности?', type:'area',
+    ph:'Например: наладка станков с ЧПУ, столярное дело, рыбалка…',
+    note:'Самое важное поле: на нём строятся все квесты и рассказы.' },
+];
+function askProfile(i, acc) {
+  if (i >= PROFILE_Q.length) return placementIntro(acc);
+  const q = PROFILE_Q[i];
+  let field = '';
+  if (q.type === 'lang') {
+    field = `<select id="val">` + LANGS.map(l=>`<option value="${l.c}">${esc(l.n)}</option>`).join('') + `</select>`;
+  } else if (q.type === 'area') {
+    field = `<textarea id="val" rows="3" placeholder="${esc(q.ph)}"></textarea>`;
+  } else {
+    field = `<input type="${q.type}" id="val" placeholder="${esc(q.ph||'')}">`;
+  }
+  Screen.show(`
+    <div class="eyebrow">Анкета · ${i+1} / ${PROFILE_Q.length}</div>
+    <h1>${esc(q.q)}</h1>
+    ${q.note?`<p class="sub">${esc(q.note)}</p>`:'<div style="height:6px"></div>'}
+    <div class="card">${field}</div>
+    <button class="btn btn-primary" id="next">Далее</button>`,
+    { back: i>0 ? ()=>askProfile(i-1, acc) : null });
+  if (q.type==='lang' && q.k==='targetLang') $('#val').value = acc.nativeLang==='en' ? 'de' : 'en';
+  $('#next').onclick = () => {
+    const v = $('#val').value.trim();
+    if (!v) return toast('Заполните поле', true);
+    if (q.k==='targetLang' && v===acc.nativeLang) return toast('Целевой язык должен отличаться от родного', true);
+    acc[q.k] = q.type==='number' ? +v : v;
+    askProfile(i+1, acc);
+  };
+}
+
+/* ---------- Placement Test (раздел 4, шаг 2) ---------- */
+function placementIntro(profile) {
+  Screen.show(`
+    <div class="eyebrow">Шаг 2</div>
+    <h1>Тест уровня</h1>
+    <p class="sub">Несколько вопросов на ${esc(langName(profile.targetLang))} — от простых к сложным. Не знаете — нажимайте «Не знаю», это нормально: тест завершится раньше.</p>
+    <button class="btn btn-primary" id="go">Начать тест</button>
+    <button class="btn btn-ghost" id="skip">Я новичок — начать с нуля (A1)</button>`);
+  $('#go').onclick = () => runPlacement(profile);
+  $('#skip').onclick = () => finishOnboarding(profile, 'A1');
+}
+async function runPlacement(profile) {
+  Screen.loader('Готовлю вопросы теста…');
+  let qs;
+  try {
+    const resp = await Gemini.call({
+      task:'placement_test', target_lang: profile.targetLang, native_lang: profile.nativeLang,
+      levels:['A1','A2','B1','B2','C1'], per_level: 2
+    },
+    '{"questions":[{"level":"A1","question":"вопрос на целевом языке (выбор правильного варианта)","options":["в1","в2","в3","в4"],"correct_index":0}]} — ровно по 2 вопроса на уровень, по возрастанию сложности, варианты на целевом языке');
+    qs = resp.questions;
+    if (!Array.isArray(qs) || qs.length < 4) throw 0;
+  } catch(e) { toast('Не удалось получить тест — начнём с A1', true); return finishOnboarding(profile, 'A1'); }
+
+  let idx = 0, wrongAtLevel = {}, passed = {}, stopped = false;
+  const step = () => {
+    if (stopped || idx >= qs.length) return done();
+    const q = qs[idx];
+    const opts = q.options.map((o,i)=>({o,i}));
+    Screen.show(`
+      <div class="eyebrow">Тест уровня · вопрос ${idx+1} / ${qs.length}</div>
+      <div class="card">
+        <div class="drill-head"><span class="n">${esc(q.level)}</span></div>
+        <div class="task-text">${esc(q.question)}</div>
+        ${shuffle(opts).map(x=>`<button class="opt" data-i="${x.i}">${esc(x.o)}</button>`).join('')}
+        <button class="opt" data-i="-1" style="color:var(--dim)">Не знаю</button>
+      </div>`);
+    document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+      const ok = +b.dataset.i === q.correct_index;
+      if (ok) passed[q.level] = (passed[q.level]||0)+1;
+      else {
+        wrongAtLevel[q.level] = (wrongAtLevel[q.level]||0)+1;
+        if (wrongAtLevel[q.level] >= 2) stopped = true;   // досрочное завершение
+      }
+      idx++; step();
+    });
+  };
+  const done = () => {
+    let level = 'A1';
+    for (const L of ['A1','A2','B1','B2','C1']) if ((passed[L]||0) >= 1 && !( (wrongAtLevel[L]||0)>=2 )) level = L; else break;
+    finishOnboarding(profile, level);
+  };
+  step();
+}
+
+/* ---------- Шаг 3: создание базы ---------- */
+function finishOnboarding(profile, cefr) {
+  profile.cefr = cefr;
+  DB = Storage.newDB(profile);
+  DB.nextStage = fmtCode(cefr==='C2'?'C1':cefr, 1, 1);
+  DB.progress.push({ code:'START', date: today(), words:'', next: DB.nextStage, note:'' });
+  Storage.save(DB);
+  toast('Сохранено ✓');
+  Screen.show(`
+    <div class="eyebrow">Профиль создан</div>
+    <h1>Ваш уровень: ${esc(cefr)}</h1>
+    <p class="sub">База AILEX_StatusDB создана. Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.</p>
+    <button class="btn btn-primary" id="go">К главному меню</button>`);
+  $('#go').onclick = mainMenu;
+}
+
+/* =====================================================================
+   ГЛАВНОЕ МЕНЮ (раздел 3.2, ветвь А) — кольцо Overall Mastery как на макете
+   ===================================================================== */
+function ringSVG(pct) {
+  const R = 88, C = 2*Math.PI*R, on = C*pct/100;
+  return `
+  <div class="ring">
+    <div class="ticks"></div>
+    <svg viewBox="0 0 210 210">
+      <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#41B8FF"/><stop offset=".55" stop-color="#2F7DF6"/><stop offset="1" stop-color="#FF8A3C"/>
+      </linearGradient></defs>
+      <circle cx="105" cy="105" r="${R}" fill="none" stroke="#16203A" stroke-width="10"/>
+      <circle cx="105" cy="105" r="${R}" fill="none" stroke="url(#g1)" stroke-width="10"
+        stroke-linecap="round" stroke-dasharray="${on} ${C}" style="filter:drop-shadow(0 0 8px rgba(65,184,255,.5))"/>
+    </svg>
+    <div class="core"><div><div class="lbl">Overall Mastery:</div><div class="pct">${pct}%</div></div></div>
+  </div>`;
+}
+function mainMenu() {
+  DB = Storage.load();
+  const p = DB.profile, pct = masteryPercent();
+  const next = DB.nextStage;
+  const isExam = next.startsWith('EXAM_');
+  const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
+  const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
+  const segs = 10, lit = Math.round(pct/100*segs);
+  Screen.show(`
+    <h1>С возвращением, ${esc(p.name)}!</h1>
+    <p class="sub">${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · уровень ${esc(p.cefr)} · следующий этап: <b style="color:var(--ink)">${esc(next)}</b></p>
+    <div class="card glow">
+      <div class="ring-wrap">${ringSVG(pct)}</div>
+      <div class="segbar">${Array.from({length:segs},(_,i)=>`<i class="${i<lit?(i>=segs-2?'on hot':'on'):''}"></i>`).join('')}</div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)">
+        <span>Слов в словаре: <b style="color:var(--ink)">${words}</b></span>
+        <span>Освоено: <b style="color:var(--ink)">${mastered}</b></span>
+      </div>
+      ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
+    </div>
+    <div class="menu-list">
+      <button class="menu-item" id="mLesson"><span class="ic">🎯</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':'21 дрилл + рассказ-квест'}</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Супер-урок</b><small>Повторение: 80% знакомого + связки</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
+    </div>`);
+  $('#mLesson').onclick = () => isExam ? startExam(next) : startLesson(next);
+  $('#mSuper').onclick  = () => DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
+  $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
+  $('#mDict').onclick   = showDictionary;
+  $('#mSet').onclick    = showSettings;
+}
+
+/* ---------- Словарь (лист 2.3-С) ---------- */
+function showDictionary() {
+  const v = DB.vocab.slice().reverse();
+  Screen.show(`
+    <h1>Словарь</h1>
+    <p class="sub">${v.length} слов · это и есть KNOWN_VOCAB: из него строится повторение и прогресс.</p>
+    <div class="card" style="max-height:62vh;overflow-y:auto">
+      ${v.length ? v.map(w=>`
+        <div class="vocab-row">
+          <span class="emoji">${esc(w.emoji||'•')}</span>
+          <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
+            <small>${esc(w.translation)}${w.irregular_forms?' · '+esc(w.irregular_forms):''}${w.errors>=2?' · ⚠️ трудное':''}</small>
+            ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
+          </span>
+          <button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>
+        </div>`).join('') : '<p class="note">Пока пусто. Слова появятся после первого урока.</p>'}
+    </div>`, { back: mainMenu });
+  document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+}
+
+/* ---------- Настройки ---------- */
+function showSettings() {
+  const p = DB.profile;
+  Screen.show(`
+    <h1>Настройки</h1>
+    <div class="card">
+      <label class="fld"><span>Имя</span><input type="text" id="sName" value="${esc(p.name)}"></label>
+      <label class="fld"><span>Интересы / сфера деятельности</span><textarea id="sInt" rows="2">${esc(p.interests)}</textarea></label>
+      <button class="btn btn-ghost btn-mini" id="sSave">Сохранить профиль</button>
+    </div>
+    <div class="card">
+      <h2>База AILEX_StatusDB</h2>
+      <p class="note" style="margin:4px 0 12px">База хранится на этом устройстве. Выгрузите файл, чтобы перенести прогресс на другой телефон, и загрузите его там же через «Импорт».</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="sExp">Экспорт</button>
+        <button class="btn btn-ghost" id="sImp">Импорт</button>
+      </div>
+      <input type="file" id="sFile" accept="application/json" style="display:none">
+    </div>
+    <div class="card">
+      <h2>Ключ Gemini</h2>
+      <button class="btn btn-ghost btn-mini" id="sKey" style="margin-top:8px">Заменить ключ</button>
+    </div>
+    <button class="btn btn-ghost" id="sReset" style="color:var(--err)">Удалить профиль и начать заново</button>`,
+    { back: mainMenu });
+  $('#sSave').onclick = () => { p.name = $('#sName').value.trim()||p.name; p.interests = $('#sInt').value.trim()||p.interests; Storage.save(DB); toast('Сохранено ✓'); };
+  $('#sExp').onclick = () => Storage.exportFile();
+  $('#sImp').onclick = () => $('#sFile').click();
+  $('#sFile').onchange = e => { if (e.target.files[0]) Storage.importFile(e.target.files[0], ok => { toast(ok?'База загружена ✓':'Файл не похож на AILEX_StatusDB', !ok); if (ok) boot(); }); };
+  $('#sKey').onclick = () => keyWizard();
+  $('#sReset').onclick = () => { if (confirm('Удалить профиль, словарь и весь прогресс на этом устройстве?')) { Storage.wipe(); boot(); } };
+}
+
+/* =====================================================================
+   УРОК — система 21 дрилла (раздел 5). Один дрилл на экран; нельзя
+   перейти дальше, пока текущий не выполнен верно.
+   ===================================================================== */
+let L = null; // состояние текущего урока
+function curCefr(){ const p = parseCode(String(L?.code||'').replace('SUPER_','')); return p ? p.lvl : DB.profile.cefr; }
+
+async function startLesson(code) {
+  const p = DB.profile, lvl = parseCode(code).lvl;
+  Screen.loader('Готовлю урок ' + code + '…');
+  // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
+  const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
+  const known = DB.vocab.map(w => w.term).slice(-300);
+  let words, constructs;
+  try {
+    const r1 = await Gemini.call({
+      task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:p.interests, count:7,
+      split:{ survival: survN, interests: 7 - survN },
+      survival_topics:'ориентирование и транспорт, магазин и покупки, деньги и числа, еда, базовая вежливость, время и даты, здоровье',
+      known_vocab: known,
+      rules:'Исключи слова из known_vocab. Если на этом уровне уместны неправильные глаголы — включи 2 (с формами). Транскрипция — средствами родного языка (native_lang), в квадратных скобках.'
+    },
+    '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","is_irregular":false,"irregular_forms":"вторая/третья форма или пустая строка"}]} — ровно 7 объектов');
+    words = (r1.words||[]).filter(w => w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term))).slice(0,7);
+    if (words.length < 3) throw new Error('FEW_WORDS');
+
+    const r2 = await Gemini.call({
+      task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. Уровень CEFR строго соблюдать.'
+    },
+    '{"items":[{"prompt_native":"Скажи на целевом языке: «...» (формулировка на родном)","expected_target":"эталонная фраза на целевом языке","focus_word":"слово урока"}]} — ровно 9 объектов');
+    constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
+    if (constructs.length < 5) throw new Error('FEW_DRILLS');
+  } catch(e) {
+    if (String(e.message).startsWith('KEY:')) return keyWizard(true);
+    Screen.show(`<h1>Не получилось подготовить урок</h1><p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p><button class="btn btn-primary" id="r">Повторить</button><button class="btn btn-ghost" id="m">В меню</button>`);
+    $('#r').onclick = () => startLesson(code); $('#m').onclick = mainMenu;
+    return;
+  }
+
+  // --- Recap: 7 задач повторения (трудные слова + прошлый урок) ---
+  const recapPool = [];
+  const inQueue = DB.vocab.filter(w => DB.reviewQueue.includes(w.term));
+  const recent  = DB.vocab.slice(-10);
+  [...inQueue, ...recent].forEach(w => { if (!recapPool.some(x=>x.term===w.term)) recapPool.push(w); });
+  const recapItems = DB.vocab.length >= 4 ? pick(recapPool, Math.min(7, recapPool.length)) : [];
+
+  // --- сборка шагов ---
+  const steps = [];
+  recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
+  steps.push({ t:'present' });
+  for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Дрилл ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
+  for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Дрилл ${i+6}/21`, w: words[i % words.length] });
+  constructs.forEach((c,i) => steps.push({ t:'construct', phase:'Construction', n:`Дрилл ${i+12}/21`, c }));
+  steps.push({ t:'quest', n:'Дрилл 21/21 · Final Challenge' });
+
+  L = { code, words, steps, i:0,
+        errors:{ recognition:0, writing:0, construction:0, quest:0 },
+        ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
+        wordErr:{}, firstTryDone:{} };
+  renderStep();
+}
+
+function noteWordError(term) {
+  L.wordErr[term] = (L.wordErr[term]||0) + 1;
+  const v = DB.vocab.find(w => norm(w.term)===norm(term));
+  if (v) {
+    v.errors = (v.errors||0) + 1;
+    v.status = 'на закреплении';
+    if (v.errors >= 2) {
+      if (!DB.reviewQueue.includes(v.term)) DB.reviewQueue.push(v.term);
+      ensureMnemonic(v); // мнемоника — один раз по триггеру (раздел 2.3-М)
+    }
+  }
+}
+/* Мнемоника: уровень 1 (текст + эмодзи) генерируется однократно и хранится.
+   Уровни 2 (схемы) и 3 (Imagen, «пробовать → откат») — направление развития
+   этого прототипа; принцип деградации сохранён в архитектуре. */
+async function ensureMnemonic(v) {
+  if (v.mnemonic || v._mnemoPending) return;
+  v._mnemoPending = true;
+  try {
+    const r = await Gemini.call({ task:'mnemonic', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
+      term:v.term, translation:v.translation, topic:DB.profile.interests },
+      '{"mnemonic":"один яркий чувственный образ-ассоциация на родном языке, 1–2 коротких предложения"}');
+    if (r.mnemonic) { v.mnemonic = r.mnemonic; v.mnemo_date = today(); Storage.save(DB); }
+  } catch(e){}
+  delete v._mnemoPending;
+}
+
+function firstTry(stepKey, ok) {
+  if (L.firstTryDone[stepKey]) return;
+  L.firstTryDone[stepKey] = true;
+  L.ft.total++; if (ok) L.ft.ok++;
+}
+
+function renderStep() {
+  if (!L || L.i >= L.steps.length) return finishLesson();
+  const s = L.steps[L.i];
+  if (s.t==='present')   return drillPresent();
+  if (s.t==='recog')     return drillRecog(s);
+  if (s.t==='write')     return drillWrite(s);
+  if (s.t==='construct') return drillConstruct(s);
+  if (s.t==='quest')     return runQuest({
+      title:'Дрилл 21 · Интерактивный рассказ-квест',
+      topic: DB.profile.interests, cefr: curCefr(),
+      mustUse: L.words.slice(0,3).map(w=>w.term), maxScenes:4,
+      onError: ()=>{ L.errors.quest++; },
+      onDone: ()=>{ L.i++; renderStep(); }
+    });
+}
+
+/* ---------- Presentation: таблица новых слов ---------- */
+function drillPresent() {
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Presentation</div>
+    <h1>Новые слова</h1>
+    <p class="sub">🧠 Слово → эмодзи-якорь → транскрипция → перевод. Нажмите 🔊, чтобы услышать живое звучание.</p>
+    <div class="card">
+      ${L.words.map(w=>`
+        <div class="vocab-row">
+          <span class="emoji">${esc(w.emoji||'•')}</span>
+          <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
+            <small>${esc(w.translation)}${w.is_irregular&&w.irregular_forms?' · ⚠️ '+esc(w.irregular_forms):''}</small></span>
+          <button class="tts" data-t="${esc(w.term)}">🔊</button>
+        </div>`).join('')}
+    </div>
+    <p class="note">Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.</p>
+    <button class="btn btn-primary" id="go">К дриллам</button>`);
+  document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  $('#go').onclick = () => { L.i++; renderStep(); };
+}
+
+/* ---------- Recognition / Recap: выбор слова по переводу ---------- */
+function drillRecog(s) {
+  const w = s.w;
+  const fillerPool = (s.pool==='lesson' ? L.words : DB.vocab.concat(L.words)).filter(x => norm(x.term)!==norm(w.term));
+  const opts = shuffle([w, ...pick(fillerPool, 3)]);
+  const isRecap = s.phase==='Recap';
+  const key = 'st'+L.i;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase)}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🎯 узнавание</span></div>
+      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}</div>
+      ${opts.map(o=>`<button class="opt" data-t="${esc(o.term)}">${esc(o.term)}</button>`).join('')}
+      <div class="feedback" id="fb"></div>
+      <button class="btn btn-primary" id="next" style="margin-top:12px" disabled>Дальше</button>
+    </div>`);
+  document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+    const ok = norm(b.dataset.t) === norm(w.term);
+    firstTry(key, ok);
+    if (ok) {
+      b.classList.add('right');
+      document.querySelectorAll('.opt').forEach(x=>x.disabled=true);
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`;
+      speak(w.term, DB.profile.targetLang);
+      $('#next').disabled = false;
+    } else {
+      b.classList.add('wrong'); b.disabled = true;
+      L.errors.recognition++; noteWordError(w.term);
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ Не то. Попробуйте ещё раз — верный вариант на экране.`;
+    }
+  });
+  $('#next').onclick = () => { L.i++; renderStep(); };
+}
+
+/* ---------- Writing: написать слово по памяти ---------- */
+function drillWrite(s) {
+  const w = s.w, key = 'st'+L.i;
+  const hard = (L.wordErr[w.term]||0) > 0 || DB.reviewQueue.includes(w.term);
+  let mustRetype = false;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Writing</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">✍️ письмо</span></div>
+      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}${hard?` <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span>`:''}</div>
+      <input type="text" id="ans" placeholder="Напишите слово на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
+      <div class="feedback" id="fb"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-ghost" id="hint">💡 Подсказка</button>
+        <button class="btn btn-primary" id="check">Проверить</button>
+      </div>
+    </div>`);
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 <span style="color:var(--orange)">${esc(w.translit||'')}</span> · первая буква: <b>${esc(w.term[0])}</b>`; };
+  $('#check').onclick = () => {
+    const a = $('#ans').value;
+    const ok = norm(a) === norm(w.term);
+    if (!mustRetype) firstTry(key, ok);
+    if (ok) {
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`;
+      speak(w.term, DB.profile.targetLang);
+      $('#check').textContent = 'Дальше';
+      $('#check').onclick = () => { L.i++; renderStep(); };
+    } else {
+      if (!mustRetype) { L.errors.writing++; noteWordError(w.term); mustRetype = true; }
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ Правильно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span><br>🧠 Введите верный вариант вручную, чтобы продолжить.`;
+      $('#ans').value=''; $('#ans').focus();
+    }
+  };
+}
+
+/* ---------- Construction: построение фраз (проверка через Gemini) ---------- */
+function drillConstruct(s) {
+  const c = s.c, key = 'st'+L.i;
+  let mustRetype = false, correctForm = c.expected_target;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Construction</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 фраза</span></div>
+      <div class="task-text">🎯 ${esc(c.prompt_native)}</div>
+      <input type="text" id="ans" placeholder="Фраза на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
+      <div class="feedback" id="fb"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-ghost" id="hint">💡 Подсказка</button>
+        <button class="btn btn-primary" id="check">Проверить</button>
+      </div>
+    </div>`);
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 Опорное слово: <b>${esc(c.focus_word||'')}</b>. Начало: <b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`; };
+  $('#check').onclick = async () => {
+    const a = $('#ans').value.trim();
+    if (!a) return;
+    if (mustRetype) {
+      if (norm(a) === norm(correctForm)) { passOK(); } else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`❌ Введите точно: <b>${esc(correctForm)}</b>`; }
+      return;
+    }
+    if (norm(a) === norm(correctForm)) { firstTry(key, true); return passOK(); }
+    // строгий контракт check_answer (раздел 2.5, пример B)
+    $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+    let res = null;
+    try {
+      res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
+        cefr: curCefr(), expected: c.expected_target, user_answer: a },
+        '{"correct":true,"error_type":"spelling|verb_conjugation|word_order|vocabulary_gap|none","explanation":"короткий разбор на родном языке","correct_form":"верная фраза"}');
+    } catch(e){}
+    $('#check').disabled = false;
+    if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(); }
+    if (res.correct) { firstTry(key, true); return passOK(); }
+    firstTry(key, false);
+    L.errors.construction++; if (c.focus_word) noteWordError(c.focus_word);
+    correctForm = (res && res.correct_form) || c.expected_target;
+    mustRetype = true;
+    $('#fb').className='feedback bad';
+    $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Верно: <b>${esc(correctForm)}</b><br>🧠 Введите верный вариант, чтобы продолжить.`;
+    $('#ans').value=''; $('#ans').focus();
+  };
+  function passOK() {
+    $('#fb').className='feedback ok';
+    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>`;
+    speak(correctForm, DB.profile.targetLang);
+    $('#check').textContent='Дальше'; $('#check').disabled=false;
+    $('#check').onclick = () => { L.i++; renderStep(); };
+  }
+}
+
+/* =====================================================================
+   КВЕСТ — интерактивный рассказ с развилками 2×2 (раздел 5.A).
+   Каркас жёсткий (приложение), реакция живая (Gemini). Anti-Frustration:
+   после 2 ошибок — режим напарника и Graceful Exit.
+   ===================================================================== */
+async function runQuest(cfg) {
+  const p = DB.profile;
+  const Q = { scene:1, errors:0, summary:'', choice:null, branchesUsed:0 };
+  nextScene();
+
+  async function nextScene() {
+    Screen.loader(`Сцена ${Q.scene} из ${cfg.maxScenes}…`);
+    let sc;
+    try {
+      sc = await Gemini.call({
+        task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
+        topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.maxScenes,
+        user_choice:Q.choice, story_so_far:Q.summary,
+        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user просит написать фразу на целевом языке.'
+      },
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"задание на родном: какую фразу написать","expected_target":"эталонная фраза на целевом","is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
+    } catch(e) {
+      toast('Связь прервалась — квест засчитан', true);
+      return cfg.onDone();
+    }
+    const isFinal = sc.is_final || Q.scene >= cfg.maxScenes;
+    let mustRetype = false, correctForm = sc.expected_target || '';
+    Screen.show(`
+      <div class="eyebrow">${esc(cfg.title||'Квест')}</div>
+      <div class="segbar">${Array.from({length:cfg.maxScenes},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.maxScenes-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
+      <div class="scene">
+        <div class="target">${esc(sc.scene_text)} <button class="tts" style="vertical-align:middle" id="sayScene">🔊</button></div>
+        <div class="hint">${esc(sc.native_hint||'')}</div>
+      </div>
+      <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
+      <div class="card">
+        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
+        <div class="feedback" id="fb"></div>
+        <button class="btn btn-primary" id="check" style="margin-top:12px">Отправить</button>
+      </div>`);
+    $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
+    speak(sc.scene_text, p.targetLang);
+
+    $('#check').onclick = async () => {
+      const a = $('#ans').value.trim(); if (!a) return;
+      if (mustRetype) {
+        if (norm(a) === norm(correctForm)) return pass();
+        $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
+      }
+      if (correctForm && norm(a) === norm(correctForm)) return pass();
+      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+      let res = null;
+      try {
+        res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
+          expected: correctForm || '(свободный ответ по смыслу сцены)', user_answer:a,
+          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true.' },
+          '{"correct":true,"error_type":"...","explanation":"на родном","correct_form":"верная фраза"}');
+      } catch(e){}
+      $('#check').disabled = false;
+      if (!res) { toast('Связь барахлит — ответ засчитан', true); return pass(); }
+      if (res.correct) return pass();
+      Q.errors++; cfg.onError && cfg.onError();
+      if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой
+        $('#fb').className='feedback ok';
+        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b><br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
+        speak(res?.correct_form||correctForm, p.targetLang);
+        $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
+        $('#check').onclick = () => advance(sc, isFinal, true);
+        return;
+      }
+      mustRetype = true; correctForm = res?.correct_form || correctForm || a;
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Верно: <b>${esc(correctForm)}</b> — введите вручную.`;
+      $('#ans').value=''; $('#ans').focus();
+    };
+    function pass() {
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = `✅ Отлично!`;
+      if (sc.is_branch && !isFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
+        Q.branchesUsed++;
+        $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
+          sc.choices.slice(0,2).map(c=>`<button class="opt" style="margin-top:8px" data-c="${esc(c.id)}">${esc(c.label_target)}</button>`).join('');
+        document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
+        $('#check').style.display='none';
+      } else {
+        $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
+        $('#check').onclick = () => advance(sc, isFinal, false);
+      }
+    }
+  }
+  function advance(sc, isFinal, partner) {
+    Q.summary = (Q.summary + ' ' + sc.scene_text).slice(-700);
+    if (isFinal) {
+      Screen.show(`
+        <div class="eyebrow">Квест завершён</div>
+        <h1>${Q.errors>=2?'🤝 Дошли вместе!':'🏆 История пройдена!'}</h1>
+        <p class="sub">${Q.errors>=2?'Ошибки — часть пути: трудные места вернутся в повторение.':'Лексика урока закреплена в живом сюжете.'}</p>
+        <button class="btn btn-primary" id="go">Продолжить</button>`);
+      $('#go').onclick = cfg.onDone;
+    } else { Q.scene++; if (!sc.is_branch) Q.choice = null; nextScene(); }
+  }
+}
+
+/* =====================================================================
+   ЗАВЕРШЕНИЕ УРОКА: автосохранение (5.1) + диагностика-адаптация (2.7)
+   «Gemini советует — приложение решает»; защита с откатом к метрикам.
+   ===================================================================== */
+const DIAG_TYPES  = ['recognition','spelling','verb_conjugation','word_order','vocabulary_gap','none'];
+const DIAG_TRENDS = ['improving','stable','declining'];
+
+async function finishLesson() {
+  const acc = L.ft.total ? +(L.ft.ok / L.ft.total).toFixed(2) : 1;
+  const prev = DB.analytics.length ? DB.analytics[DB.analytics.length-1].accuracy_first_try : null;
+  const hard = Object.keys(L.wordErr).filter(t => L.wordErr[t] >= 2);
+
+  // --- 1) Сбор: запись слов в «Словарь» ---
+  L.words.forEach(w => {
+    if (!DB.vocab.some(v => norm(v.term)===norm(w.term))) {
+      DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:w.emoji||'',
+        irregular: !!w.is_irregular, irregular_forms: w.irregular_forms||'',
+        lesson: L.code, errors: L.wordErr[w.term]||0,
+        status: (L.wordErr[w.term]||0) >= 2 ? 'на закреплении' : 'новое',
+        mnemonic:'', date_added: today(), date_review: today() });
+    }
+  });
+  hard.forEach(t => { if (!DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
+  DB.vocab.forEach(v => { if ((v.errors||0)===0 && v.lesson !== L.code) v.status='освоено'; });
+
+  // --- 2) Диагностика (Gemini, строго из словаря категорий) ---
+  Screen.loader('Сохраняю и анализирую урок…');
+  let diag = null;
+  try {
+    const d = await Gemini.call({ task:'diagnose', native_lang:DB.profile.nativeLang, cefr:curCefr(),
+      summary:{ accuracy_first_try:acc, errors_by_type:L.errors, hard_words:hard, prev_accuracy:prev } },
+      '{"dominant_error_type":"recognition|spelling|verb_conjugation|word_order|vocabulary_gap|none","risk_words":["..."],"confidence_trend":"improving|stable|declining","note_native":"1 короткое предложение на родном языке"}');
+    if (DIAG_TYPES.includes(d.dominant_error_type) && DIAG_TRENDS.includes(d.confidence_trend)) diag = d;
+  } catch(e){} // откат к чистым метрикам — обучение не блокируется
+
+  // --- 3) Действие: жёсткие правила в коде ---
+  (diag?.risk_words||[]).forEach(t => { if (DB.vocab.some(v=>norm(v.term)===norm(t)) && !DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
+  let next = nextAfterLesson(L.code), note = 'PASS';
+  if (acc < 0.70) {                                   // слабый результат: идём дальше, но усиливаем повторение
+    note = 'REVIEW';
+    L.words.forEach(w => { if (!DB.reviewQueue.includes(w.term)) DB.reviewQueue.push(w.term); });
+    DB.vocab.forEach(v => { if (L.words.some(w=>norm(w.term)===norm(v.term))) v.status = 'на закреплении'; });
+  }
+
+  // --- листы «Прогресс» и «Аналитика» ---
+  DB.progress.push({ code:L.code, date:today(), words:L.words.map(w=>w.term).join(', '), next, note });
+  DB.analytics.push({ lesson:L.code, date:today(), accuracy_first_try:acc, errors_by_type:L.errors,
+    hard_words:hard, duration_sec: Math.round((Date.now()-L.t0)/1000), hints_used:L.hints,
+    delta_accuracy: prev==null ? '' : ((acc-prev)>=0?'+':'')+ (acc-prev).toFixed(2) });
+  DB.nextStage = next;
+  DB.profile.cefr = parseCode(next.startsWith('EXAM_') ? next.replace('EXAM_','')+'.01' : next)?.lvl || DB.profile.cefr;
+  Storage.save(DB);
+  toast('Сохранено ✓');
+
+  // --- завершающий экран (5.1): простая фраза, крупные кнопки ---
+  const code = L.code, hintsUsed = L.hints; L = null;
+  Screen.show(`
+    <div class="eyebrow">Точность: ${Math.round(acc*100)}% · подсказок: ${hintsUsed}</div>
+    <h1>Урок ${esc(code)} завершён, прогресс сохранён.</h1>
+    <p class="sub">${diag?.note_native ? '💡 '+esc(diag.note_native) : (note==='REVIEW' ? 'Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.' : 'Что дальше?')}</p>
+    ${hard.length?`<div class="chiplist">${hard.map(h=>`<span class="chip warn">⚠️ ${esc(h)}</span>`).join('')}</div><p class="note">Эти слова вернутся в Recap и супер-урок.</p>`:''}
+    <div style="height:8px"></div>
+    <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?'Экзамен '+esc(next.replace('EXAM_','')):'Следующий урок '+esc(next)}</button>
+    <button class="btn btn-ghost" id="bSuper">Супер-урок (повторение)</button>
+    <button class="btn btn-ghost" id="bTalk">🎙️ Поговорить</button>
+    <button class="btn btn-ghost" id="bExit">Выход в меню</button>`);
+  $('#bNext').onclick  = () => next.startsWith('EXAM_') ? startExam(next) : startLesson(next);
+  $('#bSuper').onclick = startSuperLesson;
+  $('#bTalk').onclick  = startDialogue;
+  $('#bExit').onclick  = mainMenu;
+}
+
+/* =====================================================================
+   СУПЕР-УРОК — 30-Step Loop (раздел 6): 80% повторение из KNOWN_VOCAB,
+   20% новая функциональная лексика; квесты на шагах 10, 20 и 30.
+   ===================================================================== */
+async function startSuperLesson() {
+  const p = DB.profile, lvl = p.cefr;
+  const base = DB.nextStage.startsWith('EXAM_') ? DB.nextStage.replace('EXAM_','')+'.25' : DB.nextStage;
+  Screen.loader('Готовлю супер-урок…');
+  const knownSample = pick(DB.vocab, Math.min(20, DB.vocab.length)).map(w=>w.term);
+  const riskFirst = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
+  let plan;
+  try {
+    plan = await Gemini.call({
+      task:'super_lesson_plan', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:p.interests, known_vocab:knownSample, priority_words:riskFirst.slice(0,7),
+      rules:'80% материала — повторение known_vocab (приоритет priority_words), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Все формулировки заданий — на родном языке.'
+    },
+    '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
+    '"link_drills":[{"prompt_native":"задание: старое слово + новая связка","expected_target":"эталон"}] — ровно 9,'+
+    '"sentence_drills":[{"prompt_native":"развёрнутое предложение по интересам","expected_target":"эталон"}] — ровно 9,'+
+    '"grammar_drills":[{"prompt_native":"грамматический тренинг / свободное построение","expected_target":"эталон"}] — ровно 9}');
+    if (!plan.link_drills?.length) throw 0;
+  } catch(e) {
+    if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+    toast('Не удалось подготовить супер-урок', true); return mainMenu();
+  }
+  // новые функциональные слова — в словарь
+  (plan.functional_new||[]).forEach(w => {
+    if (w.term && !DB.vocab.some(v=>norm(v.term)===norm(w.term)))
+      DB.vocab.push({ term:w.term, translation:w.translation||'', translit:w.translit||'', emoji:w.emoji||'',
+        irregular:false, irregular_forms:'', lesson:'SUPER_'+base, errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
+  });
+
+  const steps = [];
+  (plan.link_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+1}/30`, c}));
+  steps.push({t:'quest1'});
+  (plan.sentence_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+11}/30`, c}));
+  steps.push({t:'quest2'});
+  (plan.grammar_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+21}/30`, c}));
+  steps.push({t:'quest3'});
+
+  L = { code:'SUPER_'+base, isSuper:true, words:[], steps, i:0,
+        errors:{recognition:0,writing:0,construction:0,quest:0},
+        ft:{ok:0,total:0}, hints:0, t0:Date.now(), wordErr:{}, firstTryDone:{} };
+  renderSuperStep();
+}
+function renderSuperStep() {
+  if (L.i >= L.steps.length) return finishSuper();
+  const s = L.steps[L.i];
+  if (s.t==='construct') return drillConstruct(s); // тот же дрилл; renderStep маршрутизирует по флагу isSuper
+  const qcfg = (mu, sc, title) => ({ title, topic:DB.profile.interests, cefr:DB.profile.cefr,
+    mustUse:mu, maxScenes:sc, onError:()=>{L.errors.quest++;}, onDone:()=>{L.i++; renderSuperStep();} });
+  const lastTerms = DB.vocab.slice(-10).map(w=>w.term);
+  if (s.t==='quest1') return runQuest(qcfg(pick(lastTerms,3), 1, 'Шаг 10 · Quest #1'));
+  if (s.t==='quest2') return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 1, 'Шаг 20 · Quest #2'));
+  if (s.t==='quest3') return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 2, 'Шаг 30 · Final Mission'));
+}
+/* В супер-уроке используется тот же drillConstruct: он вызывает renderStep,
+   поэтому renderStep маршрутизирует по флагу isSuper. */
+const _renderStepLesson = renderStep;
+renderStep = function() {
+  if (L && L.isSuper) return renderSuperStep();
+  return _renderStepLesson();
+};
+async function finishSuper() {
+  const acc = L.ft.total ? +(L.ft.ok/L.ft.total).toFixed(2) : 1;
+  const hard = Object.keys(L.wordErr).filter(t=>L.wordErr[t]>=2);
+  hard.forEach(t=>{ if(!DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
+  // слова без ошибок в супер-уроке считаем закреплёнными
+  DB.vocab.forEach(v => { if (DB.reviewQueue.includes(v.term) && !(L.wordErr[v.term])) {
+    DB.reviewQueue = DB.reviewQueue.filter(x=>x!==v.term); v.status='освоено'; v.date_review=today(); }});
+  DB.progress.push({ code:L.code, date:today(), words:hard.join(', '), next:DB.nextStage, note:'PASS' });
+  DB.analytics.push({ lesson:L.code, date:today(), accuracy_first_try:acc, errors_by_type:L.errors,
+    hard_words:hard, duration_sec:Math.round((Date.now()-L.t0)/1000), hints_used:L.hints, delta_accuracy:'' });
+  Storage.save(DB); toast('Сохранено ✓');
+  const code = L.code; L = null;
+  Screen.show(`
+    <h1>Супер-урок завершён, прогресс сохранён.</h1>
+    <p class="sub">Точность: ${Math.round(acc*100)}%. Повторение — половина успеха. Что дальше?</p>
+    <button class="btn btn-primary" id="bN">Следующий этап: ${esc(DB.nextStage)}</button>
+    <button class="btn btn-ghost" id="bE">Выход в меню</button>`);
+  $('#bN').onclick = () => DB.nextStage.startsWith('EXAM_') ? startExam(DB.nextStage) : startLesson(DB.nextStage);
+  $('#bE').onclick = mainMenu;
+}
+
+/* =====================================================================
+   ЭКЗАМЕНЫ (раздел 7) и работа над ошибками (раздел 8)
+   ===================================================================== */
+const EXAM_QUESTIONS = 50;
+function buildExamQuestions() {
+  const pool = DB.vocab.slice();
+  const n = Math.min(EXAM_QUESTIONS, Math.max(10, pool.length * 2));
+  const qs = [];
+  for (let i=0;i<n;i++) {
+    const w = pool[i % pool.length];
+    if (i % 3 === 2 && pool.length >= 4) {           // письмо
+      qs.push({ kind:'write', w });
+    } else {                                          // выбор
+      const fill = pick(pool.filter(x=>x.term!==w.term), 3);
+      qs.push({ kind:'mcq', w, opts: shuffle([w, ...fill]) });
+    }
+  }
+  return shuffle(qs);
+}
+function startExam(examCode) {
+  if (DB.vocab.length < 4) { toast('Слишком мало слов для экзамена', true); return mainMenu(); }
+  const qs = buildExamQuestions();
+  const E = { code:examCode, qs, i:0, ok:0, wrong:[] };
+  Screen.show(`
+    <div class="eyebrow">Экзамен</div>
+    <h1>${esc(examCode.replace('EXAM_',''))} · ${qs.length} вопросов</h1>
+    <p class="sub">По одному вопросу на экран, без подсказок. Порог сдачи — 85%. Результат объявлю после последнего ответа.</p>
+    <button class="btn btn-accent" id="go">Начать экзамен</button>
+    <button class="btn btn-ghost" id="back">Позже</button>`, { back: mainMenu });
+  $('#go').onclick = () => examStep(E);
+  $('#back').onclick = mainMenu;
+}
+function examStep(E) {
+  if (E.i >= E.qs.length) return examResult(E);
+  const q = E.qs[E.i], w = q.w;
+  const head = `<div class="eyebrow">Экзамен · ${E.i+1} / ${E.qs.length}</div>`;
+  if (q.kind==='mcq') {
+    Screen.show(`${head}<div class="card">
+      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}</div>
+      ${q.opts.map(o=>`<button class="opt" data-t="${esc(o.term)}">${esc(o.term)}</button>`).join('')}</div>`);
+    document.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{
+      if (norm(b.dataset.t)===norm(w.term)) E.ok++; else E.wrong.push(w);
+      E.i++; examStep(E);
+    });
+  } else {
+    Screen.show(`${head}<div class="card">
+      <div class="task-text">Напишите: ${esc(w.emoji||'')} ${esc(w.translation)}</div>
+      <input type="text" id="ans" autocomplete="off" autocapitalize="off">
+      <button class="btn btn-primary" id="ok" style="margin-top:12px">Ответить</button></div>`);
+    $('#ok').onclick = () => {
+      if (norm($('#ans').value)===norm(w.term)) E.ok++; else E.wrong.push(w);
+      E.i++; examStep(E);
+    };
+  }
+}
+function examResult(E) {
+  const pct = E.ok / E.qs.length;
+  const lvlKey = E.code;
+  const passed = pct >= EXAM_PASS;
+  if (passed) {
+    DB.examAttempts[lvlKey] = 0;
+    const next = nextAfterExamPass(E.code);
+    DB.progress.push({ code:E.code+'_PASS', date:today(), words:'', next, note:`${E.ok}/${E.qs.length}` });
+    DB.nextStage = next; DB.profile.cefr = parseCode(next).lvl;
+    Storage.save(DB); toast('Сохранено ✓');
+    Screen.show(`<h1>🏆 Экзамен сдан: ${E.ok}/${E.qs.length}</h1>
+      <p class="sub">Переход на новый уровень. Следующий урок: <b style="color:var(--ink)">${esc(next)}</b>.</p>
+      <button class="btn btn-primary" id="go">Дальше</button>`);
+    $('#go').onclick = mainMenu;
+    return;
+  }
+  DB.examAttempts[lvlKey] = (DB.examAttempts[lvlKey]||0) + 1;
+  const attempt = DB.examAttempts[lvlKey];
+  if (attempt === 1) {
+    DB.progress.push({ code:E.code+'_FAIL-1', date:today(), words:'', next:E.code, note:`${E.ok}/${E.qs.length}` });
+    Storage.save(DB); toast('Сохранено ✓');
+    Screen.show(`<h1>Результат: ${E.ok}/${E.qs.length}</h1>
+      <p class="sub">До порога 85% не хватило. Это первая попытка — экзамен можно пересдать сразу или после повторения.</p>
+      <button class="btn btn-primary" id="re">Пересдать экзамен</button>
+      <button class="btn btn-ghost" id="sup">Супер-урок перед пересдачей</button>
+      <button class="btn btn-ghost" id="m">В меню</button>`);
+    $('#re').onclick = () => startExam(E.code); $('#sup').onclick = startSuperLesson; $('#m').onclick = mainMenu;
+  } else {
+    // второй провал → режим работы над ошибками (раздел 8)
+    startRemedial(E);
+  }
+}
+function startRemedial(E) {
+  const items = [];
+  E.wrong.slice(0, 12).forEach(w => { items.push({w, pass:1}); items.push({w, pass:2}); }); // 2 штрафных на ошибку
+  let i = 0;
+  Screen.show(`<h1>Работа над ошибками</h1>
+    <p class="sub">Второй провал — не приговор, а сигнал. Разберём каждую ошибку: по два задания на слово, по одному на экран. Двигаемся только после верного ответа.</p>
+    <button class="btn btn-primary" id="go">Начать разбор</button>`);
+  $('#go').onclick = step;
+  function step() {
+    if (i >= items.length) return done();
+    const {w, pass} = items[i];
+    if (DB.reviewQueue.indexOf(w.term)<0) DB.reviewQueue.push(w.term);
+    ensureMnemonic(DB.vocab.find(v=>v.term===w.term)||w);
+    Screen.show(`<div class="eyebrow">Разбор · ${i+1} / ${items.length}</div>
+      <div class="card">
+        <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)} <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span></div>
+        ${pass===1?`<div class="feedback ok" style="display:block;margin-bottom:10px">🧠 Верный ответ: <b>${esc(w.term)}</b>${w.mnemonic?'<br>'+esc(w.mnemonic):''} — введите его вручную.</div>`:''}
+        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="${pass===1?'Перепишите слово':'Теперь по памяти'}">
+        <div class="feedback" id="fb"></div>
+        <button class="btn btn-primary" id="ok" style="margin-top:12px">Проверить</button>
+      </div>`);
+    $('#ok').onclick = () => {
+      if (norm($('#ans').value)===norm(w.term)) { speak(w.term, DB.profile.targetLang); i++; step(); }
+      else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`❌ Верно: <b>${esc(w.term)}</b> — введите ещё раз.`; $('#ans').value=''; }
+    };
+  }
+  function done() {
+    DB.examAttempts[E.code] = 0; // после remedial — снова к экзамену
+    DB.progress.push({ code:E.code.replace('EXAM_','EXAM_')+'_REMEDIAL', date:today(),
+      words: E.wrong.map(w=>w.term).join(', '), next:E.code, note:'' });
+    Storage.save(DB); toast('Сохранено ✓');
+    Screen.show(`<h1>Разбор завершён, прогресс сохранён.</h1>
+      <p class="sub">Исправленные слова добавлены в очередь повторения. Возвращаемся к экзамену.</p>
+      <button class="btn btn-primary" id="re">Пересдать экзамен</button>
+      <button class="btn btn-ghost" id="m">В меню</button>`);
+    $('#re').onclick = () => startExam(E.code); $('#m').onclick = mainMenu;
+  }
+}
+
+/* =====================================================================
+   ГОЛОСОВОЙ ДИАЛОГ «Поговорить» (раздел 5.B): STT → Gemini → TTS,
+   двойной ввод (голос/текст), напарник, а не судья.
+   ===================================================================== */
+function startDialogue() {
+  const p = DB.profile;
+  const mustUse = pick(DB.vocab.slice(-15).map(w=>w.term), Math.min(2, DB.vocab.length));
+  const history = [];
+  let turns = 0;
+  Screen.show(`
+    <div class="eyebrow">Поговорить · тема: ${esc(String(p.interests).split(/[,;]/)[0]||'')}</div>
+    <div class="chat" id="chat"></div>
+    <div class="chat-input">
+      <button class="mic" id="mic" aria-label="Говорить">🎙️</button>
+      <input type="text" id="msg" placeholder="Или напишите ответ…">
+      <button class="btn btn-primary btn-mini" id="send" style="margin:0">➤</button>
+    </div>
+    <button class="btn btn-ghost" id="endD" style="margin-top:10px">Завершить диалог</button>`,
+    { back: endDialogue });
+  const chat = $('#chat');
+  const add = (role, text, sub) => {
+    const d = document.createElement('div');
+    d.className = 'msg ' + role;
+    d.innerHTML = esc(text) + (sub?`<small>${esc(sub)}</small>`:'');
+    chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+  };
+  async function aiTurn(userText) {
+    if (userText) { add('user', userText); history.push({role:'user', text:userText}); }
+    add('ai', '…');
+    let r = null;
+    try {
+      r = await Gemini.call({ task:'dialogue', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:p.cefr,
+        topic:p.interests, must_use:mustUse, history: history.slice(-10),
+        rules:'Ты — доброжелательный напарник, а не судья. Реплики короткие, по уровню CEFR. Грубые ошибки — мягкая поправка в gentle_correction, мелкие — поощряй. После 6–8 обменов плавно завершай (is_final=true).' },
+        '{"reply_target":"реплика на целевом языке","reply_native":"перевод на родной","understood":true,"gentle_correction":"мягкая поправка на родном или null","is_final":false}');
+    } catch(e){}
+    chat.lastChild.remove();
+    if (!r) { add('ai','Связь прервалась — попробуйте ещё раз.'); return; }
+    add('ai', r.reply_target, r.reply_native + (r.gentle_correction ? '\n🤝 ' + r.gentle_correction : ''));
+    history.push({role:'ai', text:r.reply_target});
+    speak(r.reply_target, p.targetLang);
+    turns++;
+    if (r.is_final) setTimeout(endDialogue, 2500);
+  }
+  function endDialogue() {
+    try { speechSynthesis.cancel(); } catch(e){}
+    if (turns > 0) {
+      DB.analytics.push({ lesson:'DIALOGUE', date:today(), accuracy_first_try: masteryPercent()/100 || 0.8,
+        errors_by_type:{dialogue:0}, hard_words:[], duration_sec:0, hints_used:0, delta_accuracy:'' });
+      Storage.save(DB); toast('Сохранено ✓');
+    }
+    mainMenu();
+  }
+  $('#send').onclick = () => { const v = $('#msg').value.trim(); if (v){ $('#msg').value=''; aiTurn(v);} };
+  $('#msg').onkeydown = e => { if (e.key==='Enter') $('#send').click(); };
+  $('#endD').onclick = endDialogue;
+  const mic = $('#mic');
+  const rec = makeRecognizer(p.targetLang, t => { mic.classList.remove('rec'); aiTurn(t); }, () => mic.classList.remove('rec'));
+  mic.onclick = () => {
+    if (!rec) return toast('Распознавание речи недоступно — пишите текстом', true);
+    if (mic.classList.contains('rec')) { rec.stop(); mic.classList.remove('rec'); }
+    else { mic.classList.add('rec'); try { rec.start(); } catch(e){ mic.classList.remove('rec'); } }
+  };
+  aiTurn(null); // AILEX начинает разговор
+}
+
+/* ---------- запуск ---------- */
+boot();
+
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
