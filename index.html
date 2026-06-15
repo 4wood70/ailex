@@ -303,7 +303,7 @@ let DB = null;
    Модель не знает о базе, не пишет в неё, получает задание на один шаг.
    ===================================================================== */
 const Gemini = {
-  MODELS: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+  MODELS: ['gemini-3.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
   SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
         + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
         + 'Все пояснения для ученика — строго на языке native_lang. Жёстко держи уровень CEFR. Никакого оффтопа.',
@@ -325,7 +325,7 @@ const Gemini = {
       contents: [{ role:'user', parts: [{ text:
         'ЗАДАНИЕ (строгий контракт):\n' + JSON.stringify(contract) +
         '\n\nСХЕМА ОТВЕТА (верни ровно такой JSON):\n' + schema }] }],
-      generationConfig: { temperature: 0.7, responseMimeType: 'application/json' }
+      generationConfig: { temperature: 0.7, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
     };
     let lastErr = null;
     for (const m of this.MODELS) {
@@ -333,11 +333,18 @@ const Gemini = {
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
           { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
-        if (!r.ok) { lastErr = new Error('HTTP '+r.status); continue; }
+        if (!r.ok) { lastErr = new Error('HTTP '+r.status+' ('+m+')'); continue; }
         const j = await r.json();
         const txt = (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
         const clean = txt.replace(/```json|```/g,'').trim();
-        return JSON.parse(clean);
+        if (!clean) { lastErr = new Error('EMPTY ('+m+')'); continue; }  // think-модель не дала текста — следующая
+        try { return JSON.parse(clean); }
+        catch(pe) {
+          // вытащить JSON, даже если модель добавила лишний текст
+          const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
+          if (s >= 0 && e > s) { try { return JSON.parse(clean.slice(s, e+1)); } catch(_){} }
+          lastErr = new Error('BAD_JSON ('+m+')'); continue;
+        }
       } catch(e) {
         if (String(e.message).startsWith('KEY:')) throw e;
         lastErr = e;
@@ -744,7 +751,7 @@ async function startLesson(code) {
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
   } catch(e) {
     if (String(e.message).startsWith('KEY:')) return keyWizard(true);
-    Screen.show(`<h1>Не получилось подготовить урок</h1><p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p><button class="btn btn-primary" id="r">Повторить</button><button class="btn btn-ghost" id="m">В меню</button>`);
+    Screen.show(`<h1>Не получилось подготовить урок</h1><p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p><p class="note" style="opacity:.7">Причина: ${esc(String(e.message||'неизвестно'))}</p><button class="btn btn-primary" id="r">Повторить</button><button class="btn btn-ghost" id="m">В меню</button>`);
     $('#r').onclick = () => startLesson(code); $('#m').onclick = mainMenu;
     return;
   }
