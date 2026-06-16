@@ -265,10 +265,11 @@ const Storage = {
   setKey(k){ localStorage.setItem(this.API_KEY, k.trim()); },
   newDB(profile) {
     return {
-      meta: { app:'AILEX', schema:'4.1', created: today() },
+      meta: { app:'AILEX', schema:'4.3', created: today() },
       profile,                       // лист «Профиль» (6 полей, раздел 2.2)
       progress: [],                  // лист «Прогресс» (раздел 2.3)
       vocab: [],                     // лист «Словарь» (раздел 2.3-С) = KNOWN_VOCAB
+      rules: [],                     // часть «Свод правил» (раздел 2.3-П)
       analytics: [],                 // лист «Аналитика» (раздел 2.6)
       nextStage: '',                 // код следующего этапа
       reviewQueue: [],               // очередь повторения (трудные слова)
@@ -363,6 +364,15 @@ function speak(text, langCode) {
     speechSynthesis.speak(u);
   } catch(e){}
 }
+/* Кнопка повтора озвучки целевой (немецкой) фразы в блоках обратной связи.
+   replaySay читает data-say и проговаривает на целевом языке профиля. */
+function sayBtn(text) {
+  return `<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" `
+       + `data-say="${esc(text)}" onclick="replaySay(this)" aria-label="Повторить озвучку">🔊</button>`;
+}
+function replaySay(el) {
+  speak(el.getAttribute('data-say'), (DB && DB.profile && DB.profile.targetLang) || 'de');
+}
 function makeRecognizer(langCode, onResult, onEnd) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
@@ -419,6 +429,7 @@ function masteryPercent() {
    ===================================================================== */
 function boot() {
   DB = Storage.load();
+  if (DB && !Array.isArray(DB.rules)) { DB.rules = []; Storage.save(DB); }  // миграция старой базы
   if (!Storage.getKey()) return keyWizard();
   if (!DB || !DB.profile)  return onboardingIntro();
   mainMenu();
@@ -652,12 +663,14 @@ function mainMenu() {
       <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Супер-урок</b><small>Повторение: 80% знакомого + связки</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
   $('#mLesson').onclick = () => isExam ? startExam(next) : startLesson(next);
   $('#mSuper').onclick  = () => DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
+  $('#mRules').onclick  = showRules;
   $('#mSet').onclick    = showSettings;
 }
 
@@ -681,7 +694,35 @@ function showDictionary() {
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
 }
 
-/* ---------- Настройки ---------- */
+/* ---------- Свод правил (раздел 2.3-П) ---------- */
+function showRules() {
+  const r = (DB.rules||[]).slice().reverse();
+  Screen.show(`
+    <h1>Свод правил</h1>
+    <p class="sub">${r.length} изученных правил. Нажмите на правило, чтобы раскрыть объяснение с примерами и озвучкой.</p>
+    <div class="card" style="max-height:68vh;overflow-y:auto">
+      ${r.length ? r.map((g,idx)=>`
+        <div style="border-bottom:1px solid var(--line);padding:4px 0">
+          <button class="rule-head" data-i="${idx}" style="width:100%;text-align:left;background:none;border:none;color:var(--ink);
+            font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
+            <span style="font-size:17px">📐</span>
+            <span style="flex:1"><b style="font-size:15px">${esc(g.title)}</b>
+              <small style="display:block;color:var(--dim);font-size:12px">${esc(g.cefr||'')} · урок ${esc(g.lesson||'')}${g.errors>=2?' · ⚠️ на закреплении':''}</small></span>
+            <span class="chev" style="color:var(--faint)">▾</span>
+          </button>
+          <div class="rule-body" id="rb${idx}" style="display:none;padding:4px 2px 12px"></div>
+        </div>`).join('') : '<p class="note">Пока пусто. Правила появятся после уроков, где есть новая грамматика.</p>'}
+    </div>`, { back: mainMenu });
+  const rev = r;
+  document.querySelectorAll('.rule-head').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i, body = document.getElementById('rb'+i);
+    const open = body.style.display !== 'none';
+    if (open) { body.style.display='none'; b.querySelector('.chev').textContent='▾'; return; }
+    if (!body.dataset.filled) { body.innerHTML = grammarCardHTML(rev[i]); body.dataset.filled='1';
+      body.querySelectorAll('.tts[data-t]').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang)); }
+    body.style.display='block'; b.querySelector('.chev').textContent='▴';
+  });
+}
 function showSettings() {
   const p = DB.profile;
   Screen.show(`
@@ -727,7 +768,7 @@ async function startLesson(code) {
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);
-  let words, constructs;
+  let words, constructs, grammar = null;
   try {
     const r1 = await Gemini.call({
       task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
@@ -749,6 +790,18 @@ async function startLesson(code) {
     '{"items":[{"prompt_native":"Скажи на целевом языке: «...» (формулировка на родном)","expected_target":"эталонная фраза на целевом языке","focus_word":"слово урока"}]} — ровно 9 объектов');
     constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
+
+    // --- Grammar Card: правило урока (необязательно; сбой не ломает урок) ---
+    try {
+      const knownRules = (DB.rules||[]).map(r=>r.title).slice(-40);
+      const rg = await Gemini.call({
+        task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+        lesson_words: words.map(w=>w.term), known_rules: knownRules,
+        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если на этом уроке нового правила нет — has_new_rule=false. Все пояснения и название — на native_lang. Транскрипция — родными буквами в квадратных скобках.'
+      },
+      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
+      if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) grammar = rg;
+    } catch(e){ /* правило необязательно */ }
   } catch(e) {
     if (String(e.message).startsWith('KEY:')) return keyWizard(true);
     Screen.show(`<h1>Не получилось подготовить урок</h1><p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p><p class="note" style="opacity:.7">Причина: ${esc(String(e.message||'неизвестно'))}</p><button class="btn btn-primary" id="r">Повторить</button><button class="btn btn-ghost" id="m">В меню</button>`);
@@ -767,12 +820,13 @@ async function startLesson(code) {
   const steps = [];
   recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
   steps.push({ t:'present' });
+  if (grammar) steps.push({ t:'grammar' });
   for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Дрилл ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
   for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Дрилл ${i+6}/21`, w: words[i % words.length] });
   constructs.forEach((c,i) => steps.push({ t:'construct', phase:'Construction', n:`Дрилл ${i+12}/21`, c }));
   steps.push({ t:'quest', n:'Дрилл 21/21 · Final Challenge' });
 
-  L = { code, words, steps, i:0,
+  L = { code, words, steps, i:0, grammar,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
         wordErr:{}, firstTryDone:{} };
@@ -816,6 +870,7 @@ function renderStep() {
   if (!L || L.i >= L.steps.length) return finishLesson();
   const s = L.steps[L.i];
   if (s.t==='present')   return drillPresent();
+  if (s.t==='grammar')   return drillGrammar();
   if (s.t==='recog')     return drillRecog(s);
   if (s.t==='write')     return drillWrite(s);
   if (s.t==='construct') return drillConstruct(s);
@@ -849,6 +904,75 @@ function drillPresent() {
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
 
+/* ---------- Grammar Card: правило урока (раздел 5, 2.3-П) ---------- */
+function grammarCardHTML(g) {
+  const lang = (DB.profile && DB.profile.targetLang) || 'de';
+  const table = (g.table||[]).map(r=>`
+    <div class="vocab-row">
+      <span class="w"><b>${esc(r.form)}</b> <span class="tr">${esc(r.translit||'')}</span>
+        <small>${esc(r.translation||'')}</small></span>
+      <button class="tts" data-t="${esc(r.form)}" aria-label="Озвучить">🔊</button>
+    </div>`).join('');
+  const ex = (g.examples||[]).map(e=>`
+    <div class="vocab-row">
+      <span class="w"><b>${esc(e.target)}</b> <span class="tr">${esc(e.translit||'')}</span>
+        <small>${esc(e.translation||'')}</small></span>
+      <button class="tts" data-t="${esc(e.target)}" aria-label="Озвучить">🔊</button>
+    </div>`).join('');
+  return `
+    <div style="font-size:15px;line-height:1.55;margin-bottom:10px">${esc(g.summary||'')}</div>
+    ${table?`<div class="card" style="margin:0 0 10px">${table}</div>`:''}
+    ${ex?`<div style="font-size:12px;color:var(--dim);margin:4px 0">Примеры:</div><div class="card" style="margin:0">${ex}</div>`:''}`;
+}
+function wireGrammarTTS() {
+  document.querySelectorAll('.tts[data-t]').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+}
+/* Всплывающее окно правила (кнопка-подсказка «Правило» в дриллах и квесте) */
+function showRulePopup(g) {
+  if (!g) { toast('В этом уроке нет отдельного правила', true); return; }
+  let ov = document.getElementById('ruleOverlay');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'ruleOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:60;background:rgba(4,7,14,.72);display:flex;align-items:flex-end;justify-content:center';
+  ov.innerHTML = `
+    <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
+                border-radius:18px 18px 0 0;padding:18px;max-height:82vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div class="eyebrow" style="margin:0">📐 Правило урока</div>
+        <button id="ruleClose" style="margin-left:auto;background:var(--panel2);border:1px solid var(--line);
+                color:var(--ink);border-radius:9px;width:34px;height:34px;font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <h2 style="margin-bottom:8px">${esc(g.title||'Правило')}</h2>
+      ${grammarCardHTML(g)}
+    </div>`;
+  document.body.appendChild(ov);
+  wireGrammarTTS();
+  const close = () => ov.remove();
+  document.getElementById('ruleClose').onclick = close;
+  ov.onclick = e => { if (e.target===ov) close(); };
+}
+function drillGrammar() {
+  const g = L.grammar;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Грамматика урока</div>
+    <h1>📐 ${esc(g.title||'Правило')}</h1>
+    <p class="sub">Новое правило этого урока. Оно сохранится в «Свод правил» — сможете открыть его в любой момент с главного экрана.</p>
+    ${grammarCardHTML(g)}
+    <button class="btn btn-primary" id="go" style="margin-top:14px">К дриллам</button>`);
+  wireGrammarTTS();
+  $('#go').onclick = () => {
+    // сохраняем правило в Свод правил (раздел 2.3-П)
+    if (!DB.rules.some(r=>norm(r.title)===norm(g.title))) {
+      DB.rules.push({ title:g.title, summary:g.summary||'', table:g.table||[], examples:g.examples||[],
+        cefr:g.cefr||parseCode(L.code)?.lvl||'', lesson:L.code, status:'изучено',
+        errors:0, date_added: today() });
+      Storage.save(DB);
+    }
+    L.i++; renderStep();
+  };
+}
+
 /* ---------- Recognition / Recap: выбор слова по переводу ---------- */
 function drillRecog(s) {
   const w = s.w;
@@ -872,7 +996,7 @@ function drillRecog(s) {
       b.classList.add('right');
       document.querySelectorAll('.opt').forEach(x=>x.disabled=true);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`;
+      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
       $('#next').disabled = false;
     } else {
@@ -909,7 +1033,7 @@ function drillWrite(s) {
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`;
+      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
       $('#check').textContent = 'Дальше';
       $('#check').onclick = () => { L.i++; renderStep(); };
@@ -935,9 +1059,11 @@ function drillConstruct(s) {
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost" id="hint">💡 Подсказка</button>
+        ${L.grammar?`<button class="btn btn-ghost" id="rule">📐 Правило</button>`:''}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
+  if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 Опорное слово: <b>${esc(c.focus_word||'')}</b>. Начало: <b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`; };
   $('#check').onclick = async () => {
     const a = $('#ans').value.trim();
@@ -960,6 +1086,8 @@ function drillConstruct(s) {
     if (res.correct) { firstTry(key, true); return passOK(); }
     firstTry(key, false);
     L.errors.construction++; if (c.focus_word) noteWordError(c.focus_word);
+    if (L.grammar) { const gr = DB.rules.find(r=>norm(r.title)===norm(L.grammar.title));
+      if (gr) { gr.errors = (gr.errors||0)+1; if (gr.errors>=2) gr.status='на закреплении'; } }
     correctForm = (res && res.correct_form) || c.expected_target;
     mustRetype = true;
     $('#fb').className='feedback bad';
@@ -968,7 +1096,7 @@ function drillConstruct(s) {
   };
   function passOK() {
     $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>`;
+    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm);
     speak(correctForm, DB.profile.targetLang);
     $('#check').textContent='Дальше'; $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
@@ -1014,8 +1142,12 @@ async function runQuest(cfg) {
         <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
         <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
         <div class="feedback" id="fb"></div>
-        <button class="btn btn-primary" id="check" style="margin-top:12px">Отправить</button>
+        <div class="btn-row" style="margin-top:12px">
+          ${(L&&L.grammar)?`<button class="btn btn-ghost" id="qrule">📐 Правило</button>`:''}
+          <button class="btn btn-primary" id="check">Отправить</button>
+        </div>
       </div>`);
+    if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
     speak(sc.scene_text, p.targetLang);
 
@@ -1040,7 +1172,7 @@ async function runQuest(cfg) {
       Q.errors++; cfg.onError && cfg.onError();
       if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой
         $('#fb').className='feedback ok';
-        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b><br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
+        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
         speak(res?.correct_form||correctForm, p.targetLang);
         $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
         $('#check').onclick = () => advance(sc, isFinal, true);
@@ -1053,7 +1185,7 @@ async function runQuest(cfg) {
     };
     function pass() {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ Отлично!`;
+      $('#fb').innerHTML = correctForm ? `✅ Отлично! <b>${esc(correctForm)}</b>` + sayBtn(correctForm) : `✅ Отлично!`;
       if (sc.is_branch && !isFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
         Q.branchesUsed++;
         $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
