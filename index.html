@@ -469,22 +469,30 @@ function splashScreen(done) {
   // нейросеть на canvas: узлы вспыхивают и соединяются линиями
   const cv = ov.querySelector('#splashNet'), ctx = cv.getContext('2d');
   const DPR = Math.min(window.devicePixelRatio||1, 2);
-  let W, H, nodes = [], raf, t0 = performance.now(), running = true;
-  function resize(){ W=cv.clientWidth; H=cv.clientHeight; cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0); }
-  resize();
-  const N = Math.max(26, Math.min(46, Math.round(W*H/16000)));
-  for (let i=0;i<N;i++) nodes.push({ x:Math.random()*W, y:Math.random()*H,
-    vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25, p:Math.random()*Math.PI*2 });
+  let W=0, H=0, nodes = [], raf, t0 = performance.now(), running = true, seeded = false;
+  function measure(){
+    W = cv.clientWidth || window.innerWidth || 360;
+    H = cv.clientHeight || window.innerHeight || 640;
+    cv.width = W*DPR; cv.height = H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  function seed(){
+    const N = Math.max(28, Math.min(48, Math.round(W*H/15000)));
+    nodes = [];
+    for (let i=0;i<N;i++) nodes.push({ x:Math.random()*W, y:Math.random()*H,
+      vx:(Math.random()-.5)*.28, vy:(Math.random()-.5)*.28, p:Math.random()*Math.PI*2 });
+    seeded = true;
+  }
   function draw(now){
     if (!running) return;
-    const el = now - t0;
+    // самовосстановление: если разметка ещё не дала размеры — измеряем и рассаживаем
+    if (!seeded || W===0 || H===0){ measure(); if (W>0 && H>0) seed(); raf=requestAnimationFrame(draw); return; }
     ctx.clearRect(0,0,W,H);
     // линии между близкими узлами
     for (let i=0;i<nodes.length;i++){
       const a=nodes[i];
       for (let j=i+1;j<nodes.length;j++){
         const b=nodes[j], dx=a.x-b.x, dy=a.y-b.y, d=Math.hypot(dx,dy);
-        if (d<120){ const al=(1-d/120)*0.35;
+        if (d<130){ const al=(1-d/130)*0.4;
           ctx.strokeStyle=`rgba(65,184,255,${al})`; ctx.lineWidth=1;
           ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
       }
@@ -493,17 +501,19 @@ function splashScreen(done) {
     nodes.forEach(n=>{
       n.x+=n.vx; n.y+=n.vy; n.p+=0.05;
       if (n.x<0||n.x>W) n.vx*=-1; if (n.y<0||n.y>H) n.vy*=-1;
-      const pulse=0.55+0.45*Math.sin(n.p), r=1.6+pulse*1.8;
+      const pulse=0.55+0.45*Math.sin(n.p), r=1.8+pulse*2;
       const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r*4);
       const hot=(Math.sin(n.p*0.7)>0.6);
-      g.addColorStop(0, hot?`rgba(255,138,60,${0.9*pulse})`:`rgba(120,200,255,${0.9*pulse})`);
+      g.addColorStop(0, hot?`rgba(255,138,60,${0.95*pulse})`:`rgba(120,200,255,${0.95*pulse})`);
       g.addColorStop(1,'rgba(10,20,36,0)');
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(n.x,n.y,r*4,0,Math.PI*2); ctx.fill();
       ctx.fillStyle=hot?'#FFB071':'#9ED7FF'; ctx.beginPath(); ctx.arc(n.x,n.y,r*0.6,0,Math.PI*2); ctx.fill();
     });
     raf=requestAnimationFrame(draw);
   }
-  raf=requestAnimationFrame(draw);
+  window.addEventListener('resize', measure);
+  // старт после того, как браузер построил разметку оверлея (иначе размеры = 0)
+  requestAnimationFrame(()=>{ measure(); if (W>0 && H>0) seed(); raf=requestAnimationFrame(draw); });
 
   let finished=false;
   function finish(){
