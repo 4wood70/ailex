@@ -431,6 +431,7 @@ function masteryPercent() {
 function boot() {
   DB = Storage.load();
   if (DB && !Array.isArray(DB.rules)) { DB.rules = []; Storage.save(DB); }  // миграция старой базы
+  if (DB && !DB.errorTypes) { DB.errorTypes = {}; Storage.save(DB); }       // счётчик типов ошибок (4.5)
   if (!Storage.getKey()) return keyWizard();
   if (!DB || !DB.profile)  return onboardingIntro();
   mainMenu();
@@ -1044,6 +1045,60 @@ function showRulePopup(g) {
   document.getElementById('ruleClose').onclick = close;
   ov.onclick = e => { if (e.target===ov) close(); };
 }
+
+/* Адаптивный показ правила при повторной ошибке одного типа (раздел 5, версия 4.5).
+   Считает частоту ошибок по типу; при 3-й ошибке одного типа разворачивает правило
+   рядом с подсказкой: берёт из Свода правил или подгружает у Gemini и сохраняет туда. */
+const ERR_LABEL = { word_order:'порядок слов', article:'артикли', verb_conjugation:'спряжение глаголов',
+  spelling:'правописание', vocabulary_gap:'подбор слов' };
+async function trackErrorType(et) {
+  if (!et || et==='none' || !ERR_LABEL[et]) return;
+  DB.errorTypes = DB.errorTypes || {};
+  DB.errorTypes[et] = (DB.errorTypes[et]||0) + 1;
+  Storage.save(DB);
+  if (DB.errorTypes[et] <= 2) return;          // показываем только с третьей ошибки этого типа
+  showErrorRuleInline(et);
+}
+async function getRuleForErrorType(et) {
+  // уже в Своде правил?
+  let rule = (DB.rules||[]).find(r => r.errorType===et);
+  if (rule) return rule;
+  // подгрузить у Gemini и сохранить в Свод
+  try {
+    const r = await Gemini.call({ task:'grammar_rule_for_error', target_lang:DB.profile.targetLang,
+      native_lang:DB.profile.nativeLang, cefr:curCefr(), error_type: et, error_label: ERR_LABEL[et],
+      rules:'Краткое правило по теме error_label для пары языков. Всё на native_lang. Транскрипция родными буквами в скобках.' },
+      '{"title":"короткое название на родном","summary":"суть в 1-2 фразы","table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
+    if (r && r.title) {
+      rule = { title:r.title, summary:r.summary||'', table:r.table||[], examples:r.examples||[],
+        cefr:curCefr(), lesson:(L&&L.code)||'', status:'на закреплении', errors:0,
+        date_added:today(), errorType: et };
+      DB.rules = DB.rules || []; DB.rules.push(rule); Storage.save(DB);
+    }
+  } catch(e){}
+  return rule;
+}
+async function showErrorRuleInline(et) {
+  const fb = document.getElementById('fb');
+  if (!fb || document.getElementById('errRule')) return;   // не дублируем
+  const box = document.createElement('div');
+  box.id = 'errRule';
+  box.style.cssText = 'margin-top:10px;border-top:1px solid var(--line);padding-top:8px;font-size:14px';
+  box.innerHTML = `<b style="color:var(--violet)">📐 Часто путаешь «${esc(ERR_LABEL[et])}». Правило:</b> <span id="errRuleBody" style="color:var(--dim)">загружаю…</span>`;
+  fb.appendChild(box);
+  const rule = await getRuleForErrorType(et);
+  const body = document.getElementById('errRuleBody');
+  if (!body) return;
+  if (rule) {
+    body.style.color = 'var(--ink)';
+    body.innerHTML = esc(rule.summary||rule.title) +
+      ` <button class="btn-mini" style="margin-left:6px;display:inline-block;width:auto" id="errRuleMore">Подробнее</button>`;
+    const more = document.getElementById('errRuleMore');
+    if (more) more.onclick = () => showRulePopup(rule);
+  } else {
+    body.textContent = 'правило сейчас недоступно — загляни в «Свод правил» позже.';
+  }
+}
 function drillGrammar() {
   const g = L.grammar;
   Screen.show(`
@@ -1171,7 +1226,7 @@ function drillConstruct(s) {
     try {
       res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
         cefr: curCefr(), expected: c.expected_target, user_answer: a },
-        '{"correct":true,"error_type":"spelling|verb_conjugation|word_order|vocabulary_gap|none","explanation":"короткий разбор на родном языке","correct_form":"верная фраза"}');
+        '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор на родном языке","correct_form":"верная фраза"}');
     } catch(e){}
     $('#check').disabled = false;
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(); }
@@ -1184,6 +1239,7 @@ function drillConstruct(s) {
     mustRetype = true;
     $('#fb').className='feedback bad';
     $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Верно: <b>${esc(correctForm)}</b><br>🧠 Введите верный вариант, чтобы продолжить.`;
+    trackErrorType(res && res.error_type);   // правило при повторной ошибке этого типа
     $('#ans').value=''; $('#ans').focus();
   };
   function passOK() {
@@ -1256,7 +1312,7 @@ async function runQuest(cfg) {
         res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
           expected: correctForm || '(свободный ответ по смыслу сцены)', user_answer:a,
           allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true.' },
-          '{"correct":true,"error_type":"...","explanation":"на родном","correct_form":"верная фраза"}');
+          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"на родном","correct_form":"верная фраза"}');
       } catch(e){}
       $('#check').disabled = false;
       if (!res) { toast('Связь барахлит — ответ засчитан', true); return pass(); }
@@ -1266,6 +1322,7 @@ async function runQuest(cfg) {
         $('#fb').className='feedback ok';
         $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
         speak(res?.correct_form||correctForm, p.targetLang);
+        trackErrorType(res && res.error_type);
         $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
         $('#check').onclick = () => advance(sc, isFinal, true);
         return;
@@ -1273,6 +1330,7 @@ async function runQuest(cfg) {
       mustRetype = true; correctForm = res?.correct_form || correctForm || a;
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Верно: <b>${esc(correctForm)}</b> — введите вручную.`;
+      trackErrorType(res && res.error_type);   // правило при повторной ошибке этого типа
       $('#ans').value=''; $('#ans').focus();
     };
     function pass() {
