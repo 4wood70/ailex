@@ -257,46 +257,122 @@ const SURVIVAL_SHARE = { A1:0.40, A2:0.35, B1:0.30, B2:0.25, C1:0.20, C2:0.20 };
    Структура повторяет четыре листа: Профиль / Прогресс / Словарь / Аналитика.
    ===================================================================== */
 const Storage = {
-  DB_KEY: 'AILEX_StatusDB',
-  API_KEY: 'AILEX_GEMINI_KEY',
-  load()  { try { return JSON.parse(localStorage.getItem(this.DB_KEY)); } catch(e){ return null; } },
-  save(d) { localStorage.setItem(this.DB_KEY, JSON.stringify(d)); },
-  wipe()  { localStorage.removeItem(this.DB_KEY); },
+  DB_KEY: 'AILEX_StatusDB',     // прежняя одиночная база (для миграции)
+  VAULT_KEY: 'AILEX_Vault',     // сейф с несколькими профилями (4.6)
+  API_KEY: 'AILEX_GEMINI_KEY',  // ключ Gemini — общий для устройства
   getKey(){ return localStorage.getItem(this.API_KEY) || ''; },
   setKey(k){ localStorage.setItem(this.API_KEY, k.trim()); },
+
+  _readVault(){ try { return JSON.parse(localStorage.getItem(this.VAULT_KEY)); } catch(e){ return null; } },
+  _writeVault(v){ localStorage.setItem(this.VAULT_KEY, JSON.stringify(v)); },
+  _newId(){ return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); },
+
+  // миграция: если сейфа нет, но есть прежняя одиночная база — заворачиваем её в первый профиль
+  migrate(){
+    let v = this._readVault();
+    if (v && Array.isArray(v.profiles)) return v;
+    let old = null; try { old = JSON.parse(localStorage.getItem(this.DB_KEY)); } catch(e){}
+    if (old && old.profile) {
+      const id = this._newId();
+      v = { schema:'4.6', activeId:id, profiles:[{ id, db: old }] };
+      this._writeVault(v);
+      return v;
+    }
+    return null;
+  },
+
+  listProfiles(){
+    const v = this._readVault();
+    if (!v || !Array.isArray(v.profiles)) return [];
+    return v.profiles.map(p => ({ id:p.id, name:(p.db.profile||{}).name||'Профиль',
+      nativeLang:(p.db.profile||{}).nativeLang, targetLang:(p.db.profile||{}).targetLang,
+      cefr:(p.db.profile||{}).cefr, active: p.id===v.activeId }));
+  },
+  activeId(){ const v=this._readVault(); return v ? v.activeId : null; },
+  switchTo(id){ const v=this._readVault(); if (v && v.profiles.some(p=>p.id===id)){ v.activeId=id; this._writeVault(v); } },
+
+  // load: возвращает базу активного профиля (совместимо со старым кодом)
+  load(){
+    const v = this._readVault();
+    if (!v || !v.profiles.length) return null;
+    const p = v.profiles.find(x=>x.id===v.activeId) || v.profiles[0];
+    return p ? p.db : null;
+  },
+  // save: записывает базу активного профиля обратно в сейф (совместимо: Storage.save(DB))
+  save(d){
+    let v = this._readVault();
+    if (!v || !v.profiles.length) { return this.addProfile(d); }       // первый профиль
+    let p = v.profiles.find(x=>x.id===v.activeId) || v.profiles[0];
+    p.db = d; this._writeVault(v);
+  },
+  // addProfile: создаёт новый профиль и делает его активным; возвращает id
+  addProfile(d){
+    let v = this._readVault() || { schema:'4.6', activeId:null, profiles:[] };
+    const id = this._newId();
+    v.profiles.push({ id, db: d }); v.activeId = id; this._writeVault(v);
+    return id;
+  },
+  // wipe: удаляет активный профиль; если остались — переключает на первый
+  wipe(){
+    let v = this._readVault();
+    if (!v) { localStorage.removeItem(this.DB_KEY); return; }
+    v.profiles = v.profiles.filter(p => p.id !== v.activeId);
+    if (v.profiles.length){ v.activeId = v.profiles[0].id; this._writeVault(v); }
+    else { localStorage.removeItem(this.VAULT_KEY); localStorage.removeItem(this.DB_KEY); }
+  },
+
   newDB(profile) {
     return {
-      meta: { app:'AILEX', schema:'4.3', created: today() },
+      meta: { app:'AILEX', schema:'4.6', created: today() },
       profile,                       // лист «Профиль» (6 полей, раздел 2.2)
       progress: [],                  // лист «Прогресс» (раздел 2.3)
       vocab: [],                     // лист «Словарь» (раздел 2.3-С) = KNOWN_VOCAB
       rules: [],                     // часть «Свод правил» (раздел 2.3-П)
+      errorTypes: {},                // счётчик типов ошибок (4.5)
       analytics: [],                 // лист «Аналитика» (раздел 2.6)
       nextStage: '',                 // код следующего этапа
       reviewQueue: [],               // очередь повторения (трудные слова)
       examAttempts: {},              // попытки экзаменов по уровню
     };
   },
+  // экспорт: весь сейф (все профили) одним файлом
   exportFile() {
-    const blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
+    const v = this._readVault() || { schema:'4.6', activeId:null, profiles:[] };
+    const blob = new Blob([JSON.stringify(v, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'AILEX_StatusDB.json';
     a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
   },
+  // импорт: принимает файл-сейф (новый формат) или прежнюю одиночную базу
   importFile(file, cb) {
     const r = new FileReader();
     r.onload = () => {
       try {
         const d = JSON.parse(r.result);
-        if (!d.profile || !Array.isArray(d.vocab)) throw 0;
-        Storage.save(d); cb(true);
+        if (d && Array.isArray(d.profiles) && d.profiles.length) {        // новый формат — сейф
+          this._writeVault(d); cb(true);
+        } else if (d && d.profile && Array.isArray(d.vocab)) {            // старый формат — одиночная база
+          const id = this._newId();
+          this._writeVault({ schema:'4.6', activeId:id, profiles:[{ id, db:d }] }); cb(true);
+        } else throw 0;
       } catch(e){ cb(false); }
     };
     r.readAsText(file);
   }
 };
+
+// дозаполнение полей для баз, созданных в старых версиях
+function ensureDbArrays(d){
+  if (!d) return d;
+  if (!Array.isArray(d.rules)) d.rules = [];
+  if (!d.errorTypes) d.errorTypes = {};
+  if (!Array.isArray(d.reviewQueue)) d.reviewQueue = [];
+  if (!Array.isArray(d.analytics)) d.analytics = [];
+  if (!d.examAttempts) d.examAttempts = {};
+  return d;
+}
 
 let DB = null;
 
@@ -429,12 +505,34 @@ function masteryPercent() {
    BOOT SEQUENCE (раздел 3)
    ===================================================================== */
 function boot() {
-  DB = Storage.load();
-  if (DB && !Array.isArray(DB.rules)) { DB.rules = []; Storage.save(DB); }  // миграция старой базы
-  if (DB && !DB.errorTypes) { DB.errorTypes = {}; Storage.save(DB); }       // счётчик типов ошибок (4.5)
+  Storage.migrate();                                   // прежнюю одиночную базу — в первый профиль
   if (!Storage.getKey()) return keyWizard();
-  if (!DB || !DB.profile)  return onboardingIntro();
-  mainMenu();
+  const profs = Storage.listProfiles();
+  if (profs.length === 0) return onboardingIntro();    // новый пользователь
+  if (profs.length === 1) { DB = ensureDbArrays(Storage.load()); Storage.save(DB); return mainMenu(); }
+  return profileSelect();                              // несколько профилей — выбор
+}
+
+/* ---------- Экран выбора профиля (раздел 2.8 / 3.2) ---------- */
+function profileSelect() {
+  const profs = Storage.listProfiles();
+  Screen.show(`
+    <div class="eyebrow">Профили</div>
+    <h1>Кто занимается?</h1>
+    <p class="sub">Выберите профиль или создайте новый — для другого языка или другого человека.</p>
+    <div class="menu-list">
+      ${profs.map(p=>`
+        <button class="menu-item" data-id="${esc(p.id)}">
+          <span class="ic">${esc((p.name||'?').slice(0,1).toUpperCase())}</span>
+          <span class="t"><b>${esc(p.name)}</b><small>${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · ${esc(p.cefr||'')}</small></span>
+          <span class="chev">›</span>
+        </button>`).join('')}
+    </div>
+    <button class="btn btn-ghost" id="newProf" style="margin-top:14px">＋ Создать профиль / добавить язык</button>`);
+  document.querySelectorAll('.menu-item[data-id]').forEach(b => b.onclick = () => {
+    Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); mainMenu();
+  });
+  $('#newProf').onclick = () => onboardingIntro();
 }
 
 /* ---------- Заставка при запуске (Splash): логотип + нейросеть ----------
@@ -702,12 +800,12 @@ function finishOnboarding(profile, cefr) {
   DB = Storage.newDB(profile);
   DB.nextStage = fmtCode(cefr==='C2'?'C1':cefr, 1, 1);
   DB.progress.push({ code:'START', date: today(), words:'', next: DB.nextStage, note:'' });
-  Storage.save(DB);
+  Storage.addProfile(DB);          // новый профиль, становится активным
   toast('Сохранено ✓');
   Screen.show(`
     <div class="eyebrow">Профиль создан</div>
     <h1>Ваш уровень: ${esc(cefr)}</h1>
-    <p class="sub">База AILEX_StatusDB создана. Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.</p>
+    <p class="sub">Профиль «${esc(profile.name)}» (${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}) создан. Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.</p>
     <button class="btn btn-primary" id="go">К главному меню</button>`);
   $('#go').onclick = mainMenu;
 }
@@ -757,6 +855,7 @@ function mainMenu() {
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
   $('#mLesson').onclick = () => isExam ? startExam(next) : startLesson(next);
@@ -764,6 +863,7 @@ function mainMenu() {
   $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
   $('#mRules').onclick  = showRules;
+  $('#mProf').onclick   = profileSelect;
   $('#mSet').onclick    = showSettings;
 }
 
@@ -890,7 +990,7 @@ async function startLesson(code) {
       const rg = await Gemini.call({
         task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
         lesson_words: words.map(w=>w.term), known_rules: knownRules,
-        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если на этом уроке нового правила нет — has_new_rule=false. Все пояснения и название — на native_lang. Транскрипция — родными буквами в квадратных скобках.'
+        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если на этом уроке нового правила нет — has_new_rule=false. Правило давай ЦЕЛИКОМ и самодостаточно: в table — ПОЛНЫЙ набор форм по теме (артикли — все рода der/die/das; местоимения — весь список; спряжение — все лица; и т. п.), а не один пример. Все пояснения и название — на native_lang. Транскрипция — родными буквами в квадратных скобках.'
       },
       '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) grammar = rg;
@@ -1067,7 +1167,7 @@ async function getRuleForErrorType(et) {
   try {
     const r = await Gemini.call({ task:'grammar_rule_for_error', target_lang:DB.profile.targetLang,
       native_lang:DB.profile.nativeLang, cefr:curCefr(), error_type: et, error_label: ERR_LABEL[et],
-      rules:'Краткое правило по теме error_label для пары языков. Всё на native_lang. Транскрипция родными буквами в скобках.' },
+      rules:'Правило по теме error_label, поданное ЦЕЛИКОМ: в table — ПОЛНЫЙ набор форм по теме (например, артикли — все рода der/die/das с правилом определения; местоимения — весь список; спряжение — все лица), а не один пример. Всё на native_lang. Транскрипция родными буквами в скобках.' },
       '{"title":"короткое название на родном","summary":"суть в 1-2 фразы","table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
     if (r && r.title) {
       rule = { title:r.title, summary:r.summary||'', table:r.table||[], examples:r.examples||[],
