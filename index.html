@@ -70,7 +70,8 @@ h2{font-family:'Chakra Petch';font-weight:600;font-size:17px;margin-bottom:4px}
 .btn-accent{background:linear-gradient(135deg,#FF9A4D,#F0742A);color:#23150A;
   box-shadow:0 4px 24px rgba(255,138,60,.28)}
 .btn-ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
-.btn-row{display:flex;gap:10px}.btn-row .btn{flex:1}
+.btn-row{display:flex;gap:10px}.btn-row .btn{flex:1 1 0;min-width:0}
+.btn-ico{flex:0 0 auto!important;width:auto;padding:14px!important;font-size:18px;line-height:1}
 .btn[disabled]{opacity:.45;pointer-events:none}
 .btn + .btn{margin-top:10px}
 .btn-mini{display:inline-block;width:auto;padding:8px 14px;font-size:13px;border-radius:9px}
@@ -1113,7 +1114,7 @@ function drillWrite(s) {
       <input type="text" id="ans" placeholder="Напишите слово на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost" id="hint">💡 Подсказка</button>
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
@@ -1149,8 +1150,8 @@ function drillConstruct(s) {
       <input type="text" id="ans" placeholder="Фраза на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost" id="hint" style="flex:0 0 auto;padding:14px 14px;font-size:18px" title="Подсказка" aria-label="Подсказка">💡</button>
-        ${L.grammar?`<button class="btn btn-ghost" id="rule" style="flex:0 0 auto;padding:14px 14px;font-size:18px" title="Правило" aria-label="Правило">📐</button>`:''}
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        ${L.grammar?`<button class="btn btn-ghost btn-ico" id="rule" title="Правило" aria-label="Правило">📐</button>`:''}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
@@ -1234,7 +1235,7 @@ async function runQuest(cfg) {
         <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
-          ${(L&&L.grammar)?`<button class="btn btn-ghost" id="qrule" style="flex:0 0 auto;padding:14px 14px;font-size:18px" title="Правило" aria-label="Правило">📐</button>`:''}
+          ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
           <button class="btn btn-primary" id="check">Отправить</button>
         </div>
       </div>`);
