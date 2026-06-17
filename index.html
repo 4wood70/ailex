@@ -382,6 +382,7 @@ let DB = null;
    ===================================================================== */
 const Gemini = {
   MODELS: ['gemini-3.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+  preferred: null,   // последняя успешно ответившая модель — пробуем её первой
   SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
         + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
         + 'Все пояснения для ученика — строго на языке native_lang. Жёстко держи уровень CEFR. Никакого оффтопа.',
@@ -405,27 +406,37 @@ const Gemini = {
         '\n\nСХЕМА ОТВЕТА (верни ровно такой JSON):\n' + schema }] }],
       generationConfig: { temperature: 0.7, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
     };
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
     let lastErr = null;
-    for (const m of this.MODELS) {
-      try {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
-          { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
-        if (!r.ok) { lastErr = new Error('HTTP '+r.status+' ('+m+')'); continue; }
-        const j = await r.json();
-        const txt = (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
-        const clean = txt.replace(/```json|```/g,'').trim();
-        if (!clean) { lastErr = new Error('EMPTY ('+m+')'); continue; }  // think-модель не дала текста — следующая
-        try { return JSON.parse(clean); }
-        catch(pe) {
-          // вытащить JSON, даже если модель добавила лишний текст
-          const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
-          if (s >= 0 && e > s) { try { return JSON.parse(clean.slice(s, e+1)); } catch(_){} }
-          lastErr = new Error('BAD_JSON ('+m+')'); continue;
+    // сначала пробуем запомненную рабочую модель, затем остальные
+    const order = this.preferred ? [this.preferred, ...this.MODELS.filter(m=>m!==this.preferred)] : this.MODELS.slice();
+    for (const m of order) {
+      // до 3 попыток на модель: при 429 (лимит запросов) ждём и повторяем ту же модель
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
+            { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
+          if (r.status === 429) {                       // превышен лимит запросов
+            lastErr = new Error('HTTP 429 ('+m+')');
+            if (attempt < 2) { await sleep(2000 * (attempt + 1)); continue; }  // подождать и повторить ту же модель
+            break;                                      // не вышло — к следующей модели
+          }
+          if (!r.ok) { lastErr = new Error('HTTP '+r.status+' ('+m+')'); break; }  // иная ошибка — к следующей модели
+          const j = await r.json();
+          const txt = (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
+          const clean = txt.replace(/```json|```/g,'').trim();
+          if (!clean) { lastErr = new Error('EMPTY ('+m+')'); break; }   // пустой ответ — к следующей модели
+          try { const out = JSON.parse(clean); this.preferred = m; return out; }
+          catch(pe) {
+            const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
+            if (s >= 0 && e > s) { try { const out = JSON.parse(clean.slice(s, e+1)); this.preferred = m; return out; } catch(_){} }
+            lastErr = new Error('BAD_JSON ('+m+')'); break;
+          }
+        } catch(e) {
+          if (String(e.message).startsWith('KEY:')) throw e;
+          lastErr = e; break;
         }
-      } catch(e) {
-        if (String(e.message).startsWith('KEY:')) throw e;
-        lastErr = e;
       }
     }
     throw lastErr || new Error('GEMINI_FAIL');
