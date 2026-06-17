@@ -508,8 +508,36 @@ function nextAfterExamPass(examCode) {
 function masteryPercent() {
   const a = DB?.analytics || [];
   if (!a.length) return 0;
-  const last = a.slice(-5);
-  return Math.round(last.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/last.length*100);
+  const lvl = currentLevel();
+  // берём записи текущего уровня (урок/супер-урок/экзамен этого уровня)
+  const ofLevel = a.filter(x => {
+    const p = parseCode(String(x.lesson||'').replace('SUPER_','').replace('EXAM_',''));
+    return p && p.lvl === lvl;
+  });
+  const set = ofLevel.length ? ofLevel : a;   // если по уровню ещё нет данных — по всем
+  return Math.round(set.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/set.length*100);
+}
+/* Прогресс по текущему уровню CEFR = доля пройденных уроков уровня (4.8).
+   Уровень = 2 подуровня × LESSONS_PER_SUB уроков (по умолчанию 25+25 = 50). */
+function currentLevel() {
+  const p = parseCode(String(DB?.nextStage||'').replace('SUPER_','').replace('EXAM_',''));
+  return (p && p.lvl) || DB?.profile?.cefr || 'A1';
+}
+function levelProgress() {
+  const total = LESSONS_PER_SUB * 2;            // уроков на уровень (50)
+  const raw = String(DB?.nextStage||'').replace('SUPER_','');
+  const lvl = currentLevel();
+  let done = 0;
+  const em = raw.match(/^EXAM_([ABC][12])\.(\d)$/);
+  if (em) {
+    done = (+em[2] === 1) ? LESSONS_PER_SUB : total;   // дошёл до экзамена подуровня
+  } else {
+    const p = parseCode(raw);
+    if (p) done = (p.sub === 1 ? 0 : LESSONS_PER_SUB) + (p.n - 1);  // следующий урок ещё не пройден
+  }
+  done = Math.max(0, Math.min(total, done));
+  const pct = Math.round(done / total * 100);
+  return { lvl, done, total, pct };
 }
 
 /* =====================================================================
@@ -824,7 +852,7 @@ function finishOnboarding(profile, cefr) {
 /* =====================================================================
    ГЛАВНОЕ МЕНЮ (раздел 3.2, ветвь А) — кольцо Overall Mastery как на макете
    ===================================================================== */
-function ringSVG(pct) {
+function ringSVG(pct, lvl) {
   const R = 88, C = 2*Math.PI*R, on = C*pct/100;
   return `
   <div class="ring">
@@ -837,23 +865,25 @@ function ringSVG(pct) {
       <circle cx="105" cy="105" r="${R}" fill="none" stroke="url(#g1)" stroke-width="10"
         stroke-linecap="round" stroke-dasharray="${on} ${C}" style="filter:drop-shadow(0 0 8px rgba(65,184,255,.5))"/>
     </svg>
-    <div class="core"><div><div class="lbl">Overall Mastery:</div><div class="pct">${pct}%</div></div></div>
+    <div class="core"><div><div class="lbl">Уровень ${esc(lvl||'')}</div><div class="pct">${pct}%</div></div></div>
   </div>`;
 }
 function mainMenu() {
   DB = Storage.load();
-  const p = DB.profile, pct = masteryPercent();
+  const p = DB.profile, acc = masteryPercent();
+  const lp = levelProgress();
   const next = DB.nextStage;
   const isExam = next.startsWith('EXAM_');
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
   const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
-  const segs = 10, lit = Math.round(pct/100*segs);
+  const segs = 10, lit = Math.round(lp.pct/100*segs);
   Screen.show(`
     <h1>С возвращением, ${esc(p.name)}!</h1>
     <p class="sub">${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · уровень ${esc(p.cefr)} · следующий этап: <b style="color:var(--ink)">${esc(next)}</b></p>
     <div class="card glow">
-      <div class="ring-wrap">${ringSVG(pct)}</div>
+      <div class="ring-wrap">${ringSVG(lp.pct, lp.lvl)}</div>
       <div class="segbar">${Array.from({length:segs},(_,i)=>`<i class="${i<lit?(i>=segs-2?'on hot':'on'):''}"></i>`).join('')}</div>
+      <div style="text-align:center;font-size:12px;color:var(--dim);margin:2px 0 6px">Прогресс уровня: <b style="color:var(--ink)">${lp.done}</b> из ${lp.total} уроков${acc?` · точность ${acc}%`:''}</div>
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)">
         <span>Слов в словаре: <b style="color:var(--ink)">${words}</b></span>
         <span>Освоено: <b style="color:var(--ink)">${mastered}</b></span>
@@ -879,23 +909,56 @@ function mainMenu() {
 }
 
 /* ---------- Словарь (лист 2.3-С) ---------- */
-function showDictionary() {
-  const v = DB.vocab.slice().reverse();
+function showDictionary(letter) {
+  const all = DB.vocab.slice();
+  // группировка по первой букве
+  const groups = {};
+  all.forEach(w => { const L0 = (w.term||'?').trim().charAt(0).toUpperCase() || '#'; (groups[L0] = groups[L0] || []).push(w); });
+  const letters = Object.keys(groups).sort((a,b)=>a.localeCompare(b, DB.profile.targetLang));
+  const cur = (letter && groups[letter]) ? letter : (letters[0] || null);
+  const list = cur ? groups[cur].slice().sort((a,b)=>(a.term||'').localeCompare(b.term||'', DB.profile.targetLang)) : [];
   Screen.show(`
     <h1>Словарь</h1>
-    <p class="sub">${v.length} слов · это и есть KNOWN_VOCAB: из него строится повторение и прогресс.</p>
-    <div class="card" style="max-height:62vh;overflow-y:auto">
-      ${v.length ? v.map(w=>`
-        <div class="vocab-row">
-          <span class="emoji">${esc(w.emoji||'•')}</span>
-          <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
-            <small>${esc(w.translation)}${w.irregular_forms?' · '+esc(w.irregular_forms):''}${w.errors>=2?' · ⚠️ трудное':''}</small>
-            ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
-          </span>
-          <button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>
+    <p class="sub">${all.length} слов · выберите букву, затем слово — раскроется карточка.</p>
+    <div id="alphaIdx" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      ${letters.map(L0=>`<button class="alpha ${L0===cur?'on':''}" data-l="${esc(L0)}"
+        style="min-width:38px;padding:8px 10px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;
+        border:1px solid ${L0===cur?'transparent':'var(--line)'};
+        background:${L0===cur?'linear-gradient(135deg,#2F7DF6,#41B8FF)':'var(--panel2)'};
+        color:${L0===cur?'#fff':'var(--ink)'}">${esc(L0)} <small style="opacity:.7;font-size:10px">${groups[L0].length}</small></button>`).join('')}
+    </div>
+    <div class="card" style="max-height:60vh;overflow-y:auto">
+      ${list.length ? list.map((w,i)=>`
+        <div style="border-bottom:1px solid var(--line)">
+          <button class="dword" data-i="${i}" style="width:100%;text-align:left;background:none;border:none;color:var(--ink);
+            font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
+            <span class="emoji">${esc(w.emoji||'•')}</span>
+            <span style="flex:1"><b style="font-size:15px">${esc(w.term)}</b>
+              <small style="display:block;color:var(--dim);font-size:12px">${esc(w.translit||'')} · ${esc(w.translation||'')}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
+            <span class="chev" style="color:var(--faint)">▾</span>
+          </button>
+          <div class="dword-body" id="dw${i}" style="display:none;padding:0 2px 12px"></div>
         </div>`).join('') : '<p class="note">Пока пусто. Слова появятся после первого урока.</p>'}
     </div>`, { back: mainMenu });
-  document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  document.querySelectorAll('.alpha').forEach(b => b.onclick = () => showDictionary(b.dataset.l));
+  document.querySelectorAll('.dword').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i, w = list[i], body = document.getElementById('dw'+i);
+    const open = body.style.display !== 'none';
+    if (open) { body.style.display='none'; b.querySelector('.chev').textContent='▾'; return; }
+    if (!body.dataset.filled) {
+      body.innerHTML = `
+        <div class="vocab-row" style="border:none">
+          <span class="w"><b>${esc(w.term)}</b> <span class="tr">${esc(w.translit||'')}</span>
+            <small>${esc(w.translation||'')}${w.irregular_forms?' · '+esc(w.irregular_forms):''}</small>
+            ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
+            ${w.example?`<small style="display:block;margin-top:4px">${esc(w.example)}</small>`:''}</span>
+          <button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>
+        </div>`;
+      body.dataset.filled='1';
+      body.querySelectorAll('.tts').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang));
+    }
+    body.style.display='block'; b.querySelector('.chev').textContent='▴';
+  });
 }
 
 /* ---------- Свод правил (раздел 2.3-П) ---------- */
@@ -1157,58 +1220,37 @@ function showRulePopup(g) {
   ov.onclick = e => { if (e.target===ov) close(); };
 }
 
-/* Адаптивный показ правила при повторной ошибке одного типа (раздел 5, версия 4.5).
-   Считает частоту ошибок по типу; при 3-й ошибке одного типа разворачивает правило
-   рядом с подсказкой: берёт из Свода правил или подгружает у Gemini и сохраняет туда. */
-const ERR_LABEL = { word_order:'порядок слов', article:'артикли', verb_conjugation:'спряжение глаголов',
-  spelling:'правописание', vocabulary_gap:'подбор слов' };
-async function trackErrorType(et) {
-  if (!et || et==='none' || !ERR_LABEL[et]) return;
-  DB.errorTypes = DB.errorTypes || {};
-  DB.errorTypes[et] = (DB.errorTypes[et]||0) + 1;
+/* Точное правило при ошибке (версия 4.7).
+   Правило приходит прямо в ответе check_answer — Gemini формулирует его под конкретную
+   допущенную ошибку. Показываем сразу при первой ошибке и сохраняем в Свод правил. */
+function ruleFromCheck(res) {
+  if (!res || !res.rule_title) return null;
+  return { title: res.rule_title, summary: res.rule_summary || '', table: res.rule_table || [],
+    examples: [], cefr: curCefr(), lesson: (L&&L.code)||'', status: 'на закреплении',
+    errors: 0, date_added: today() };
+}
+function saveErrorRule(rule) {
+  if (!rule || !rule.title) return;
+  DB.rules = DB.rules || [];
+  const ex = DB.rules.find(r => norm(r.title) === norm(rule.title));
+  if (ex) { ex.errors = (ex.errors||0) + 1; ex.status = 'на закреплении';
+            if (!ex.table?.length && rule.table?.length) ex.table = rule.table; }
+  else DB.rules.push(rule);
   Storage.save(DB);
-  if (DB.errorTypes[et] <= 2) return;          // показываем только с третьей ошибки этого типа
-  showErrorRuleInline(et);
 }
-async function getRuleForErrorType(et) {
-  // уже в Своде правил?
-  let rule = (DB.rules||[]).find(r => r.errorType===et);
-  if (rule) return rule;
-  // подгрузить у Gemini и сохранить в Свод
-  try {
-    const r = await Gemini.call({ task:'grammar_rule_for_error', target_lang:DB.profile.targetLang,
-      native_lang:DB.profile.nativeLang, cefr:curCefr(), error_type: et, error_label: ERR_LABEL[et],
-      rules:'Правило по теме error_label, поданное ЦЕЛИКОМ: в table — ПОЛНЫЙ набор форм по теме (например, артикли — все рода der/die/das с правилом определения; местоимения — весь список; спряжение — все лица), а не один пример. Всё на native_lang. Транскрипция родными буквами в скобках.' },
-      '{"title":"короткое название на родном","summary":"суть в 1-2 фразы","table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
-    if (r && r.title) {
-      rule = { title:r.title, summary:r.summary||'', table:r.table||[], examples:r.examples||[],
-        cefr:curCefr(), lesson:(L&&L.code)||'', status:'на закреплении', errors:0,
-        date_added:today(), errorType: et };
-      DB.rules = DB.rules || []; DB.rules.push(rule); Storage.save(DB);
-    }
-  } catch(e){}
-  return rule;
-}
-async function showErrorRuleInline(et) {
+function showErrorRule(res) {
+  const rule = ruleFromCheck(res);
+  saveErrorRule(rule);
   const fb = document.getElementById('fb');
-  if (!fb || document.getElementById('errRule')) return;   // не дублируем
+  if (!fb || !rule || document.getElementById('errRule')) return;
   const box = document.createElement('div');
   box.id = 'errRule';
   box.style.cssText = 'margin-top:10px;border-top:1px solid var(--line);padding-top:8px;font-size:14px';
-  box.innerHTML = `<b style="color:var(--violet)">📐 Часто путаешь «${esc(ERR_LABEL[et])}». Правило:</b> <span id="errRuleBody" style="color:var(--dim)">загружаю…</span>`;
+  box.innerHTML = `<b style="color:var(--violet)">📐 Правило:</b> <span style="color:var(--ink)">${esc(rule.summary||rule.title)}</span>`
+    + (rule.table && rule.table.length ? ` <button class="btn-mini" style="margin-left:6px;display:inline-block;width:auto" id="errRuleMore">Подробнее</button>` : '');
   fb.appendChild(box);
-  const rule = await getRuleForErrorType(et);
-  const body = document.getElementById('errRuleBody');
-  if (!body) return;
-  if (rule) {
-    body.style.color = 'var(--ink)';
-    body.innerHTML = esc(rule.summary||rule.title) +
-      ` <button class="btn-mini" style="margin-left:6px;display:inline-block;width:auto" id="errRuleMore">Подробнее</button>`;
-    const more = document.getElementById('errRuleMore');
-    if (more) more.onclick = () => showRulePopup(rule);
-  } else {
-    body.textContent = 'правило сейчас недоступно — загляни в «Свод правил» позже.';
-  }
+  const more = document.getElementById('errRuleMore');
+  if (more) more.onclick = () => showRulePopup(rule);
 }
 function drillGrammar() {
   const g = L.grammar;
@@ -1336,21 +1378,20 @@ function drillConstruct(s) {
     let res = null;
     try {
       res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
-        cefr: curCefr(), expected: c.expected_target, user_answer: a },
-        '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор на родном языке","correct_form":"верная фраза"}');
+        cefr: curCefr(), expected: c.expected_target, user_answer: a,
+        rules:'Если есть ошибка — в explanation дай короткий разбор ИМЕННО этой ошибки, а в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно: все нужные формы), на native_lang. rule_table — полный набор форм по теме правила (если уместно).' },
+        '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
     } catch(e){}
     $('#check').disabled = false;
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(); }
     if (res.correct) { firstTry(key, true); return passOK(); }
     firstTry(key, false);
     L.errors.construction++; if (c.focus_word) noteWordError(c.focus_word);
-    if (L.grammar) { const gr = DB.rules.find(r=>norm(r.title)===norm(L.grammar.title));
-      if (gr) { gr.errors = (gr.errors||0)+1; if (gr.errors>=2) gr.status='на закреплении'; } }
     correctForm = (res && res.correct_form) || c.expected_target;
     mustRetype = true;
     $('#fb').className='feedback bad';
     $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Верно: <b>${esc(correctForm)}</b><br>🧠 Введите верный вариант, чтобы продолжить.`;
-    trackErrorType(res && res.error_type);   // правило при повторной ошибке этого типа
+    showErrorRule(res);   // точное правило под ошибку — сразу
     $('#ans').value=''; $('#ans').focus();
   };
   function passOK() {
@@ -1422,8 +1463,8 @@ async function runQuest(cfg) {
       try {
         res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
           expected: correctForm || '(свободный ответ по смыслу сцены)', user_answer:a,
-          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true.' },
-          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"на родном","correct_form":"верная фраза"}');
+          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true. Если есть ошибка — в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно), на native_lang.' },
+          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"название правила под ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_table":[{"form":"форма","translit":"[транскрипция]","translation":"перевод"}]}');
       } catch(e){}
       $('#check').disabled = false;
       if (!res) { toast('Связь барахлит — ответ засчитан', true); return pass(); }
@@ -1433,7 +1474,7 @@ async function runQuest(cfg) {
         $('#fb').className='feedback ok';
         $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
         speak(res?.correct_form||correctForm, p.targetLang);
-        trackErrorType(res && res.error_type);
+        showErrorRule(res);
         $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
         $('#check').onclick = () => advance(sc, isFinal, true);
         return;
@@ -1441,7 +1482,7 @@ async function runQuest(cfg) {
       mustRetype = true; correctForm = res?.correct_form || correctForm || a;
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Верно: <b>${esc(correctForm)}</b> — введите вручную.`;
-      trackErrorType(res && res.error_type);   // правило при повторной ошибке этого типа
+      showErrorRule(res);   // точное правило под ошибку — сразу
       $('#ans').value=''; $('#ans').focus();
     };
     function pass() {
