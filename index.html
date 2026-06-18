@@ -381,7 +381,7 @@ let DB = null;
    Модель не знает о базе, не пишет в неё, получает задание на один шаг.
    ===================================================================== */
 const Gemini = {
-  MODELS: ['gemini-3.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+  MODELS: ['gemini-3.5-flash', 'gemini-2.5-flash'],
   preferred: null,   // последняя успешно ответившая модель — пробуем её первой
   SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
         + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
@@ -1142,7 +1142,8 @@ async function startLesson(code) {
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);
-  let words, constructs, grammar = null;
+  let words;
+  // ПОРЦИЯ 1 (быстрый старт): только слова урока. Узнавание/письмо строятся из них локально.
   try {
     const r1 = await Gemini.call({
       task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
@@ -1155,32 +1156,9 @@ async function startLesson(code) {
     '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм: для глаголов 3 формы (+3 лицо у неправильных), для существительных артикль+множественное"}]} — ровно 7 объектов');
     words = (r1.words||[]).filter(w => w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term))).slice(0,7);
     if (words.length < 3) throw new Error('FEW_WORDS');
-
-    const r2 = await Gemini.call({
-      task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. Уровень CEFR строго соблюдать.'
-    },
-    '{"items":[{"prompt_native":"Скажи на целевом языке: «...» (формулировка на родном)","expected_target":"эталонная фраза на целевом языке","focus_word":"слово урока"}]} — ровно 9 объектов');
-    constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
-    if (constructs.length < 5) throw new Error('FEW_DRILLS');
-
-    // --- Grammar Card: правило урока (необязательно; сбой не ломает урок) ---
-    try {
-      const knownRules = (DB.rules||[]).map(r=>r.title).slice(-40);
-      const rg = await Gemini.call({
-        task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-        lesson_words: words.map(w=>w.term), known_rules: knownRules,
-        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если на этом уроке нового правила нет — has_new_rule=false. Правило давай ЦЕЛИКОМ и самодостаточно: в table — ПОЛНЫЙ набор форм по теме (артикли — все рода der/die/das; местоимения — весь список; спряжение — все лица; и т. п.), а не один пример. Все пояснения и название — на native_lang. Транскрипция — родными буквами в квадратных скобках.'
-      },
-      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
-      if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) grammar = rg;
-    } catch(e){ /* правило необязательно */ }
   } catch(e) {
     if (String(e.message).startsWith('KEY:')) return keyWizard(true);
-    Screen.show(`<h1>Не получилось подготовить урок</h1><p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p><p class="note" style="opacity:.7">Причина: ${esc(String(e.message||'неизвестно'))}</p><button class="btn btn-primary" id="r">Повторить</button><button class="btn btn-ghost" id="m">В меню</button>`);
-    $('#r').onclick = () => startLesson(code); $('#m').onclick = mainMenu;
-    return;
+    return lessonLoadError(()=>startLesson(code), e);
   }
 
   // --- Recap: 7 задач повторения (трудные слова + прошлый урок) ---
@@ -1190,21 +1168,76 @@ async function startLesson(code) {
   [...inQueue, ...recent].forEach(w => { if (!recapPool.some(x=>x.term===w.term)) recapPool.push(w); });
   const recapItems = DB.vocab.length >= 4 ? pick(recapPool, Math.min(7, recapPool.length)) : [];
 
-  // --- сборка шагов ---
+  // --- сборка шагов: узнавание/письмо готовы сразу; построение фраз — порция 2 (фон) ---
   const steps = [];
   recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
   steps.push({ t:'present' });
-  if (grammar) steps.push({ t:'grammar' });
+  steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
   for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Задание ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
   for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Задание ${i+6}/21`, w: words[i % words.length] });
-  constructs.forEach((c,i) => steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, c }));
+  for (let i=0;i<9;i++) steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, ci:i });
   steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
 
-  L = { code, words, steps, i:0, grammar,
+  L = { code, words, steps, i:0, grammar:null, constructs:null, chunk2:{state:'idle',promise:null,err:null},
+        lvl, known,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
         wordErr:{}, firstTryDone:{} };
+  fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
   renderStep();
+}
+
+// Порция 2: задания на построение фраз + правило урока. Грузится в фоне, повторяется локально при сбое.
+function fetchLessonChunk2() {
+  if (!L) return;
+  L.chunk2.state = 'loading'; L.chunk2.err = null;
+  const p = DB.profile, lvl = L.lvl, words = L.words, known = L.known;
+  L.chunk2.promise = (async () => {
+    const r2 = await Gemini.call({
+      task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. Уровень CEFR строго соблюдать.'
+    },
+    '{"items":[{"prompt_native":"Скажи на целевом языке: «...» (формулировка на родном)","expected_target":"эталонная фраза на целевом языке","focus_word":"слово урока"}]} — ровно 9 объектов');
+    const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
+    if (constructs.length < 5) throw new Error('FEW_DRILLS');
+    L.constructs = constructs;
+    try {
+      const knownRules = (DB.rules||[]).map(r=>r.title).slice(-40);
+      const rg = await Gemini.call({
+        task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+        lesson_words: words.map(w=>w.term), known_rules: knownRules,
+        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если нового правила нет — has_new_rule=false. Правило ЦЕЛИКОМ: в table ПОЛНЫЙ набор форм по теме. Пояснения и название — на native_lang. Транскрипция — родными буквами в скобках. Проставь categories.'
+      },
+      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
+      if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) L.grammar = rg;
+    } catch(_) { /* правило необязательно */ }
+    L.chunk2.state = 'ready';
+  })().catch(e => { L.chunk2.state = 'error'; L.chunk2.err = e; throw e; });
+  return L.chunk2.promise;
+}
+
+// Гарантирует готовность порции 2 к моменту, когда она нужна (построение фраз / правило).
+async function ensureChunk2() {
+  if (!L) return false;
+  if (L.chunk2.state === 'ready') return true;
+  if (L.chunk2.state === 'idle') fetchLessonChunk2();
+  Screen.loader('Догружаю урок…');
+  try { await L.chunk2.promise; return true; }
+  catch(e) {
+    if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return false; }
+    lessonLoadError(()=>{ fetchLessonChunk2(); ensureChunk2().then(ok=>{ if(ok) renderStep(); }); }, e);
+    return false;
+  }
+}
+
+function lessonLoadError(retryFn, e) {
+  Screen.show(`<h1>Не получилось подготовить урок</h1>
+    <p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p>
+    <p class="note" style="opacity:.7">Причина: ${esc(String(e?.message||'неизвестно'))}</p>
+    <button class="btn btn-primary" id="r">Повторить</button>
+    <button class="btn btn-ghost" id="m">В меню</button>`);
+  $('#r').onclick = retryFn; $('#m').onclick = mainMenu;
 }
 
 function noteWordError(term) {
@@ -1244,10 +1277,18 @@ function renderStep() {
   if (!L || L.i >= L.steps.length) return finishLesson();
   const s = L.steps[L.i];
   if (s.t==='present')   return drillPresent();
-  if (s.t==='grammar')   return drillGrammar();
+  if (s.t==='grammar') {                 // правило из порции 2: если не готово — подождём; нет правила — пропустим
+    if (L.isSuper) return (L.i++, renderStep());
+    if (L.chunk2.state==='ready') { if (L.grammar) return drillGrammar(); L.i++; return renderStep(); }
+    return ensureChunk2().then(ok => { if (!ok) return; if (L.grammar) drillGrammar(); else { L.i++; renderStep(); } });
+  }
   if (s.t==='recog')     return drillRecog(s);
   if (s.t==='write')     return drillWrite(s);
-  if (s.t==='construct') return drillConstruct(s);
+  if (s.t==='construct') {               // построение фраз из порции 2
+    if (s.c) return drillConstruct(s);   // супер-урок передаёт готовый объект c
+    if (L.constructs && L.constructs.length) { s.c = L.constructs[s.ci % L.constructs.length]; return drillConstruct(s); }
+    return ensureChunk2().then(ok => { if (!ok) return; s.c = L.constructs[s.ci % L.constructs.length]; drillConstruct(s); });
+  }
   if (s.t==='quest')     return runQuest({
       title:'Задание 21 · Интерактивный рассказ-квест',
       topic: DB.profile.interests, cefr: curCefr(),
