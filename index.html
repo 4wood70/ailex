@@ -891,7 +891,7 @@ function mainMenu() {
       ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
-      <button class="menu-item" id="mLesson"><span class="ic">🎯</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':'21 дрилл + рассказ-квест'}</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mLesson"><span class="ic">🎯</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Супер-урок</b><small>Повторение: 80% знакомого + связки</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
@@ -909,17 +909,24 @@ function mainMenu() {
 }
 
 /* ---------- Словарь (лист 2.3-С) ---------- */
-function showDictionary(letter) {
-  const all = DB.vocab.slice();
-  // группировка по первой букве
+function dictWordKey(w){ return (w.term||'?').trim().replace(/^(der|die|das)\s+/i,''); }   // без ведущего артикля
+function dictFirstLetter(w){ return (dictWordKey(w).charAt(0)||'#').toUpperCase(); }
+function isIrregularVerb(w){ return (w.part_of_speech==='verb' || /en$/.test(w.term||'')) && (w.is_irregular===true); }
+function showDictionary(letter, irrOnly) {
+  irrOnly = !!irrOnly;
+  let all = DB.vocab.slice();
+  if (irrOnly) all = all.filter(isIrregularVerb);
+  // группировка по первой букве САМОГО СЛОВА (артикль der/die/das игнорируется)
   const groups = {};
-  all.forEach(w => { const L0 = (w.term||'?').trim().charAt(0).toUpperCase() || '#'; (groups[L0] = groups[L0] || []).push(w); });
+  all.forEach(w => { const L0 = dictFirstLetter(w); (groups[L0] = groups[L0] || []).push(w); });
   const letters = Object.keys(groups).sort((a,b)=>a.localeCompare(b, DB.profile.targetLang));
   const cur = (letter && groups[letter]) ? letter : (letters[0] || null);
-  const list = cur ? groups[cur].slice().sort((a,b)=>(a.term||'').localeCompare(b.term||'', DB.profile.targetLang)) : [];
+  const list = cur ? groups[cur].slice().sort((a,b)=>dictWordKey(a).localeCompare(dictWordKey(b), DB.profile.targetLang)) : [];
+  const irrCount = DB.vocab.filter(isIrregularVerb).length;
   Screen.show(`
     <h1>Словарь</h1>
-    <p class="sub">${all.length} слов · выберите букву, затем слово — раскроется карточка.</p>
+    <p class="sub">${all.length} ${irrOnly?'неправильных глаголов':'слов'} · выберите букву, затем слово — раскроется карточка.</p>
+    <button class="btn btn-ghost" id="dictFilter" style="margin-bottom:12px;font-size:13px;padding:8px 14px">${irrOnly?'← Все слова':'⚡ Только неправильные глаголы'+(irrCount?` (${irrCount})`:'')}</button>
     <div id="alphaIdx" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
       ${letters.map(L0=>`<button class="alpha ${L0===cur?'on':''}" data-l="${esc(L0)}"
         style="min-width:38px;padding:8px 10px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;
@@ -940,16 +947,19 @@ function showDictionary(letter) {
           <div class="dword-body" id="dw${i}" style="display:none;padding:0 2px 12px"></div>
         </div>`).join('') : '<p class="note">Пока пусто. Слова появятся после первого урока.</p>'}
     </div>`, { back: mainMenu });
-  document.querySelectorAll('.alpha').forEach(b => b.onclick = () => showDictionary(b.dataset.l));
+  const _ff = document.getElementById('dictFilter'); if (_ff) _ff.onclick = () => showDictionary(null, !irrOnly);
+  document.querySelectorAll('.alpha').forEach(b => b.onclick = () => showDictionary(b.dataset.l, irrOnly));
   document.querySelectorAll('.dword').forEach(b => b.onclick = () => {
     const i = +b.dataset.i, w = list[i], body = document.getElementById('dw'+i);
     const open = body.style.display !== 'none';
     if (open) { body.style.display='none'; b.querySelector('.chev').textContent='▾'; return; }
     if (!body.dataset.filled) {
+      const _forms = w.forms || w.irregular_forms || '';
       body.innerHTML = `
         <div class="vocab-row" style="border:none">
           <span class="w"><b>${esc(w.term)}</b> <span class="tr">${esc(w.translit||'')}</span>
-            <small>${esc(w.translation||'')}${w.irregular_forms?' · '+esc(w.irregular_forms):''}</small>
+            <small>${esc(w.translation||'')}</small>
+            ${_forms?`<small style="display:block;margin-top:2px;color:var(--accent2,#9ED7FF)">📋 ${esc(_forms)}</small>`:''}
             ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
             ${w.example?`<small style="display:block;margin-top:4px">${esc(w.example)}</small>`:''}</span>
           <button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>
@@ -962,13 +972,31 @@ function showDictionary(letter) {
 }
 
 /* ---------- Свод правил (раздел 2.3-П) ---------- */
-function showRules() {
-  const r = (DB.rules||[]).slice().reverse();
+const RULE_CATS = ['Артикли','Существительные','Глаголы','Времена','Падежи','Предлоги','Порядок слов','Местоимения','Прочее'];
+function ruleCats(g){
+  const c = Array.isArray(g.categories) ? g.categories.filter(x=>RULE_CATS.includes(x)) : [];
+  return c.length ? c : ['Прочее'];
+}
+function showRules(cat) {
+  const all = (DB.rules||[]).slice().reverse();
+  // счётчики по категориям (правило может попадать в несколько)
+  const counts = {};
+  all.forEach(g => ruleCats(g).forEach(c => counts[c] = (counts[c]||0)+1));
+  const cats = RULE_CATS.filter(c => counts[c]);
+  const curCat = (cat && counts[cat]) ? cat : (cats[0] || null);
+  const list = curCat ? all.filter(g => ruleCats(g).includes(curCat)) : [];
   Screen.show(`
     <h1>Свод правил</h1>
-    <p class="sub">${r.length} изученных правил. Нажмите на правило, чтобы раскрыть объяснение с примерами и озвучкой.</p>
-    <div class="card" style="max-height:68vh;overflow-y:auto">
-      ${r.length ? r.map((g,idx)=>`
+    <p class="sub">${all.length} изученных правил${curCat?` · категория «${esc(curCat)}»`:''}. Выберите категорию, затем правило.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      ${cats.map(c=>`<button class="rcat" data-c="${esc(c)}"
+        style="padding:8px 12px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;
+        border:1px solid ${c===curCat?'transparent':'var(--line)'};
+        background:${c===curCat?'linear-gradient(135deg,#2F7DF6,#41B8FF)':'var(--panel2)'};
+        color:${c===curCat?'#fff':'var(--ink)'}">${esc(c)} <small style="opacity:.7;font-size:10px">${counts[c]}</small></button>`).join('')}
+    </div>
+    <div class="card" style="max-height:62vh;overflow-y:auto">
+      ${list.length ? list.map((g,idx)=>`
         <div style="border-bottom:1px solid var(--line);padding:4px 0">
           <button class="rule-head" data-i="${idx}" style="width:100%;text-align:left;background:none;border:none;color:var(--ink);
             font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
@@ -980,7 +1008,8 @@ function showRules() {
           <div class="rule-body" id="rb${idx}" style="display:none;padding:4px 2px 12px"></div>
         </div>`).join('') : '<p class="note">Пока пусто. Правила появятся после уроков, где есть новая грамматика.</p>'}
     </div>`, { back: mainMenu });
-  const rev = r;
+  document.querySelectorAll('.rcat').forEach(b => b.onclick = () => showRules(b.dataset.c));
+  const rev = list;
   document.querySelectorAll('.rule-head').forEach(b => b.onclick = () => {
     const i = +b.dataset.i, body = document.getElementById('rb'+i);
     const open = body.style.display !== 'none';
@@ -1043,9 +1072,9 @@ async function startLesson(code) {
       split:{ survival: survN, interests: 7 - survN },
       survival_topics:'ориентирование и транспорт, магазин и покупки, деньги и числа, еда, базовая вежливость, время и даты, здоровье',
       known_vocab: known,
-      rules:'Исключи слова из known_vocab. Если на этом уровне уместны неправильные глаголы — включи 2 (с формами). Транскрипция — средствами родного языка (native_lang), в квадратных скобках.'
+      rules:'Исключи слова из known_vocab. Если на этом уровне уместны неправильные глаголы — включи 2 (с формами). Для КАЖДОГО слова заполни поле forms («паспорт»): для глаголов три основные формы + 3-е лицо при смене корня (например "sieht, sah, hat gesehen"), для существительных артикль рода и множественное число (например "der Tisch, die Tische"). Поле part_of_speech: noun/verb/adj/other; для существительных article: der/die/das. Транскрипция — средствами родного языка (native_lang), в квадратных скобках.'
     },
-    '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","is_irregular":false,"irregular_forms":"вторая/третья форма или пустая строка"}]} — ровно 7 объектов');
+    '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм: для глаголов 3 формы (+3 лицо у неправильных), для существительных артикль+множественное"}]} — ровно 7 объектов');
     words = (r1.words||[]).filter(w => w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term))).slice(0,7);
     if (words.length < 3) throw new Error('FEW_WORDS');
 
@@ -1066,7 +1095,7 @@ async function startLesson(code) {
         lesson_words: words.map(w=>w.term), known_rules: knownRules,
         rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если на этом уроке нового правила нет — has_new_rule=false. Правило давай ЦЕЛИКОМ и самодостаточно: в table — ПОЛНЫЙ набор форм по теме (артикли — все рода der/die/das; местоимения — весь список; спряжение — все лица; и т. п.), а не один пример. Все пояснения и название — на native_lang. Транскрипция — родными буквами в квадратных скобках.'
       },
-      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
+      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) grammar = rg;
     } catch(e){ /* правило необязательно */ }
   } catch(e) {
@@ -1088,10 +1117,10 @@ async function startLesson(code) {
   recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
   steps.push({ t:'present' });
   if (grammar) steps.push({ t:'grammar' });
-  for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Дрилл ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
-  for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Дрилл ${i+6}/21`, w: words[i % words.length] });
-  constructs.forEach((c,i) => steps.push({ t:'construct', phase:'Construction', n:`Дрилл ${i+12}/21`, c }));
-  steps.push({ t:'quest', n:'Дрилл 21/21 · Final Challenge' });
+  for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Задание ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
+  for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Задание ${i+6}/21`, w: words[i % words.length] });
+  constructs.forEach((c,i) => steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, c }));
+  steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
 
   L = { code, words, steps, i:0, grammar,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
@@ -1142,7 +1171,7 @@ function renderStep() {
   if (s.t==='write')     return drillWrite(s);
   if (s.t==='construct') return drillConstruct(s);
   if (s.t==='quest')     return runQuest({
-      title:'Дрилл 21 · Интерактивный рассказ-квест',
+      title:'Задание 21 · Интерактивный рассказ-квест',
       topic: DB.profile.interests, cefr: curCefr(),
       mustUse: L.words.slice(0,3).map(w=>w.term), maxScenes:4,
       onError: ()=>{ L.errors.quest++; },
@@ -1166,7 +1195,7 @@ function drillPresent() {
         </div>`).join('')}
     </div>
     <p class="note">Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.</p>
-    <button class="btn btn-primary" id="go">К дриллам</button>`);
+    <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
@@ -1226,6 +1255,7 @@ function showRulePopup(g) {
 function ruleFromCheck(res) {
   if (!res || !res.rule_title) return null;
   return { title: res.rule_title, summary: res.rule_summary || '', table: res.rule_table || [],
+    categories: Array.isArray(res.rule_categories) ? res.rule_categories : [],
     examples: [], cefr: curCefr(), lesson: (L&&L.code)||'', status: 'на закреплении',
     errors: 0, date_added: today() };
 }
@@ -1259,12 +1289,13 @@ function drillGrammar() {
     <h1>📐 ${esc(g.title||'Правило')}</h1>
     <p class="sub">Новое правило этого урока. Оно сохранится в «Свод правил» — сможете открыть его в любой момент с главного экрана.</p>
     ${grammarCardHTML(g)}
-    <button class="btn btn-primary" id="go" style="margin-top:14px">К дриллам</button>`);
+    <button class="btn btn-primary" id="go" style="margin-top:14px">К заданиям</button>`);
   wireGrammarTTS();
   $('#go').onclick = () => {
     // сохраняем правило в Свод правил (раздел 2.3-П)
     if (!DB.rules.some(r=>norm(r.title)===norm(g.title))) {
       DB.rules.push({ title:g.title, summary:g.summary||'', table:g.table||[], examples:g.examples||[],
+        categories: Array.isArray(g.categories) ? g.categories : [],
         cefr:g.cefr||parseCode(L.code)?.lvl||'', lesson:L.code, status:'изучено',
         errors:0, date_added: today() });
       Storage.save(DB);
@@ -1379,12 +1410,12 @@ function drillConstruct(s) {
     try {
       res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
         cefr: curCefr(), expected: c.expected_target, user_answer: a,
-        rules:'Если есть ошибка — в explanation дай короткий разбор ИМЕННО этой ошибки, а в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно: все нужные формы), на native_lang. rule_table — полный набор форм по теме правила (если уместно).' },
-        '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
+        rules:'Проверяй по СМЫСЛУ и грамматике, а не по точному совпадению строк. Равноценные грамматические формы — ВЕРНЫ (correct=true): слитные формы предлога с артиклем in dem = im, zu dem = zum, an dem = am, bei dem = beim, von dem = vom и любые иные равнозначные варианты. Если ответ верен, но есть более естественная/частая форма — correct=true, заполни note мягкой подсказкой на native_lang («Верно. Кстати, чаще пишут слитно: im = in dem») И заполни rule_title/rule_summary этим правилом (например про слитные формы), чтобы оно попало в Свод правил. Если есть настоящая ошибка — в explanation короткий разбор ИМЕННО этой ошибки, а в rule_title/rule_summary правило точно под неё (полно), на native_lang; rule_table — полный набор форм по теме.' },
+        '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","note":"мягкая подсказка если ответ верен но есть лучший вариант, иначе пусто","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
     } catch(e){}
     $('#check').disabled = false;
-    if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(); }
-    if (res.correct) { firstTry(key, true); return passOK(); }
+    if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(null); }
+    if (res.correct) { firstTry(key, true); return passOK(res); }
     firstTry(key, false);
     L.errors.construction++; if (c.focus_word) noteWordError(c.focus_word);
     correctForm = (res && res.correct_form) || c.expected_target;
@@ -1394,10 +1425,12 @@ function drillConstruct(s) {
     showErrorRule(res);   // точное правило под ошибку — сразу
     $('#ans').value=''; $('#ans').focus();
   };
-  function passOK() {
+  function passOK(res) {
     $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm);
+    const note = res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
+    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm) + note;
     speak(correctForm, DB.profile.targetLang);
+    if (res && res.note) saveErrorRule(ruleFromCheck(res));   // слитные формы и т.п. — в Свод правил
     $('#check').textContent='Дальше'; $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
   }
@@ -1463,8 +1496,8 @@ async function runQuest(cfg) {
       try {
         res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
           expected: correctForm || '(свободный ответ по смыслу сцены)', user_answer:a,
-          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true. Если есть ошибка — в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно), на native_lang.' },
-          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"название правила под ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_table":[{"form":"форма","translit":"[транскрипция]","translation":"перевод"}]}');
+          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true. Проверяй по смыслу, равноценные формы (in dem = im, zum, am…) — верны. Если есть ошибка — в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно), на native_lang, и проставь rule_categories.' },
+          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","rule_title":"название правила под ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма","translit":"[транскрипция]","translation":"перевод"}]}');
       } catch(e){}
       $('#check').disabled = false;
       if (!res) { toast('Связь барахлит — ответ засчитан', true); return pass(); }
@@ -1529,7 +1562,8 @@ async function finishLesson() {
   L.words.forEach(w => {
     if (!DB.vocab.some(v => norm(v.term)===norm(w.term))) {
       DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:w.emoji||'',
-        irregular: !!w.is_irregular, irregular_forms: w.irregular_forms||'',
+        part_of_speech: w.part_of_speech||'', article: w.article||'',
+        is_irregular: !!w.is_irregular, forms: w.forms || w.irregular_forms || '', irregular_forms: w.irregular_forms||'',
         lesson: L.code, errors: L.wordErr[w.term]||0,
         status: (L.wordErr[w.term]||0) >= 2 ? 'на закреплении' : 'новое',
         mnemonic:'', date_added: today(), date_review: today() });
