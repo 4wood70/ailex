@@ -1019,6 +1019,78 @@ function showRules(cat) {
     body.style.display='block'; b.querySelector('.chev').textContent='▴';
   });
 }
+/* ---------- Импорт своего словаря и интенсив (раздел 2.9, версия 4.11) ---------- */
+// Разбор строки: "[Категория] Термин [транскрипция] — перевод" (категория/транскрипция необязательны)
+function parseImportLine(line) {
+  let s = String(line).trim();
+  if (!s || s.startsWith('#') || s.startsWith('=') || /^[А-ЯA-Z0-9 .]+$/.test(s) && !s.includes('—') && !s.includes('-')) {
+    // строка-заголовок/комментарий без пары термин-перевод — пропускаем
+  }
+  if (!s || s.startsWith('#') || s.startsWith('=')) return null;
+  let category = '';
+  const mCat = s.match(/^\[([^\]]+)\]\s*/);
+  if (mCat) { category = mCat[1].trim(); s = s.slice(mCat[0].length); }
+  // разделитель термин/перевод: тире (—, –, -) — берём первое " — " или " - "
+  const sep = s.match(/\s[—–-]\s/);
+  if (!sep) return null;
+  const idx = s.indexOf(sep[0]);
+  let left = s.slice(0, idx).trim();
+  const translation = s.slice(idx + sep[0].length).trim();
+  if (!left || !translation) return null;
+  // транскрипция в [...] внутри левой части
+  let translit = '';
+  const mTr = left.match(/\[([^\]]+)\]/);
+  if (mTr) { translit = '['+mTr[1].trim()+']'; left = left.replace(mTr[0], '').trim(); }
+  const term = left;
+  if (!term) return null;
+  return { term, translit, translation, category };
+}
+function parseImportText(text) {
+  const out = [], seen = {};
+  String(text).split(/\r?\n/).forEach(l => {
+    const w = parseImportLine(l);
+    if (w && !seen[norm(w.term)]) { seen[norm(w.term)] = 1; out.push(w); }
+  });
+  return out;
+}
+function showImportWords() {
+  Screen.show(`
+    <h1>Импорт своих слов</h1>
+    <p class="sub">Вставьте список. Формат строки: <b>[Категория] Термин [транскрипция] — перевод</b>. Строки-заголовки и пустые игнорируются.</p>
+    <div class="card">
+      <textarea id="impText" rows="10" placeholder="[Панель] Not-Aus [нот-аус] — аварийный останов&#10;[Резцы] Bohrstange [бор-штангэ] — расточной резец" style="width:100%;font-family:monospace;font-size:13px"></textarea>
+      <div id="impInfo" class="note" style="margin:8px 0"></div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="impPreview">Проверить</button>
+        <button class="btn btn-primary" id="impAdd">Добавить в словарь</button>
+      </div>
+    </div>`, { back: showSettings });
+  const info = $('#impInfo');
+  $('#impPreview').onclick = () => {
+    const list = parseImportText($('#impText').value);
+    info.innerHTML = list.length
+      ? `Распознано слов: <b>${list.length}</b>. Пример: ${esc(list.slice(0,3).map(w=>w.term+' — '+w.translation).join('; '))}…`
+      : 'Не удалось распознать ни одной строки. Проверьте формат: «Термин — перевод».';
+  };
+  $('#impAdd').onclick = () => {
+    const list = parseImportText($('#impText').value);
+    if (!list.length) { info.textContent = 'Нечего добавлять — проверьте формат.'; return; }
+    let added = 0;
+    list.forEach(w => {
+      const ex = DB.vocab.find(v => norm(v.term)===norm(w.term));
+      if (ex) { ex.priority = true; ex.source = 'import'; if (w.translit && !ex.translit) ex.translit = w.translit; if (w.category && !ex.import_cat) ex.import_cat = w.category; return; }
+      DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:'📌',
+        import_cat: w.category||'', priority:true, source:'import',
+        forms:'', part_of_speech:'', article:'', is_irregular:false,
+        lesson:'IMPORT', errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
+      added++;
+    });
+    DB.intensive = true;   // режим интенсива: приоритетные слова в супер-уроках
+    Storage.save(DB);
+    info.innerHTML = `Добавлено новых: <b>${added}</b>, всего распознано: ${list.length}. Режим интенсива включён — эти слова будут приоритетными в супер-уроках.`;
+    toast('Импортировано ✓');
+  };
+}
 function showSettings() {
   const p = DB.profile;
   Screen.show(`
@@ -1027,6 +1099,11 @@ function showSettings() {
       <label class="fld"><span>Имя</span><input type="text" id="sName" value="${esc(p.name)}"></label>
       <label class="fld"><span>Интересы / сфера деятельности</span><textarea id="sInt" rows="2">${esc(p.interests)}</textarea></label>
       <button class="btn btn-ghost btn-mini" id="sSave">Сохранить профиль</button>
+    </div>
+    <div class="card">
+      <h2>Свой словарь (интенсив)</h2>
+      <p class="note" style="margin:4px 0 12px">Вставьте свой список терминов — приложение добавит их в словарь как приоритетные и будет активно отрабатывать в супер-уроках. Формат строки: <b>[Категория] Термин [транскрипция] — перевод</b> (категория и транскрипция необязательны).</p>
+      <button class="btn btn-ghost" id="sImport">Импортировать свои слова</button>
     </div>
     <div class="card">
       <h2>База AILEX_StatusDB</h2>
@@ -1048,6 +1125,7 @@ function showSettings() {
   $('#sImp').onclick = () => $('#sFile').click();
   $('#sFile').onchange = e => { if (e.target.files[0]) Storage.importFile(e.target.files[0], ok => { toast(ok?'База загружена ✓':'Файл не похож на AILEX_StatusDB', !ok); if (ok) boot(); }); };
   $('#sKey').onclick = () => keyWizard();
+  $('#sImport').onclick = () => showImportWords();
   $('#sReset').onclick = () => { if (confirm('Удалить профиль, словарь и весь прогресс на этом устройстве?')) { Storage.wipe(); boot(); } };
 }
 
@@ -1628,13 +1706,19 @@ async function startSuperLesson() {
   const base = DB.nextStage.startsWith('EXAM_') ? DB.nextStage.replace('EXAM_','')+'.25' : DB.nextStage;
   Screen.loader('Готовлю супер-урок…');
   const knownSample = pick(DB.vocab, Math.min(20, DB.vocab.length)).map(w=>w.term);
-  const riskFirst = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
+  const imported = DB.vocab.filter(w=>w.priority || w.source==='import').map(w=>w.term);
+  const riskQueue = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
+  // в интенсиве приоритет — импортированные термины, затем трудные
+  const riskFirst = [...new Set([...imported, ...riskQueue])];
+  const intensiveTopic = DB.intensive && imported.length
+    ? (p.interests ? p.interests + '; ' : '') + 'прикладная отработка импортированных профессиональных терминов в реальных рабочих сценариях'
+    : p.interests;
   let plan;
   try {
     plan = await Gemini.call({
       task:'super_lesson_plan', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      topic:p.interests, known_vocab:knownSample, priority_words:riskFirst.slice(0,7),
-      rules:'80% материала — повторение known_vocab (приоритет priority_words), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Все формулировки заданий — на родном языке.'
+      topic:intensiveTopic, known_vocab:knownSample, priority_words:riskFirst.slice(0,7),
+      rules:'80% материала — повторение known_vocab (СТРОГО приоритет priority_words — это профессиональные термины пользователя, их надо активно вплетать в задания и рассказ), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Все формулировки заданий — на родном языке.'
     },
     '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
     '"link_drills":[{"prompt_native":"задание: старое слово + новая связка","expected_target":"эталон"}] — ровно 9,'+
