@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v25';
+const APP_VERSION = 'v26';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1179,13 +1179,14 @@ async function startLesson(code) {
   const recapItems = DB.vocab.length >= 4 ? pick(recapPool, Math.min(7, recapPool.length)) : [];
 
   // пункт 7: часто нарушаемое правило — поднять в начале урока для перечитывания
-  const adaptiveRule = (DB.rules||[]).filter(r => (r.errors||0) >= 2)
-                                     .sort((a,b)=>(b.errors||0)-(a.errors||0))[0] || null;
+  const adaptiveRules = (DB.rules||[]).filter(r => (r.errors||0) >= 2)
+                                     .sort((a,b)=>(b.errors||0)-(a.errors||0)).slice(0,2);
 
-  // --- сборка шагов: узнавание/письмо готовы сразу; построение фраз — порция 2 (фон) ---
+  // --- сборка шагов: узнавание/контекст готовы сразу; построение фраз — порция 2 (фон) ---
   const steps = [];
-  if (adaptiveRule) steps.push({ t:'ruleRecap', rule: adaptiveRule });
-  recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
+  adaptiveRules.forEach(r => steps.push({ t:'ruleRecap', rule: r }));
+  // пункт 12: повторение слов прошлого урока — в контексте со скелетами (предложения из порции 2)
+  recapItems.forEach((w,i) => steps.push({ t:'reviewCtx', phase:'Recap', n:`R${i+1}/7`, w, ri:i }));
   steps.push({ t:'present' });
   steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
   for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Задание ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
@@ -1193,7 +1194,9 @@ async function startLesson(code) {
   for (let i=0;i<9;i++) steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, ci:i });
   steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
 
-  L = { code, words, steps, i:0, grammar:null, constructs:null, chunk2:{state:'idle',promise:null,err:null},
+  L = { code, words, steps, i:0, grammar:null, constructs:null, reviewDrills:null,
+        reviewWords: recapItems.map(w=>w.term),
+        chunk2:{state:'idle',promise:null,err:null},
         lvl, known,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
@@ -1217,12 +1220,25 @@ function fetchLessonChunk2() {
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     L.constructs = constructs;
+    // пункт 12: короткие предложения для слов ПОВТОРЕНИЯ — чтобы Recap шёл в контексте со скелетами
+    if (L.reviewWords && L.reviewWords.length) {
+      try {
+        const rv = await Gemini.call({
+          task:'generate_review_sentences', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+          review_words: L.reviewWords, count: L.reviewWords.length,
+          rules:'Для КАЖДОГО слова из review_words верни короткое естественное предложение на целевом языке, СОДЕРЖАЩЕЕ это слово (в любой уместной форме), строго по уровню CEFR. word — то слово из review_words, к которому относится предложение.'
+        },
+        '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной"}]}');
+        L.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
+      } catch(_) { L.reviewDrills = []; }
+    }
     try {
       const knownRules = (DB.rules||[]).map(r=>r.title).slice(-40);
+      const coveredCats = [...new Set((DB.rules||[]).flatMap(r=>r.categories||[]))];
       const rg = await Gemini.call({
         task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-        lesson_words: words.map(w=>w.term), known_rules: knownRules,
-        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. На уровнях A1–A2 ОТДАВАЙ ПРИОРИТЕТ фундаментальным структурным темам именно этого языка (порядок слов, артикли/падежи, спряжение и времена, числа, даты, дни недели, отрицание, вопросы) — выбирай те, что специфичны для пары родной→целевой и ещё не пройдены. Если нового правила нет — has_new_rule=false. Правило ЦЕЛИКОМ: в table ПОЛНЫЙ набор форм по теме. Пояснения и название — на native_lang. Транскрипция — родными буквами в скобках. Проставь categories.'
+        lesson_words: words.map(w=>w.term), known_rules: knownRules, covered_categories: coveredCats,
+        rules:'Верни ОДНО уместное по уровню CEFR правило, которого ещё нет в known_rules. На уровнях A1–A2 СНАЧАЛА закрывай непройденные фундаментальные структурные темы (которых нет в covered_categories): порядок слов, артикли/род, спряжение и времена, числа, даты и дни недели, отрицание, вопросы, базовые предлоги/падежи — выбери из НЕпройденных самую базовую. Если все фундаментальные пройдены — следующее по сложности, связанное со словами урока. Если нового нет — has_new_rule=false. Правило ЦЕЛИКОМ: в table ПОЛНЫЙ набор форм по теме. Пояснения и название — на native_lang. Транскрипция — родными буквами в скобках. Проставь categories.'
       },
       '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) L.grammar = rg;
@@ -1293,6 +1309,15 @@ function renderStep() {
   const s = L.steps[L.i];
   if (s.t==='present')   return drillPresent();
   if (s.t==='ruleRecap') return drillRuleRecap(s);
+  if (s.t==='reviewCtx') {                // повторение слова в контексте предложения (пункт 12)
+    const go = () => {
+      const rd = (L.reviewDrills||[]).find(d => norm(d.word)===norm(s.w.term));
+      if (rd && rd.sentence) return drillReviewContext(s, rd);
+      return drillRecog({ ...s, pool:'all' });   // откат: узнавание, если предложение не сгенерировалось
+    };
+    if (L.chunk2.state==='ready') return go();
+    return ensureChunk2().then(ok => { if (ok) go(); });
+  }
   if (s.t==='context') {                 // слово в контексте (из порции 2)
     if (L.constructs && L.constructs.length) return drillContext(s);
     return ensureChunk2().then(ok => { if (ok) drillContext(s); });
@@ -1571,7 +1596,50 @@ function highlightDiff(user, correct) {
   }).join('');
 }
 
-// Контекстный дрилл: вставить пропущенное слово в предложение (вместо «переведи слово»)
+// Повторение слова прошлых уроков — в контексте предложения со скелетом (пункт 12, версия 4.13)
+function drillReviewContext(s, rd) {
+  const w = s.w;
+  const gap = makeGapSentence(rd.sentence, w.term);
+  if (!gap.found) return drillRecog({ ...s, pool:'all' });   // не удалось встроить — откат на узнавание
+  const answer = gap.answer;
+  const key = 'st'+L.i; let mustRetype = false;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Повторение')}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🔁 повторение в контексте</span></div>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Вспомните слово и впишите его в пропуск${w.translation?` — «${esc(w.translation)}»`:''}.</p>
+      <div class="task-text">${esc(gap.gapped)}</div>
+      ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
+      <input type="text" id="ans" placeholder="Одно слово" autocomplete="off" autocapitalize="off">
+      <div class="feedback" id="fb"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-primary" id="check">Проверить</button>
+      </div>
+    </div>`);
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
+    $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span> — ${esc(w.translation||'')}`; };
+  $('#check').onclick = () => {
+    const a = $('#ans').value.trim();
+    if (!a && !mustRetype) return;
+    const ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a), norm(answer))<=1;
+    if (!mustRetype) firstTry(key, ok);
+    if (ok) {
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = `✅ <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(answer);
+      speak(answer, DB.profile.targetLang);
+      $('#check').textContent='Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
+    } else {
+      if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); mustRetype = true; }
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ Верно: <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(answer) + `<br>🧠 Запомните и впишите вручную.`;
+      speak(answer, DB.profile.targetLang);
+      $('#ans').value=''; $('#ans').focus();
+    }
+  };
+}
+
+// Повторение слова прошлых уроков — в контексте предложения со скелетом (пункт 12)
 function drillContext(s) {
   const item = (L.constructs||[])[s.ci % (L.constructs||[1]).length];
   if (!item) { L.i++; return renderStep(); }
@@ -1742,7 +1810,11 @@ function drillConstruct(s) {
     const note = res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
     $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm) + note;
     speak(correctForm, DB.profile.targetLang);
-    if (res && res.articleSlip && L.grammar) { /* артикль — копим в адаптив через ошибку слова */ }
+    if (res && res.articleSlip) {   // пункт 14: копим промахи по артиклям в адаптивное правило
+      let r = DB.rules.find(x=>norm(x.title)==='артикли' || (x.categories||[]).includes('Артикли'));
+      if (!r) { r = { title:'Артикли', summary:'Род существительного определяет артикль (der/die/das). Обращайте внимание на артикль при заучивании слова.', table:[], examples:[], categories:['Артикли'], cefr:'A1', lesson:L.code, status:'на закреплении', errors:0, date_added:today() }; DB.rules.push(r); }
+      r.errors = (r.errors||0) + 1; r.status='на закреплении'; Storage.save(DB);
+    }
     if (res && res.note && res.rule_title) saveErrorRule(ruleFromCheck(res));
     $('#check').textContent='Дальше'; $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
