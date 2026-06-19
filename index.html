@@ -207,6 +207,8 @@ a{color:var(--cyan)}
    изменения остального кода). Gemini не знает о базе и не пишет в неё.
    =================================================================== */
 "use strict";
+/* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
+const APP_VERSION = 'v22';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -597,7 +599,7 @@ function splashScreen(done) {
         background-clip:text;color:transparent">LEX</span></div>
     </div>
     <div id="splashStatus" style="position:relative;font-family:'Chakra Petch';font-size:12px;letter-spacing:.28em;
-      color:#5A6680;text-transform:uppercase;opacity:0;transition:opacity .6s">SYSTEM ONLINE</div>`;
+      color:#5A6680;text-transform:uppercase;opacity:0;transition:opacity .6s">SYSTEM ONLINE · ${APP_VERSION}</div>`;
   document.body.appendChild(ov);
 
   // анимация логотипа и статуса
@@ -1766,56 +1768,97 @@ async function startSuperLesson() {
   const knownSample = pick(DB.vocab, Math.min(20, DB.vocab.length)).map(w=>w.term);
   const imported = DB.vocab.filter(w=>w.priority || w.source==='import').map(w=>w.term);
   const riskQueue = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
-  // в интенсиве приоритет — импортированные термины, затем трудные
   const riskFirst = [...new Set([...imported, ...riskQueue])];
   const intensiveTopic = DB.intensive && imported.length
     ? (p.interests ? p.interests + '; ' : '') + 'прикладная отработка импортированных профессиональных терминов в реальных рабочих сценариях'
     : p.interests;
-  let plan;
+  const sp = { p, lvl, base, knownSample, priority: riskFirst.slice(0,7), topic:intensiveTopic };
+  // ПОРЦИЯ 1 (быстрый старт): новые связки + 9 заданий-связок
+  let plan1;
   try {
-    plan = await Gemini.call({
-      task:'super_lesson_plan', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      topic:intensiveTopic, known_vocab:knownSample, priority_words:riskFirst.slice(0,7),
-      rules:'80% материала — повторение known_vocab (СТРОГО приоритет priority_words — это профессиональные термины пользователя, их надо активно вплетать в задания и рассказ), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Все формулировки заданий — на родном языке.'
+    plan1 = await Gemini.call({
+      task:'super_lesson_plan', part:'link', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:intensiveTopic, known_vocab:knownSample, priority_words:sp.priority,
+      rules:'80% — повторение known_vocab (СТРОГО приоритет priority_words — профессиональные термины пользователя), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Формулировки заданий — на родном языке.'
     },
     '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
-    '"link_drills":[{"prompt_native":"задание: старое слово + новая связка","expected_target":"эталон"}] — ровно 9,'+
-    '"sentence_drills":[{"prompt_native":"развёрнутое предложение по интересам","expected_target":"эталон"}] — ровно 9,'+
-    '"grammar_drills":[{"prompt_native":"грамматический тренинг / свободное построение","expected_target":"эталон"}] — ровно 9}');
-    if (!plan.link_drills?.length) throw 0;
+    '"link_drills":[{"prompt_native":"задание: старое слово + новая связка","expected_target":"эталон"}] — ровно 9}');
+    if (!plan1.link_drills?.length) throw new Error('EMPTY');
   } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
-    toast('Не удалось подготовить супер-урок', true); return mainMenu();
+    return lessonLoadError(startSuperLesson, e);
   }
   // новые функциональные слова — в словарь
-  (plan.functional_new||[]).forEach(w => {
+  (plan1.functional_new||[]).forEach(w => {
     if (w.term && !DB.vocab.some(v=>norm(v.term)===norm(w.term)))
       DB.vocab.push({ term:w.term, translation:w.translation||'', translit:w.translit||'', emoji:w.emoji||'',
-        irregular:false, irregular_forms:'', lesson:'SUPER_'+base, errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
+        irregular:false, forms:'', lesson:'SUPER_'+base, errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
   });
 
   const steps = [];
-  (plan.link_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+1}/30`, c}));
+  (plan1.link_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+1}/30`, c}));
   steps.push({t:'quest1'});
-  (plan.sentence_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+11}/30`, c}));
+  for (let i=0;i<9;i++) steps.push({t:'construct', n:`Шаг ${i+11}/30`, group:'sent', gi:i});
   steps.push({t:'quest2'});
-  (plan.grammar_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+21}/30`, c}));
+  for (let i=0;i<9;i++) steps.push({t:'construct', n:`Шаг ${i+21}/30`, group:'gram', gi:i});
   steps.push({t:'quest3'});
 
-  L = { code:'SUPER_'+base, isSuper:true, words:[], steps, i:0,
+  L = { code:'SUPER_'+base, isSuper:true, words:[], steps, i:0, sp,
+        superParts:{ sent:{state:'idle',promise:null,err:null,data:null}, gram:{state:'idle',promise:null,err:null,data:null} },
         errors:{recognition:0,writing:0,construction:0,quest:0},
         ft:{ok:0,total:0}, hints:0, t0:Date.now(), wordErr:{}, firstTryDone:{} };
+  fetchSuperPart('sent');   // предложения — в фоне, пока ученик делает связки
   renderSuperStep();
+}
+
+// Фоновые порции супер-урока: 'sent' (предложения) и 'gram' (грамматика), по 9 заданий.
+function fetchSuperPart(which) {
+  if (!L || !L.superParts) return;
+  const part = L.superParts[which]; if (part.state==='loading'||part.state==='ready') return part.promise;
+  const sp = L.sp;
+  const taskName = which==='sent' ? 'sentence_drills' : 'grammar_drills';
+  const promptRule = which==='sent'
+    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. Формулировки — на родном.'
+    : 'Грамматический тренинг / свободное построение, с приоритетом priority_words. Запрещён обратный перевод. Формулировки — на родном.';
+  part.state='loading'; part.err=null;
+  part.promise = (async () => {
+    const r = await Gemini.call({
+      task:'super_lesson_plan', part:which, target_lang:sp.p.targetLang, native_lang:sp.p.nativeLang, cefr:sp.lvl,
+      topic:sp.topic, known_vocab:sp.knownSample, priority_words:sp.priority, rules:promptRule
+    },
+    '{"'+taskName+'":[{"prompt_native":"задание на родном","expected_target":"эталон"}] — ровно 9}');
+    const arr = (r[taskName]||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
+    if (arr.length < 3) throw new Error('FEW_DRILLS');
+    part.data = arr; part.state='ready';
+  })().catch(e => { part.state='error'; part.err=e; throw e; });
+  return part.promise;
+}
+async function ensureSuperPart(which) {
+  const part = L.superParts[which];
+  if (part.state==='ready') return true;
+  if (part.state==='idle') fetchSuperPart(which);
+  Screen.loader('Догружаю супер-урок…');
+  try { await part.promise; return true; }
+  catch(e) {
+    if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return false; }
+    lessonLoadError(()=>{ fetchSuperPart(which); ensureSuperPart(which).then(ok=>{ if(ok) renderSuperStep(); }); }, e);
+    return false;
+  }
 }
 function renderSuperStep() {
   if (L.i >= L.steps.length) return finishSuper();
   const s = L.steps[L.i];
-  if (s.t==='construct') return drillConstruct(s); // тот же дрилл; renderStep маршрутизирует по флагу isSuper
+  if (s.t==='construct') {
+    if (s.c) return drillConstruct(s);
+    const part = L.superParts[s.group];
+    if (part && part.state==='ready') { s.c = part.data[s.gi % part.data.length]; return drillConstruct(s); }
+    return ensureSuperPart(s.group).then(ok => { if(!ok) return; const pt=L.superParts[s.group]; s.c = pt.data[s.gi % pt.data.length]; drillConstruct(s); });
+  }
   const qcfg = (mu, sc, title) => ({ title, topic:DB.profile.interests, cefr:DB.profile.cefr,
     mustUse:mu, maxScenes:sc, onError:()=>{L.errors.quest++;}, onDone:()=>{L.i++; renderSuperStep();} });
   const lastTerms = DB.vocab.slice(-10).map(w=>w.term);
-  if (s.t==='quest1') return runQuest(qcfg(pick(lastTerms,3), 1, 'Шаг 10 · Quest #1'));
-  if (s.t==='quest2') return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 1, 'Шаг 20 · Quest #2'));
+  if (s.t==='quest1') { fetchSuperPart('sent'); fetchSuperPart('gram'); return runQuest(qcfg(pick(lastTerms,3), 1, 'Шаг 10 · Quest #1')); }
+  if (s.t==='quest2') { fetchSuperPart('gram'); return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 1, 'Шаг 20 · Quest #2')); }
   if (s.t==='quest3') return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 2, 'Шаг 30 · Final Mission'));
 }
 /* В супер-уроке используется тот же drillConstruct: он вызывает renderStep,
@@ -2039,6 +2082,7 @@ function startDialogue() {
 }
 
 /* ---------- запуск ---------- */
+try { const _ss = document.getElementById('sysStatus'); if (_ss) _ss.textContent = 'SYSTEM ONLINE · ' + APP_VERSION; } catch(_){}
 splashScreen(boot);
 
 </script>
