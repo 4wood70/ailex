@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v23';
+const APP_VERSION = 'v24';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -943,7 +943,7 @@ function showDictionary(letter, irrOnly) {
             font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
             <span class="emoji">${esc(w.emoji||'•')}</span>
             <span style="flex:1"><b style="font-size:15px">${esc(w.term)}</b>
-              <small style="display:block;color:var(--dim);font-size:12px">${esc(w.translit||'')} · ${esc(w.translation||'')}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
+              <small style="display:block;color:var(--dim);font-size:12px">${esc(w.translit||'')} · ${esc(w.translation||'')}${(w.source==='import'&&(w.status==='новое'||w.status==='изучается'))?' · 📌 к изучению':''}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
             <span class="chev" style="color:var(--faint)">▾</span>
           </button>
           <div class="dword-body" id="dw${i}" style="display:none;padding:0 2px 12px"></div>
@@ -1145,7 +1145,12 @@ async function startLesson(code) {
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);
   let words;
-  // ПОРЦИЯ 1 (быстрый старт): только слова урока. Узнавание/письмо строятся из них локально.
+  // ИНТЕНСИВ: если есть импортированные, ещё не показанные слова — урок учит ИХ (а не генерирует посторонние)
+  const importedNew = DB.vocab.filter(w => w.source==='import' && (w.status==='новое') && w.seen!==true);
+  if (DB.intensive && importedNew.length >= 3) {
+    words = importedNew.slice(0, 7);
+  } else {
+  // ПОРЦИЯ 1 (быстрый старт): только слова урока. Узнавание/контекст строятся из них локально.
   try {
     const r1 = await Gemini.call({
       task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
@@ -1161,6 +1166,7 @@ async function startLesson(code) {
   } catch(e) {
     if (String(e.message).startsWith('KEY:')) return keyWizard(true);
     return lessonLoadError(()=>startLesson(code), e);
+  }
   }
 
   // --- Recap: 7 задач повторения (трудные слова + прошлый урок) ---
@@ -1330,6 +1336,9 @@ function drillPresent() {
     <p class="note">Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.</p>
     <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  // пункт 3: слово показано → отмечаем «увидено»; импортированные переходят из «новое» в «изучается»
+  L.words.forEach(w => { const v = DB.vocab.find(x=>norm(x.term)===norm(w.term)); if (v) { v.seen = true; if (v.source==='import' && v.status==='новое') v.status='изучается'; } w.seen = true; });
+  Storage.save(DB);
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
 
