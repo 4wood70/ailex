@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v22';
+const APP_VERSION = 'v23';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1167,16 +1167,23 @@ async function startLesson(code) {
   const recapPool = [];
   const inQueue = DB.vocab.filter(w => DB.reviewQueue.includes(w.term));
   const recent  = DB.vocab.slice(-10);
-  [...inQueue, ...recent].forEach(w => { if (!recapPool.some(x=>x.term===w.term)) recapPool.push(w); });
+  // пункт 3: импортированные слова, ещё не показанные, не идут в повторение, пока не «увидены»
+  const seenOk = w => !((w.source==='import' || w.priority) && w.seen!==true && (w.status==='новое'||!w.status));
+  [...inQueue, ...recent].forEach(w => { if (seenOk(w) && !recapPool.some(x=>x.term===w.term)) recapPool.push(w); });
   const recapItems = DB.vocab.length >= 4 ? pick(recapPool, Math.min(7, recapPool.length)) : [];
+
+  // пункт 7: часто нарушаемое правило — поднять в начале урока для перечитывания
+  const adaptiveRule = (DB.rules||[]).filter(r => (r.errors||0) >= 2)
+                                     .sort((a,b)=>(b.errors||0)-(a.errors||0))[0] || null;
 
   // --- сборка шагов: узнавание/письмо готовы сразу; построение фраз — порция 2 (фон) ---
   const steps = [];
+  if (adaptiveRule) steps.push({ t:'ruleRecap', rule: adaptiveRule });
   recapItems.forEach((w,i) => steps.push({ t:'recog', phase:'Recap', n:`R${i+1}/7`, w, pool:'all' }));
   steps.push({ t:'present' });
   steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
   for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Задание ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
-  for (let i=0;i<6;i++) steps.push({ t:'write', phase:'Writing', n:`Задание ${i+6}/21`, w: words[i % words.length] });
+  for (let i=0;i<6;i++) steps.push({ t:'context', phase:'Слово в контексте', n:`Задание ${i+6}/21`, ci:i });
   for (let i=0;i<9;i++) steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, ci:i });
   steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
 
@@ -1209,7 +1216,7 @@ function fetchLessonChunk2() {
       const rg = await Gemini.call({
         task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
         lesson_words: words.map(w=>w.term), known_rules: knownRules,
-        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. Если нового правила нет — has_new_rule=false. Правило ЦЕЛИКОМ: в table ПОЛНЫЙ набор форм по теме. Пояснения и название — на native_lang. Транскрипция — родными буквами в скобках. Проставь categories.'
+        rules:'Верни ОДНО уместное по уровню CEFR правило, связанное со словами урока, которого ещё нет в known_rules. На уровнях A1–A2 ОТДАВАЙ ПРИОРИТЕТ фундаментальным структурным темам именно этого языка (порядок слов, артикли/падежи, спряжение и времена, числа, даты, дни недели, отрицание, вопросы) — выбирай те, что специфичны для пары родной→целевой и ещё не пройдены. Если нового правила нет — has_new_rule=false. Правило ЦЕЛИКОМ: в table ПОЛНЫЙ набор форм по теме. Пояснения и название — на native_lang. Транскрипция — родными буквами в скобках. Проставь categories.'
       },
       '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) L.grammar = rg;
@@ -1279,6 +1286,11 @@ function renderStep() {
   if (!L || L.i >= L.steps.length) return finishLesson();
   const s = L.steps[L.i];
   if (s.t==='present')   return drillPresent();
+  if (s.t==='ruleRecap') return drillRuleRecap(s);
+  if (s.t==='context') {                 // слово в контексте (из порции 2)
+    if (L.constructs && L.constructs.length) return drillContext(s);
+    return ensureChunk2().then(ok => { if (ok) drillContext(s); });
+  }
   if (s.t==='grammar') {                 // правило из порции 2: если не готово — подождём; нет правила — пропустим
     if (L.isSuper) return (L.i++, renderStep());
     if (L.chunk2.state==='ready') { if (L.grammar) return drillGrammar(); L.i++; return renderStep(); }
@@ -1403,6 +1415,17 @@ function showErrorRule(res) {
   const more = document.getElementById('errRuleMore');
   if (more) more.onclick = () => showRulePopup(rule);
 }
+function drillRuleRecap(s) {
+  const g = s.rule;
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Закрепление правила</div>
+    <h1>🔁 ${esc(g.title||'Правило')}</h1>
+    <p class="sub">Это правило часто вызывает ошибки — перечитайте его перед уроком, чтобы закрепить.</p>
+    ${grammarCardHTML(g)}
+    <button class="btn btn-primary" id="go" style="margin-top:14px">Понятно, дальше</button>`);
+  wireGrammarTTS();
+  $('#go').onclick = () => { const r = DB.rules.find(x=>norm(x.title)===norm(g.title)); if (r) r.errors = 0; Storage.save(DB); L.i++; renderStep(); };
+}
 function drillGrammar() {
   const g = L.grammar;
   Screen.show(`
@@ -1459,6 +1482,68 @@ function drillRecog(s) {
     }
   });
   $('#next').onclick = () => { L.i++; renderStep(); };
+}
+
+/* ---------- Скелеты и контекст (раздел 5, версия 4.12) ---------- */
+// Предложение с пропуском на месте целевого слова (прячем именно цель задания)
+function makeGapSentence(sentence, word) {
+  const s = String(sentence||''); if (!word) return { gapped:s, found:false };
+  const re = new RegExp('(^|[^\\p{L}])('+word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')(?=[^\\p{L}]|$)','iu');
+  if (re.test(s)) return { gapped: s.replace(re, (m,p1)=>p1+'_____'), found:true };
+  return { gapped: s + '  (_____)', found:false };
+}
+// Каркас слова: первые reveal букв + точки на остальные (помощь с орфографией, не раскрывая всё)
+function wordSkeleton(word, reveal) {
+  const w = String(word||''); reveal = Math.max(1, reveal||1);
+  return w.slice(0, reveal) + (w.length>reveal ? ' ' + '·'.repeat(w.length-reveal) : '');
+}
+function markSeen(term){ const v = DB.vocab.find(x=>norm(x.term)===norm(term)); if (v) { v.seen=true; } }
+
+// Контекстный дрилл: вставить пропущенное слово в предложение (вместо «переведи слово»)
+function drillContext(s) {
+  const item = (L.constructs||[])[s.ci % (L.constructs||[1]).length];
+  if (!item) { L.i++; return renderStep(); }
+  const targetWord = item.focus_word || (item.expected_target||'').split(/\s+/).find(x=>x.length>2) || (item.expected_target||'').trim();
+  const vEntry = L.words.find(w=>norm(w.term)===norm(targetWord)) || DB.vocab.find(w=>norm(w.term)===norm(targetWord)) || {};
+  const gap = makeGapSentence(item.expected_target, targetWord);
+  const hardWord = (L.wordErr[targetWord]||0) > 0 || DB.reviewQueue.includes(targetWord);
+  const key = 'st'+L.i; let mustRetype = false;
+  // для трудных слов мягкий авто-намёк (каркас слова + транскрипция), для обычных — по кнопке
+  const autoHint = hardWord
+    ? `<div class="feedback ok" style="margin:6px 0">💡 <b>${esc(wordSkeleton(targetWord,1))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span></div>` : '';
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Контекст')}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 слово в контексте</span></div>
+      <div class="task-text">${esc(gap.gapped)}</div>
+      <p class="note">${esc(item.prompt_native||'Вставьте подходящее слово')}${vEntry.translation?` · пропущено: <b>«${esc(vEntry.translation)}»</b>`:''}</p>
+      ${autoHint}
+      <input type="text" id="ans" placeholder="Впишите пропущенное слово" autocomplete="off" autocapitalize="off">
+      <div class="feedback" id="fb"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-primary" id="check">Проверить</button>
+      </div>
+    </div>`);
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
+    $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(targetWord, Math.min(2, targetWord.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>`; };
+  $('#check').onclick = () => {
+    const a = $('#ans').value, ok = norm(a) === norm(targetWord);
+    if (!mustRetype) firstTry(key, ok);
+    if (ok) {
+      markSeen(targetWord);
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = `✅ <b>${esc(targetWord)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(targetWord);
+      speak(targetWord, DB.profile.targetLang);
+      $('#check').textContent = 'Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
+    } else {
+      if (!mustRetype) { L.errors.writing++; noteWordError(targetWord); markSeen(targetWord); mustRetype = true; }
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ Верно: <b>${esc(targetWord)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(targetWord) + `<br>🧠 Запомните написание и впишите вручную.`;
+      speak(targetWord, DB.profile.targetLang);
+      $('#ans').value=''; $('#ans').focus();
+    }
+  };
 }
 
 /* ---------- Writing: написать слово по памяти ---------- */
