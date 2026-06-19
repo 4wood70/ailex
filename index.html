@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v24';
+const APP_VERSION = 'v25';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1211,9 +1211,9 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. Уровень CEFR строго соблюдать.'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока, строго по уровню CEFR. ВАЖНО: prompt_native (русская формулировка) и expected_target (немецкий эталон) должны ТОЧНО соответствовать друг другу по смыслу — эталон не беднее и не богаче задания. instruction — короткая внятная инструкция что сделать («Переведите на немецкий», «Составьте предложение»). Если в expected_target есть слова вне lesson_words и known_vocab — перечисли их в glossary (term, translit родными буквами, translation), чтобы ученик не угадывал.'
     },
-    '{"items":[{"prompt_native":"Скажи на целевом языке: «...» (формулировка на родном)","expected_target":"эталонная фраза на целевом языке","focus_word":"слово урока"}]} — ровно 9 объектов');
+    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}]} — ровно 9 объектов');
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     L.constructs = constructs;
@@ -1496,10 +1496,29 @@ function drillRecog(s) {
 /* ---------- Скелеты и контекст (раздел 5, версия 4.12) ---------- */
 // Предложение с пропуском на месте целевого слова (прячем именно цель задания)
 function makeGapSentence(sentence, word) {
-  const s = String(sentence||''); if (!word) return { gapped:s, found:false };
-  const re = new RegExp('(^|[^\\p{L}])('+word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')(?=[^\\p{L}]|$)','iu');
-  if (re.test(s)) return { gapped: s.replace(re, (m,p1)=>p1+'_____'), found:true };
-  return { gapped: s + '  (_____)', found:false };
+  const s = String(sentence||''); if (!word) return { gapped:s, found:false, answer:word };
+  // пробуем: всё слово → без ведущего артикля → последний токен (существительное)
+  const candidates = [];
+  const w = String(word).trim();
+  candidates.push(w);
+  const toks = w.split(/\s+/);
+  if (toks.length>1 && ARTICLES.includes(norm(toks[0]))) candidates.push(toks.slice(1).join(' '));
+  candidates.push(toks[toks.length-1]);
+  // длинная основа существительного (на случай склонения: Mechaniker в einen Mechaniker)
+  const noun = toks[toks.length-1];
+  for (const cand of candidates) {
+    if (!cand) continue;
+    const re = new RegExp('(^|[^\\p{L}])('+cand.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\p{L}*)(?=[^\\p{L}]|$)','iu');
+    const m = s.match(re);
+    if (m) return { gapped: s.replace(re, (mm,p1)=>p1+'_____'), found:true, answer:m[2] };
+  }
+  // не нашли (другая форма) — спрячем существительное по основе (первые 4 буквы)
+  if (noun.length>=4) {
+    const re2 = new RegExp('(^|[^\\p{L}])('+noun.slice(0,4).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\p{L}*)(?=[^\\p{L}]|$)','iu');
+    const m2 = s.match(re2);
+    if (m2) return { gapped: s.replace(re2,(mm,p1)=>p1+'_____'), found:true, answer:m2[2] };
+  }
+  return { gapped: s, found:false, answer:word };
 }
 // Каркас слова: первые reveal букв + точки на остальные (помощь с орфографией, не раскрывая всё)
 function wordSkeleton(word, reveal) {
@@ -1508,26 +1527,72 @@ function wordSkeleton(word, reveal) {
 }
 function markSeen(term){ const v = DB.vocab.find(x=>norm(x.term)===norm(term)); if (v) { v.seen=true; } }
 
+// --- человечная проверка (версия 4.13) ---
+const ARTICLES = ['der','die','das','den','dem','des','ein','eine','einen','einem','einer','eines'];
+// расстояние Левенштейна (с потолком) — для распознавания опечаток
+function editDistance(a, b) {
+  a = String(a); b = String(b);
+  const m = a.length, n = b.length;
+  if (Math.abs(m-n) > 3) return 99;
+  const dp = Array.from({length:m+1}, (_,i)=>[i, ...Array(n).fill(0)]);
+  for (let j=0;j<=n;j++) dp[0][j]=j;
+  for (let i=1;i<=m;i++) for (let j=1;j<=n;j++)
+    dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1] + (a[i-1]===b[j-1]?0:1));
+  return dp[m][n];
+}
+const tokenize = s => norm(s).replace(/[.,!?;:()«»"]/g,' ').split(/\s+/).filter(Boolean);
+// сравнить ответ с эталоном локально: 'exact' | 'typo' | 'article' | null(надо звать Gemini)
+function localVerdict(user, correct) {
+  const u = tokenize(user), c = tokenize(correct);
+  if (u.join(' ') === c.join(' ')) return { kind:'exact' };
+  // отличие только в артиклях
+  const uNoArt = u.filter(w=>!ARTICLES.includes(w)), cNoArt = c.filter(w=>!ARTICLES.includes(w));
+  if (uNoArt.join(' ') === cNoArt.join(' ') && u.length === c.length) {
+    const wrong = []; for (let i=0;i<c.length;i++) if (u[i]!==c[i] && ARTICLES.includes(c[i])) wrong.push(c[i]);
+    return { kind:'article', detail: wrong[0] };
+  }
+  // мелкая опечатка: те же слова, общее расстояние ≤2, и одинаковое число слов
+  if (u.length === c.length) {
+    let dist = 0, wrongPair = null;
+    for (let i=0;i<c.length;i++) { const d = editDistance(u[i], c[i]); dist += d; if (d>0 && !wrongPair) wrongPair = { got:u[i], exp:c[i] }; }
+    if (dist > 0 && dist <= 2) return { kind:'typo', detail: wrongPair };
+  }
+  return null; // непонятно локально — спросим Gemini (смысл/синонимы)
+}
+// подсветить расхождение: эталон с выделенным отличающимся словом
+function highlightDiff(user, correct) {
+  const cTok = String(correct).split(/(\s+)/), uTok = tokenize(user);
+  let ui = 0;
+  return cTok.map(tok => {
+    if (/^\s+$/.test(tok) || !tok) return esc(tok);
+    const plain = norm(tok.replace(/[.,!?;:()«»"]/g,''));
+    const u = uTok[ui++]; const same = u !== undefined && u === plain;
+    return same ? esc(tok) : `<u style="color:var(--orange);text-decoration-thickness:2px">${esc(tok)}</u>`;
+  }).join('');
+}
+
 // Контекстный дрилл: вставить пропущенное слово в предложение (вместо «переведи слово»)
 function drillContext(s) {
   const item = (L.constructs||[])[s.ci % (L.constructs||[1]).length];
   if (!item) { L.i++; return renderStep(); }
-  const targetWord = item.focus_word || (item.expected_target||'').split(/\s+/).find(x=>x.length>2) || (item.expected_target||'').trim();
-  const vEntry = L.words.find(w=>norm(w.term)===norm(targetWord)) || DB.vocab.find(w=>norm(w.term)===norm(targetWord)) || {};
-  const gap = makeGapSentence(item.expected_target, targetWord);
-  const hardWord = (L.wordErr[targetWord]||0) > 0 || DB.reviewQueue.includes(targetWord);
+  const dictWord = item.focus_word || (item.expected_target||'').split(/\s+/).find(x=>x.length>2) || (item.expected_target||'').trim();
+  const vEntry = L.words.find(w=>norm(w.term)===norm(dictWord)) || DB.vocab.find(w=>norm(w.term)===norm(dictWord)) || {};
+  const gap = makeGapSentence(item.expected_target, dictWord);
+  // не удалось встроить пропуск (другая форма/нет слова) — не показываем кривой прочерк, пропускаем
+  if (!gap.found) { L.i++; return renderStep(); }
+  const answer = gap.answer;              // ответ — это форма, реально стоящая в предложении
+  const hardWord = (L.wordErr[dictWord]||0) > 0 || DB.reviewQueue.includes(dictWord);
   const key = 'st'+L.i; let mustRetype = false;
-  // для трудных слов мягкий авто-намёк (каркас слова + транскрипция), для обычных — по кнопке
   const autoHint = hardWord
-    ? `<div class="feedback ok" style="margin:6px 0">💡 <b>${esc(wordSkeleton(targetWord,1))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span></div>` : '';
+    ? `<div class="feedback ok" style="margin:6px 0">💡 <b>${esc(wordSkeleton(answer,1))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span></div>` : '';
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Контекст')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 слово в контексте</span></div>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Дополните предложение: впишите ОДНО пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
-      <p class="note">${esc(item.prompt_native||'Вставьте подходящее слово')}${vEntry.translation?` · пропущено: <b>«${esc(vEntry.translation)}»</b>`:''}</p>
       ${autoHint}
-      <input type="text" id="ans" placeholder="Впишите пропущенное слово" autocomplete="off" autocapitalize="off">
+      <input type="text" id="ans" placeholder="Одно слово" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -1535,21 +1600,24 @@ function drillContext(s) {
       </div>
     </div>`);
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(targetWord, Math.min(2, targetWord.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>`; };
+    $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span> — ${esc(vEntry.translation||'')}`; };
   $('#check').onclick = () => {
-    const a = $('#ans').value, ok = norm(a) === norm(targetWord);
+    const a = $('#ans').value.trim();
+    if (!a && !mustRetype) return;
+    // принимаем словарную форму и форму из предложения; прощаем мелкую опечатку
+    const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a), norm(answer))<=1;
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
-      markSeen(targetWord);
+      markSeen(dictWord);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(targetWord)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(targetWord);
-      speak(targetWord, DB.profile.targetLang);
+      $('#fb').innerHTML = `✅ <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(answer);
+      speak(answer, DB.profile.targetLang);
       $('#check').textContent = 'Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
-      if (!mustRetype) { L.errors.writing++; noteWordError(targetWord); markSeen(targetWord); mustRetype = true; }
+      if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ Верно: <b>${esc(targetWord)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(targetWord) + `<br>🧠 Запомните написание и впишите вручную.`;
-      speak(targetWord, DB.profile.targetLang);
+      $('#fb').innerHTML = `❌ Верно: <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(answer) + `<br>🧠 Запомните написание и впишите вручную.`;
+      speak(answer, DB.profile.targetLang);
       $('#ans').value=''; $('#ans').focus();
     }
   };
@@ -1596,12 +1664,27 @@ function drillWrite(s) {
 function drillConstruct(s) {
   const c = s.c, key = 'st'+L.i;
   let mustRetype = false, correctForm = c.expected_target;
+  // словарик новых слов задания (с переводом+транскрипцией) + автосохранение в словарь
+  const gloss = Array.isArray(c.glossary) ? c.glossary.filter(g=>g && g.term) : [];
+  gloss.forEach(g => {
+    const ex = DB.vocab.find(v=>norm(v.term)===norm(g.term));
+    if (ex) { if (g.translit && !ex.translit) ex.translit=g.translit; return; }
+    DB.vocab.push({ term:g.term, translation:g.translation||'', translit:g.translit||'', emoji:'💬',
+      part_of_speech:'', article:'', is_irregular:false, forms:'', lesson:'CONTEXT',
+      errors:0, status:'встречено в контексте', source:'task', seen_in_context:true, mnemonic:'', date_added:today(), date_review:today() });
+  });
+  if (gloss.length) Storage.save(DB);
+  const glossHTML = gloss.length
+    ? `<div class="note" style="margin:8px 0;line-height:1.7">📒 Новые слова: ${gloss.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>` : '';
+  const instruction = c.instruction || `Переведите на ${esc(langName(DB.profile.targetLang))} и впишите фразу:`;
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · Construction</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 фраза</span></div>
-      <div class="task-text">🎯 ${esc(c.prompt_native)}</div>
-      <input type="text" id="ans" placeholder="Фраза на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
+      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>
+      <div class="task-text">«${esc(c.prompt_native)}»</div>
+      ${glossHTML}
+      <input type="text" id="ans" placeholder="Ваш ответ на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -1610,22 +1693,34 @@ function drillConstruct(s) {
       </div>
     </div>`);
   if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
-  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 Опорное слово: <b>${esc(c.focus_word||'')}</b>. Начало: <b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`; };
+  // подсказка: ключевые слова ответа с транскрипцией+переводом (реальная опора, не пустота)
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
+    const kw = gloss.length ? gloss.map(g=>`<b>${esc(g.term)}</b> ${esc(g.translit||'')}`).join(', ')
+                            : `<b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`;
+    $('#fb').innerHTML = `💡 Опорные слова: ${kw}<br>Начните так: <b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`; };
   $('#check').onclick = async () => {
     const a = $('#ans').value.trim();
     if (!a) return;
     if (mustRetype) {
-      if (norm(a) === norm(correctForm)) { passOK(); } else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`❌ Введите точно: <b>${esc(correctForm)}</b>`; }
+      const v = localVerdict(a, correctForm);
+      if (v && (v.kind==='exact'||v.kind==='typo'||v.kind==='article')) { passOK(); }
+      else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`❌ Почти! Сверьте: ${highlightDiff(a, correctForm)}`; }
       return;
     }
-    if (norm(a) === norm(correctForm)) { firstTry(key, true); return passOK(); }
-    // строгий контракт check_answer (раздел 2.5, пример B)
+    // 1) локальная человечная проверка (без сети): точное / опечатка / только артикль
+    const v = localVerdict(a, correctForm);
+    if (v && v.kind==='exact') { firstTry(key, true); return passOK(); }
+    if (v && v.kind==='typo') { firstTry(key, true);
+      return passOK({ note:`Верно, маленькая опечатка: правильно «${v.detail.exp}», вы написали «${v.detail.got}».` }); }
+    if (v && v.kind==='article') { firstTry(key, true); if (c.focus_word) noteWordError(c.focus_word);
+      return passOK({ note:`Почти верно — обратите внимание на артикль: «${v.detail}».`, articleSlip:true }); }
+    // 2) смысл/синонимы — через Gemini
     $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
     let res = null;
     try {
       res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
         cefr: curCefr(), expected: c.expected_target, user_answer: a,
-        rules:'Проверяй по СМЫСЛУ и грамматике, а не по точному совпадению строк. Равноценные грамматические формы — ВЕРНЫ (correct=true): слитные формы предлога с артиклем in dem = im, zu dem = zum, an dem = am, bei dem = beim, von dem = vom и любые иные равнозначные варианты. Если ответ верен, но есть более естественная/частая форма — correct=true, заполни note мягкой подсказкой на native_lang («Верно. Кстати, чаще пишут слитно: im = in dem») И заполни rule_title/rule_summary этим правилом (например про слитные формы), чтобы оно попало в Свод правил. Если есть настоящая ошибка — в explanation короткий разбор ИМЕННО этой ошибки, а в rule_title/rule_summary правило точно под неё (полно), на native_lang; rule_table — полный набор форм по теме.' },
+        rules:'Проверяй по СМЫСЛУ и грамматике, НЕ по точному совпадению строк. Любой грамматически корректный вариант с тем же смыслом — correct=true (синонимы, иной порядок слов, иные но верные конструкции). Равноценные формы (in dem=im, zu dem=zum, an dem=am) — верны. Мелкие опечатки (1-2 буквы) — correct=true. Если ответ верен, но эталон естественнее — correct=true и note на native_lang («Верно. Более типично: …»). Только при реальной смысловой/грамматической ошибке correct=false: в explanation короткий разбор именно этой ошибки на native_lang, в rule_title/rule_summary правило под неё (полно), rule_table — полный набор форм.' },
         '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","note":"мягкая подсказка если ответ верен но есть лучший вариант, иначе пусто","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","correct_translit":"[транскрипция верной фразы родными буквами]","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
     } catch(e){}
     $('#check').disabled = false;
@@ -1637,9 +1732,9 @@ function drillConstruct(s) {
     const cTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
     mustRetype = true;
     $('#fb').className='feedback bad';
-    $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Верно: <b>${esc(correctForm)}</b>${cTr}` + sayBtn(correctForm) + `<br>🧠 Запомните и введите верный вариант, чтобы продолжить.`;
-    speak(correctForm, DB.profile.targetLang);   // сразу озвучиваем верное — запоминание, не угадайка
-    showErrorRule(res);   // точное правило под ошибку — сразу
+    $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${cTr}` + sayBtn(correctForm) + `<br>🧠 Запомните и введите верный вариант, чтобы продолжить.`;
+    speak(correctForm, DB.profile.targetLang);
+    showErrorRule(res);
     $('#ans').value=''; $('#ans').focus();
   };
   function passOK(res) {
@@ -1647,7 +1742,8 @@ function drillConstruct(s) {
     const note = res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
     $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm) + note;
     speak(correctForm, DB.profile.targetLang);
-    if (res && res.note) saveErrorRule(ruleFromCheck(res));   // слитные формы и т.п. — в Свод правил
+    if (res && res.articleSlip && L.grammar) { /* артикль — копим в адаптив через ошибку слова */ }
+    if (res && res.note && res.rule_title) saveErrorRule(ruleFromCheck(res));
     $('#check').textContent='Дальше'; $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
   }
@@ -1673,15 +1769,15 @@ async function runQuest(cfg) {
         task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
         topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.maxScenes,
         user_choice:Q.choice, story_so_far:Q.summary,
-        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user просит написать фразу на целевом языке. В encountered_words верни значимые НЕслужебные слова, встреченные в тексте сцены (существительные/глаголы/прилагательные), с транскрипцией родными буквами и переводом — до 5 штук.'
+        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user — ВНЯТНОЕ задание на родном (что именно сказать). ВАЖНО: используй преимущественно слова из must_use и пройденную лексику; если для ответа (expected_target) нужны слова вне must_use — перечисли их ВСЕ в answer_glossary (term, translit родными буквами, translation), чтобы ученик не угадывал. В encountered_words — значимые слова из текста сцены (до 5) с транскрипцией и переводом.'
       },
-      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"задание на родном: какую фразу написать","expected_target":"эталонная фраза на целевом","encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
     } catch(e) {
       toast('Связь прервалась — квест засчитан', true);
       return cfg.onDone();
     }
-    // слова, встреченные в контексте сцены, — в словарь (без дублей), статус «встречено в контексте»
-    (sc.encountered_words||[]).forEach(w => {
+    // слова сцены И слова для ответа — в словарь (без дублей), статус «встречено в контексте»
+    [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])].forEach(w => {
       if (!w || !w.term) return;
       const ex = DB.vocab.find(v=>norm(v.term)===norm(w.term));
       if (ex) { ex.seen_in_context = true; if (w.translit && !ex.translit) ex.translit = w.translit; return; }
@@ -1703,6 +1799,7 @@ async function runQuest(cfg) {
       <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
       <div class="card">
         <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Понадобятся: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
@@ -1721,6 +1818,12 @@ async function runQuest(cfg) {
         $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
       }
       if (correctForm && norm(a) === norm(correctForm)) return pass();
+      // локальная человечная проверка: опечатка / только артикль — засчитываем
+      if (correctForm) {
+        const v = localVerdict(a, correctForm);
+        if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
+        if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
+      }
       $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
       let res = null;
       try {
@@ -1745,7 +1848,7 @@ async function runQuest(cfg) {
       }
       mustRetype = true; correctForm = res?.correct_form || correctForm || a;
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Верно: <b>${esc(correctForm)}</b>${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
+      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
       speak(correctForm, p.targetLang);
       showErrorRule(res);   // точное правило под ошибку — сразу
       $('#ans').value=''; $('#ans').focus();
@@ -1873,10 +1976,10 @@ async function startSuperLesson() {
     plan1 = await Gemini.call({
       task:'super_lesson_plan', part:'link', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:intensiveTopic, known_vocab:knownSample, priority_words:sp.priority,
-      rules:'80% — повторение known_vocab (СТРОГО приоритет priority_words — профессиональные термины пользователя), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. Формулировки заданий — на родном языке.'
+      rules:'80% — повторение known_vocab (СТРОГО приоритет priority_words — профессиональные термины пользователя), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. ВАЖНО: instruction — внятная инструкция что сделать; prompt_native и expected_target ТОЧНО соответствуют по смыслу; все слова эталона вне known_vocab перечисли в glossary (term, translit, translation).'
     },
     '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
-    '"link_drills":[{"prompt_native":"задание: старое слово + новая связка","expected_target":"эталон"}] — ровно 9}');
+    '"link_drills":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
     if (!plan1.link_drills?.length) throw new Error('EMPTY');
   } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
@@ -1912,15 +2015,15 @@ function fetchSuperPart(which) {
   const sp = L.sp;
   const taskName = which==='sent' ? 'sentence_drills' : 'grammar_drills';
   const promptRule = which==='sent'
-    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. Формулировки — на родном.'
-    : 'Грамматический тренинг / свободное построение, с приоритетом priority_words. Запрещён обратный перевод. Формулировки — на родном.';
+    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; новые слова эталона — в glossary (term, translit, translation).'
+    : 'Грамматический тренинг / свободное построение, приоритет priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; новые слова эталона — в glossary (term, translit, translation).';
   part.state='loading'; part.err=null;
   part.promise = (async () => {
     const r = await Gemini.call({
       task:'super_lesson_plan', part:which, target_lang:sp.p.targetLang, native_lang:sp.p.nativeLang, cefr:sp.lvl,
       topic:sp.topic, known_vocab:sp.knownSample, priority_words:sp.priority, rules:promptRule
     },
-    '{"'+taskName+'":[{"prompt_native":"задание на родном","expected_target":"эталон"}] — ровно 9}');
+    '{"'+taskName+'":[{"instruction":"инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
     const arr = (r[taskName]||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (arr.length < 3) throw new Error('FEW_DRILLS');
     part.data = arr; part.state='ready';
