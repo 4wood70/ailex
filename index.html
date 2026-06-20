@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v26';
+const APP_VERSION = 'v28';
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1214,7 +1214,7 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока, строго по уровню CEFR. ВАЖНО: prompt_native (русская формулировка) и expected_target (немецкий эталон) должны ТОЧНО соответствовать друг другу по смыслу — эталон не беднее и не богаче задания. instruction — короткая внятная инструкция что сделать («Переведите на немецкий», «Составьте предложение»). Если в expected_target есть слова вне lesson_words и known_vocab — перечисли их в glossary (term, translit родными буквами, translation), чтобы ученик не угадывал.'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока, строго по уровню CEFR. ВАЖНО: prompt_native (русская формулировка) и expected_target (немецкий эталон) должны ТОЧНО соответствовать друг другу по смыслу — эталон не беднее и не богаче задания. instruction — короткая внятная инструкция что сделать («Переведите на немецкий», «Составьте предложение»). В glossary помести ВСЕ ключевые слова, нужные ученику чтобы построить expected_target: существительные, глаголы, прилагательные, термины — каждое как немецкое слово + транскрипция родными буквами + перевод на родной. НЕ ограничивайся служебными словами (артикли/местоимения/связки). Любое слово из задания или эталона, которого нет в known_vocab/lesson_words, ОБЯЗАНО быть в glossary. Включай и немецкие эквиваленты русских понятий из формулировки (например «ответственный» → verantwortlich).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}]} — ровно 9 объектов');
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
@@ -1742,8 +1742,19 @@ function drillConstruct(s) {
       errors:0, status:'встречено в контексте', source:'task', seen_in_context:true, mnemonic:'', date_added:today(), date_review:today() });
   });
   if (gloss.length) Storage.save(DB);
+  // ЛЮБОЕ немецкое слово, показанное в формулировке задания, получает перевод+транскрипцию из словаря —
+  // даже «известное» (как Bedienfeld), чтобы не было слов без пояснения (версия 4.13)
+  const shownText = (instr0()+' '+(c.prompt_native||'')+' '+(c.focus_word||''));
+  function instr0(){ return c.instruction || ''; }
+  const latinTokens = (shownText.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []);
+  const seenG = new Set(gloss.map(g=>norm(g.term)));
+  latinTokens.forEach(tok => {
+    const n = norm(tok); if (seenG.has(n)) return;
+    const v = DB.vocab.find(x=>norm(x.term)===n || norm(x.term).split(' ').pop()===n);
+    if (v && (v.translation||v.translit)) { seenG.add(n); gloss.push({ term: tok, translit: v.translit||'', translation: v.translation||'' }); }
+  });
   const glossHTML = gloss.length
-    ? `<div class="note" style="margin:8px 0;line-height:1.7">📒 Новые слова: ${gloss.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>` : '';
+    ? `<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${gloss.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>` : '';
   const instruction = c.instruction || `Переведите на ${esc(langName(DB.profile.targetLang))} и впишите фразу:`;
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · Construction</div>
@@ -1841,7 +1852,7 @@ async function runQuest(cfg) {
         task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
         topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.maxScenes,
         user_choice:Q.choice, story_so_far:Q.summary,
-        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user — ВНЯТНОЕ задание на родном (что именно сказать). ВАЖНО: используй преимущественно слова из must_use и пройденную лексику; если для ответа (expected_target) нужны слова вне must_use — перечисли их ВСЕ в answer_glossary (term, translit родными буквами, translation), чтобы ученик не угадывал. В encountered_words — значимые слова из текста сцены (до 5) с транскрипцией и переводом.'
+        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user — ВНЯТНОЕ задание на родном (что именно сказать). ВАЖНО: используй преимущественно слова из must_use и пройденную лексику; В answer_glossary помести ВСЕ ключевые слова, нужные чтобы построить ответ (существительные, глаголы, прилагательные, термины) — каждое немецкое слово + транскрипция + перевод; включай и немецкие эквиваленты русских понятий из задания. Не ограничивайся служебными словами. В encountered_words — значимые слова из текста сцены (до 5) с транскрипцией и переводом.'
       },
       '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
     } catch(e) {
@@ -2087,8 +2098,8 @@ function fetchSuperPart(which) {
   const sp = L.sp;
   const taskName = which==='sent' ? 'sentence_drills' : 'grammar_drills';
   const promptRule = which==='sent'
-    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; новые слова эталона — в glossary (term, translit, translation).'
-    : 'Грамматический тренинг / свободное построение, приоритет priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; новые слова эталона — в glossary (term, translit, translation).';
+    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; в glossary — ВСЕ ключевые слова для построения ответа (сущ., глаголы, прилагательные, термины + немецкие эквиваленты русских понятий из задания), каждое: немецкое слово + транскрипция + перевод; не только служебные.'
+    : 'Грамматический тренинг / свободное построение, приоритет priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; в glossary — ВСЕ ключевые слова для построения ответа (сущ., глаголы, прилагательные, термины + немецкие эквиваленты русских понятий из задания), каждое: немецкое слово + транскрипция + перевод; не только служебные.';
   part.state='loading'; part.err=null;
   part.promise = (async () => {
     const r = await Gemini.call({
