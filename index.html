@@ -208,7 +208,70 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v28';
+const APP_VERSION = 'v29';
+/* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
+   Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
+   встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
+const I18N = {
+  lang: 'ru',
+  registry: new Set(),
+  dict: {
+    en: {
+      'Проверить':'Check','Дальше':'Next','Подсказка':'Hint','Правило':'Rule','В меню':'Menu',
+      'Повторить':'Retry','Готово':'Done','Назад':'Back','Продолжить':'Continue','Начать':'Start',
+      'Профили':'Profiles','Словарь':'Dictionary','Свод правил':'Rules','Настройки':'Settings',
+      'Новые слова':'New words','Слова задания':'Task words','Понадобятся':'You will need',
+      'SYSTEM ONLINE':'SYSTEM ONLINE','С возвращением':'Welcome back',
+      'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Готовлю супер-урок…':'Preparing super-lesson…',
+      'Догружаю супер-урок…':'Loading super-lesson…','Проверяю…':'Checking…',
+      'Не получилось подготовить урок':'Could not prepare the lesson',
+      'Дополните предложение: впишите ОДНО пропущенное слово':'Complete the sentence: type the ONE missing word',
+      'Одно слово':'One word','Ваш ответ':'Your answer','Ваша фраза…':'Your phrase…',
+      'Верно':'Correct','Опорные слова':'Key words','Запомните и введите верный вариант, чтобы продолжить.':'Memorize and type the correct answer to continue.',
+      'Импортировать свои слова':'Import my words','Свой словарь (интенсив)':'My vocabulary (intensive)',
+      'к изучению':'to learn','трудное':'hard','встречено в контексте':'seen in context',
+      'Закрепление правила':'Rule reinforcement','Понятно, дальше':'Got it, next',
+      'Слово в контексте':'Word in context','Повторение':'Review','Повторение в контексте':'Review in context'
+    }
+  },
+  init() {
+    try {
+      const saved = localStorage.getItem('AILEX_UI_LANG');
+      this.lang = saved || (navigator.language||'ru').slice(0,2).toLowerCase();
+      const c = JSON.parse(localStorage.getItem('AILEX_UI_CACHE')||'{}');
+      Object.keys(c).forEach(l => this.dict[l] = Object.assign(this.dict[l]||{}, c[l]));
+    } catch(_) { this.lang = 'ru'; }
+    Object.keys(this.dict.en).forEach(k => this.registry.add(k));  // весь известный набор — на автоперевод
+  },
+  setLang(l) { this.lang = l; try { localStorage.setItem('AILEX_UI_LANG', l); } catch(_){} },
+  t(s) {
+    if (s == null) return s;
+    const str = String(s);
+    if (this.lang === 'ru') return str;
+    this.registry.add(str);
+    const d = this.dict[this.lang];
+    if (d && d[str] != null) return d[str];
+    return str; // пока не переведено — показываем исходную строку (русскую)
+  },
+  // автоперевод накопленных строк интерфейса на текущий язык через Gemini + кэш
+  async ensure() {
+    if (this.lang === 'ru') return;
+    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
+    const missing = [...this.registry].filter(s => d[s] == null);
+    if (!missing.length || typeof Gemini === 'undefined' || !Gemini.key) return;
+    try {
+      const res = await Gemini.call({
+        task:'translate_ui', target_ui_lang:this.lang, strings: missing,
+        rules:'Переведи строки интерфейса приложения на язык target_ui_lang. Сохрани смысл и краткость (это кнопки/заголовки). Верни массив переводов СТРОГО в том же порядке и количестве. Эмодзи и спецсимволы сохраняй.'
+      }, '{"translations":["перевод 1","перевод 2"]}');
+      const tr = (res && res.translations) || [];
+      missing.forEach((s,i) => { if (tr[i]) d[s] = tr[i]; });
+      localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
+        Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
+    } catch(_) { /* не вышло — останемся на исходных строках */ }
+  }
+};
+const t = s => I18N.t(s);
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -479,6 +542,7 @@ const Screen = {
   show(html, { back=null } = {}) {
     const s = $('#screen');
     s.innerHTML = html;
+    localizeDOM(s);
     const b = $('#btnBack');
     b.style.display = back ? '' : 'none';
     b.onclick = back || null;
@@ -488,6 +552,21 @@ const Screen = {
     this.show(`<div class="loader"><div class="spin"></div><div>${esc(msg||'Запрос к Gemini…')}</div></div>`);
   }
 };
+// Переводит интерфейс: заменяет ТОЛЬКО текстовые узлы, целиком совпадающие со служебной строкой
+// из словаря (кнопки/заголовки). Учебный контент так не затрагивается. Для ru — ничего не делает.
+function localizeDOM(root) {
+  if (!root || I18N.lang === 'ru') return;
+  const d = I18N.dict[I18N.lang], known = I18N.dict.en || {};
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = []; let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+  nodes.forEach(node => {
+    const raw = node.nodeValue, key = raw.trim();
+    if (!key || known[key] === undefined) return;   // переводим только известные служебные строки
+    I18N.registry.add(key);
+    if (d && d[key] != null) node.nodeValue = raw.replace(key, d[key]);
+  });
+}
 
 /* ---------- коды этапов (раздел 2.1, 7) ---------- */
 const LEVELS = ['A1','A2','B1','B2','C1','C2'];
@@ -1117,11 +1196,28 @@ function showSettings() {
       <input type="file" id="sFile" accept="application/json" style="display:none">
     </div>
     <div class="card">
+      <h2>Язык интерфейса</h2>
+      <p class="note" style="margin:4px 0 12px">Язык кнопок и подписей приложения. «Авто» — язык телефона; недостающие переводы подгружаются автоматически. На учебный контент не влияет (он на вашем родном языке).</p>
+      <select id="sUiLang" class="fld" style="width:100%;padding:10px;border-radius:10px">
+        <option value="auto">Авто (язык телефона)</option>
+        <option value="ru">Русский</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+    <div class="card">
       <h2>Ключ Gemini</h2>
       <button class="btn btn-ghost btn-mini" id="sKey" style="margin-top:8px">Заменить ключ</button>
     </div>
     <button class="btn btn-ghost" id="sReset" style="color:var(--err)">Удалить профиль и начать заново</button>`,
     { back: mainMenu });
+  try { const cur = localStorage.getItem('AILEX_UI_LANG'); $('#sUiLang').value = cur || 'auto'; } catch(_){}
+  $('#sUiLang').onchange = e => {
+    const v = e.target.value;
+    if (v === 'auto') { try{ localStorage.removeItem('AILEX_UI_LANG'); }catch(_){} I18N.lang = (navigator.language||'ru').slice(0,2).toLowerCase(); }
+    else I18N.setLang(v);
+    if (I18N.lang !== 'ru') I18N.ensure().then(()=>showSettings()); else showSettings();
+    toast('Язык интерфейса обновлён ✓');
+  };
   $('#sSave').onclick = () => { p.name = $('#sName').value.trim()||p.name; p.interests = $('#sInt').value.trim()||p.interests; Storage.save(DB); toast('Сохранено ✓'); };
   $('#sExp').onclick = () => Storage.exportFile();
   $('#sImp').onclick = () => $('#sFile').click();
@@ -2362,7 +2458,10 @@ function startDialogue() {
 }
 
 /* ---------- запуск ---------- */
-try { const _ss = document.getElementById('sysStatus'); if (_ss) _ss.textContent = 'SYSTEM ONLINE · ' + APP_VERSION; } catch(_){}
+I18N.init();
+try { const _ss = document.getElementById('sysStatus'); if (_ss) _ss.textContent = (I18N.t('SYSTEM ONLINE')) + ' · ' + APP_VERSION; } catch(_){}
+// автоперевод интерфейса на язык устройства (если не ru/en и есть ключ) — фоном
+if (I18N.lang !== 'ru') setTimeout(()=>{ I18N.ensure().then(()=>{ try{ localizeDOM(document.getElementById('screen')); }catch(_){} }); }, 1500);
 splashScreen(boot);
 
 </script>
