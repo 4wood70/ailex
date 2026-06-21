@@ -185,6 +185,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
   border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);
   font-family:'Chakra Petch';font-size:12px;display:grid;place-items:center}
 a{color:var(--cyan)}
+.tapword{cursor:pointer;border-bottom:1.5px dashed var(--orange);transition:opacity .15s}
+.tapword:active{opacity:.55}
+.chapter-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
 </style>
 </head>
 <body>
@@ -208,7 +211,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v30';
+const APP_VERSION = 'v31';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -222,8 +225,8 @@ const I18N = {
       'Профили':'Profiles','Словарь':'Dictionary','Свод правил':'Rules','Настройки':'Settings',
       'Новые слова':'New words','Слова задания':'Task words','Понадобятся':'You will need',
       'SYSTEM ONLINE':'SYSTEM ONLINE','С возвращением':'Welcome back',
-      'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Готовлю супер-урок…':'Preparing super-lesson…',
-      'Догружаю супер-урок…':'Loading super-lesson…','Проверяю…':'Checking…',
+      'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Готовлю Суперквест…':'Preparing Superquest…',
+      'Догружаю Суперквест…':'Loading Superquest…','Проверяю…':'Checking…',
       'Не получилось подготовить урок':'Could not prepare the lesson',
       'Дополните предложение: впишите ОДНО пропущенное слово':'Complete the sentence: type the ONE missing word',
       'Одно слово':'One word','Ваш ответ':'Your answer','Ваша фраза…':'Your phrase…',
@@ -590,7 +593,7 @@ function masteryPercent() {
   const a = DB?.analytics || [];
   if (!a.length) return 0;
   const lvl = currentLevel();
-  // берём записи текущего уровня (урок/супер-урок/экзамен этого уровня)
+  // берём записи текущего уровня (урок/Суперквест/экзамен этого уровня)
   const ofLevel = a.filter(x => {
     const p = parseCode(String(x.lesson||'').replace('SUPER_','').replace('EXAM_',''));
     return p && p.lvl === lvl;
@@ -973,7 +976,7 @@ function mainMenu() {
     </div>
     <div class="menu-list">
       <button class="menu-item" id="mLesson"><span class="ic">🎯</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
-      <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Супер-урок</b><small>Повторение: 80% знакомого + связки</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Суперквест</b><small>Повторение: квест-погружение на 30–50 предложений</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
@@ -1166,9 +1169,9 @@ function showImportWords() {
         lesson:'IMPORT', errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
       added++;
     });
-    DB.intensive = true;   // режим интенсива: приоритетные слова в супер-уроках
+    DB.intensive = true;   // режим интенсива: приоритетные слова в Суперквестах
     Storage.save(DB);
-    info.innerHTML = `Добавлено новых: <b>${added}</b>, всего распознано: ${list.length}. Режим интенсива включён — эти слова будут приоритетными в супер-уроках.`;
+    info.innerHTML = `Добавлено новых: <b>${added}</b>, всего распознано: ${list.length}. Режим интенсива включён — эти слова будут приоритетными в Суперквестах.`;
     toast('Импортировано ✓');
   };
 }
@@ -1183,7 +1186,7 @@ function showSettings() {
     </div>
     <div class="card">
       <h2>Свой словарь (интенсив)</h2>
-      <p class="note" style="margin:4px 0 12px">Вставьте свой список терминов — приложение добавит их в словарь как приоритетные и будет активно отрабатывать в супер-уроках. Формат строки: <b>[Категория] Термин [транскрипция] — перевод</b> (категория и транскрипция необязательны).</p>
+      <p class="note" style="margin:4px 0 12px">Вставьте свой список терминов — приложение добавит их в словарь как приоритетные и будет активно отрабатывать в Суперквестах. Формат строки: <b>[Категория] Термин [транскрипция] — перевод</b> (категория и транскрипция необязательны).</p>
       <button class="btn btn-ghost" id="sImport">Импортировать свои слова</button>
     </div>
     <div class="card">
@@ -1425,14 +1428,13 @@ function renderStep() {
     return ensureChunk2().then(ok => { if (!ok) return; if (L.phrases && L.phrases.length) drillPhrases(); else { L.i++; renderStep(); } });
   }
   if (s.t==='grammar') {                 // правило из порции 2: если не готово — подождём; нет правила — пропустим
-    if (L.isSuper) return (L.i++, renderStep());
     if (L.chunk2.state==='ready') { if (L.grammar) return drillGrammar(); L.i++; return renderStep(); }
     return ensureChunk2().then(ok => { if (!ok) return; if (L.grammar) drillGrammar(); else { L.i++; renderStep(); } });
   }
   if (s.t==='recog')     return drillRecog(s);
   if (s.t==='write')     return drillWrite(s);
   if (s.t==='construct') {               // построение фраз из порции 2
-    if (s.c) return drillConstruct(s);   // супер-урок передаёт готовый объект c
+    if (s.c) return drillConstruct(s);
     if (L.constructs && L.constructs.length) { s.c = L.constructs[s.ci % L.constructs.length]; return drillConstruct(s); }
     return ensureChunk2().then(ok => { if (!ok) return; s.c = L.constructs[s.ci % L.constructs.length]; drillConstruct(s); });
   }
@@ -2156,10 +2158,10 @@ async function finishLesson() {
     <div class="eyebrow">Точность: ${Math.round(acc*100)}% · подсказок: ${hintsUsed}</div>
     <h1>Урок ${esc(code)} завершён, прогресс сохранён.</h1>
     <p class="sub">${diag?.note_native ? '💡 '+esc(diag.note_native) : (note==='REVIEW' ? 'Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.' : 'Что дальше?')}</p>
-    ${hard.length?`<div class="chiplist">${hard.map(h=>`<span class="chip warn">⚠️ ${esc(h)}</span>`).join('')}</div><p class="note">Эти слова вернутся в Recap и супер-урок.</p>`:''}
+    ${hard.length?`<div class="chiplist">${hard.map(h=>`<span class="chip warn">⚠️ ${esc(h)}</span>`).join('')}</div><p class="note">Эти слова вернутся в Recap и Суперквест.</p>`:''}
     <div style="height:8px"></div>
     <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?'Экзамен '+esc(next.replace('EXAM_','')):'Следующий урок '+esc(next)}</button>
-    <button class="btn btn-ghost" id="bSuper">Супер-урок (повторение)</button>
+    <button class="btn btn-ghost" id="bSuper">Суперквест (повторение)</button>
     <button class="btn btn-ghost" id="bTalk">🎙️ Поговорить</button>
     <button class="btn btn-ghost" id="bExit">Выход в меню</button>`);
   $('#bNext').onclick  = () => next.startsWith('EXAM_') ? startExam(next) : startLesson(next);
@@ -2169,13 +2171,73 @@ async function finishLesson() {
 }
 
 /* =====================================================================
-   СУПЕР-УРОК — 30-Step Loop (раздел 6): 80% повторение из KNOWN_VOCAB,
-   20% новая функциональная лексика; квесты на шагах 10, 20 и 30.
+   СУПЕРКВЕСТ (раздел 6, версия 4.15) — заменяет прежний «Супер-урок».
+   Один цельный квест-погружение на 30–50 предложений вместо набора
+   отдельных заданий: история разбита на 3–5 актов по CEFR, между актами —
+   экран-итог (не сюжетный). Развилки не фиксированы числом — расставляет
+   генерация истории по логике повествования (не больше 1–2 за акт).
+   Лексика: 80% known_vocab / 20% новая служебная; баланс бытовое/интересы
+   по CEFR. Anti-Frustration (Q.errors) обнуляется в начале каждого акта;
+   итоговая точность (L.ft) — нет, копится за весь Суперквест.
+   Движок переиспользует контракт quest_step (раздел 5.A, 2.5), расширенный
+   полями act_index/acts_total/branches_used_in_act/branch_limit_in_act и
+   ответным полем is_act_final (отдельно от is_final — конец ВСЕЙ истории).
    ===================================================================== */
+// Шкала актов и общего объёма истории по CEFR (раздел 6.3)
+const SUPERQUEST_ACTS   = { A1:3, A2:3, B1:4, B2:4, C1:5, C2:5 };
+const SUPERQUEST_SCENES = { A1:30, A2:34, B1:40, B2:44, C1:50, C2:50 };
+function splitScenesAmongActs(total, acts) {
+  const base = Math.floor(total/acts), rem = total % acts;
+  return Array.from({length:acts}, (_,i) => base + (i < rem ? 1 : 0));
+}
+// Тап-перевод: оборачивает встречающиеся в тексте сцены слова в кликабельные span'ы.
+// Список 📒 «Слова задания» НЕ заменяется этим — тапы добавляются как дополнительный способ (раздел 6.5).
+function tapWordsHTML(text, words) {
+  let html = esc(text);
+  const list = (words||[]).filter(w=>w && w.term).slice().sort((a,b)=>b.term.length-a.term.length);
+  const used = new Set(), final = [];
+  list.forEach(w => {
+    const key = norm(w.term); if (used.has(key)) return;
+    const escTerm = String(w.term).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    let re; try { re = new RegExp('('+escTerm+')','i'); } catch(_) { return; }
+    if (re.test(html)) {
+      used.add(key);
+      const idx = final.length;
+      html = html.replace(re, `<span class="tapword" data-tw="${idx}">$1</span>`);
+      final.push(w);
+    }
+  });
+  return { html, words: final };
+}
+function showTapPopup(w) {
+  if (!w || !w.term) return;
+  let ov = document.getElementById('tapOverlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'tapOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:60;background:rgba(4,7,14,.55);display:flex;align-items:flex-end;justify-content:center';
+  ov.innerHTML = `
+    <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
+                border-radius:18px 18px 0 0;padding:18px">
+      <div style="font-size:19px;font-weight:600">${esc(w.term)} <span style="color:var(--orange);font-weight:400">${esc(w.translit||'')}</span></div>
+      <div class="note" style="margin-top:4px">${esc(w.translation||'')}</div>
+      <button class="btn btn-primary" id="tapSay" style="margin-top:14px;width:100%">🔊 Озвучить</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.getElementById('tapSay').onclick = () => speak(w.term, DB.profile.targetLang);
+  ov.onclick = e => { if (e.target===ov) ov.remove(); };
+}
+// Подбор слов для must_use на конкретный акт: ротация приоритетных + известных + стартовой служебной лексики.
+function superquestActMustUse() {
+  const pri = pick(L.sp.priority||[], Math.min(3, (L.sp.priority||[]).length));
+  const restPool = (L.sp.knownSample||[]).filter(t=>!pri.includes(t));
+  const rest = pick(restPool, Math.min(4, restPool.length));
+  const func = L.sp.functionalNew||[];
+  return [...new Set([...pri, ...rest, ...func])].slice(0,8);
+}
+
 async function startSuperLesson() {
   const p = DB.profile, lvl = p.cefr;
   const base = DB.nextStage.startsWith('EXAM_') ? DB.nextStage.replace('EXAM_','')+'.25' : DB.nextStage;
-  Screen.loader('Готовлю супер-урок…');
+  Screen.loader('Готовлю Суперквест…');
   const knownSample = pick(DB.vocab, Math.min(20, DB.vocab.length)).map(w=>w.term);
   const imported = DB.vocab.filter(w=>w.priority || w.source==='import').map(w=>w.term);
   const riskQueue = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
@@ -2183,107 +2245,210 @@ async function startSuperLesson() {
   const intensiveTopic = DB.intensive && imported.length
     ? (p.interests ? p.interests + '; ' : '') + 'прикладная отработка импортированных профессиональных терминов в реальных рабочих сценариях'
     : p.interests;
-  const sp = { p, lvl, base, knownSample, priority: riskFirst.slice(0,7), topic:intensiveTopic };
-  // ПОРЦИЯ 1 (быстрый старт): новые связки + 9 заданий-связок
-  let plan1;
+  const acts = SUPERQUEST_ACTS[lvl] || 3;
+  const scenesTotal = SUPERQUEST_SCENES[lvl] || 30;
+  const scenesPerAct = splitScenesAmongActs(scenesTotal, acts);
+  const survShare = SURVIVAL_SHARE[lvl] ?? 0.3;
+  const topicMode = `бытовое ≈${Math.round(survShare*100)}% / интересы ≈${Math.round((1-survShare)*100)}% (бытовое: ориентирование и транспорт, магазин, деньги, еда, вежливость, время, здоровье); бытовое вплетать в сюжет, не отдельным списком`;
+
+  // небольшой стартовый набор новой служебной лексики (раздел 6.2) — войдёт в must_use по ходу истории
+  let functionalNew = [];
   try {
-    plan1 = await Gemini.call({
-      task:'super_lesson_plan', part:'link', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      topic:intensiveTopic, known_vocab:knownSample, priority_words:sp.priority,
-      rules:'80% — повторение known_vocab (СТРОГО приоритет priority_words — профессиональные термины пользователя), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. ВАЖНО: instruction — внятная инструкция что сделать; prompt_native и expected_target ТОЧНО соответствуют по смыслу; все слова эталона вне known_vocab перечисли в glossary (term, translit, translation).'
-    },
-    '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
-    '"link_drills":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","expected_translit":"[транскрипция всей фразы родными буквами]","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
-    if (!plan1.link_drills?.length) throw new Error('EMPTY');
+    const r = await Gemini.call({
+      task:'super_lesson_plan', part:'functional', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      known_vocab:knownSample,
+      rules:'Ровно 2 новых служебных слова (предлоги/союзы/частицы), которых нет в known_vocab — будут вплетены в историю Суперквеста по ходу повествования.'
+    }, '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2}');
+    functionalNew = (r.functional_new||[]).filter(w=>w && w.term);
   } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
-    return lessonLoadError(startSuperLesson, e);
+    // стартовый набор необязателен — история всё равно введёт новые слова по ходу (encountered_words)
   }
-  // новые функциональные слова — в словарь
-  (plan1.functional_new||[]).forEach(w => {
+  functionalNew.forEach(w => {
     if (w.term && !DB.vocab.some(v=>norm(v.term)===norm(w.term)))
       DB.vocab.push({ term:w.term, translation:w.translation||'', translit:w.translit||'', emoji:w.emoji||'',
-        irregular:false, forms:'', lesson:'SUPER_'+base, errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
+        is_irregular:false, forms:'', lesson:'SUPER_'+base, errors:0, status:'новое', mnemonic:'', date_added:today(), date_review:today() });
   });
+  Storage.save(DB);
 
-  const steps = [];
-  (plan1.link_drills||[]).slice(0,9).forEach((c,i)=>steps.push({t:'construct', n:`Шаг ${i+1}/30`, c}));
-  steps.push({t:'quest1'});
-  for (let i=0;i<9;i++) steps.push({t:'construct', n:`Шаг ${i+11}/30`, group:'sent', gi:i});
-  steps.push({t:'quest2'});
-  for (let i=0;i<9;i++) steps.push({t:'construct', n:`Шаг ${i+21}/30`, group:'gram', gi:i});
-  steps.push({t:'quest3'});
-
-  L = { code:'SUPER_'+base, isSuper:true, words:[], steps, i:0, sp,
-        superParts:{ sent:{state:'idle',promise:null,err:null,data:null}, gram:{state:'idle',promise:null,err:null,data:null} },
+  L = { code:'SUPER_'+base, isSuper:true, words:[],
+        sp: { p, lvl, base, knownSample, priority: riskFirst.slice(0,7), topic:intensiveTopic,
+              functionalNew: functionalNew.map(w=>w.term) },
+        actsTotal: acts, scenesPerAct, topicMode,
+        superStory: { summary:'' },
         errors:{recognition:0,writing:0,construction:0,quest:0},
         ft:{ok:0,total:0}, hints:0, t0:Date.now(), wordErr:{}, firstTryDone:{} };
-  fetchSuperPart('sent');   // предложения — в фоне, пока ученик делает связки
-  renderSuperStep();
+  startSuperquestAct(1);
 }
 
-// Фоновые порции супер-урока: 'sent' (предложения) и 'gram' (грамматика), по 9 заданий.
-function fetchSuperPart(which) {
-  if (!L || !L.superParts) return;
-  const part = L.superParts[which]; if (part.state==='loading'||part.state==='ready') return part.promise;
-  const sp = L.sp;
-  const taskName = which==='sent' ? 'sentence_drills' : 'grammar_drills';
-  const promptRule = which==='sent'
-    ? 'Развёрнутые предложения по интересам/контексту пользователя, активно вплетая priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; в glossary — ВСЕ ключевые слова для построения ответа (сущ., глаголы, прилагательные, термины + немецкие эквиваленты русских понятий из задания), каждое: немецкое слово + транскрипция + перевод; не только служебные.'
-    : 'Грамматический тренинг / свободное построение, приоритет priority_words. Запрещён обратный перевод. instruction внятная; prompt_native и expected_target точно соответствуют; в glossary — ВСЕ ключевые слова для построения ответа (сущ., глаголы, прилагательные, термины + немецкие эквиваленты русских понятий из задания), каждое: немецкое слово + транскрипция + перевод; не только служебные.';
-  part.state='loading'; part.err=null;
-  part.promise = (async () => {
-    const r = await Gemini.call({
-      task:'super_lesson_plan', part:which, target_lang:sp.p.targetLang, native_lang:sp.p.nativeLang, cefr:sp.lvl,
-      topic:sp.topic, known_vocab:sp.knownSample, priority_words:sp.priority, rules:promptRule
-    },
-    '{"'+taskName+'":[{"instruction":"инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","expected_translit":"[транскрипция всей фразы родными буквами]","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
-    const arr = (r[taskName]||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
-    if (arr.length < 3) throw new Error('FEW_DRILLS');
-    part.data = arr; part.state='ready';
-  })().catch(e => { part.state='error'; part.err=e; throw e; });
-  return part.promise;
+function startSuperquestAct(actIndex) {
+  L.actIndex = actIndex;
+  const scenesInAct = L.scenesPerAct[actIndex-1];
+  const isLastAct = actIndex >= L.actsTotal;
+  runSuperquestAct({
+    actIndex, actsTotal: L.actsTotal, scenesInAct, isLastAct,
+    cefr: L.sp.lvl, topic: L.sp.topic, topicMode: L.topicMode,
+    mustUse: superquestActMustUse()
+  });
 }
-async function ensureSuperPart(which) {
-  const part = L.superParts[which];
-  if (part.state==='ready') return true;
-  if (part.state==='idle') fetchSuperPart(which);
-  Screen.loader('Догружаю супер-урок…');
-  try { await part.promise; return true; }
-  catch(e) {
-    if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return false; }
-    lessonLoadError(()=>{ fetchSuperPart(which); ensureSuperPart(which).then(ok=>{ if(ok) renderSuperStep(); }); }, e);
-    return false;
+
+// Цикл сцен ОДНОГО акта. История (L.superStory.summary) копится сквозным образом через все акты —
+// это одна непрерывная история, а не три разных квеста, как в прежней реализации.
+async function runSuperquestAct(cfg) {
+  const p = DB.profile;
+  const Q = { scene:1, errors:0, branchesUsedInAct:0, choice:null, newWordsInAct:new Set() };
+  nextScene();
+
+  async function nextScene() {
+    Screen.loader(`Акт ${cfg.actIndex}/${cfg.actsTotal} · сцена ${Q.scene} из ${cfg.scenesInAct}…`);
+    let sc;
+    try {
+      sc = await Gemini.call({
+        task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
+        topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.scenesInAct,
+        act_index:cfg.actIndex, acts_total:cfg.actsTotal,
+        branches_used_in_act:Q.branchesUsedInAct, branch_limit_in_act:2,
+        vocab_balance:'80% слов — из must_use/пройденной лексики, до 20% — новая служебная (предлоги, союзы, частицы)',
+        topic_mode: cfg.topicMode,
+        user_choice:Q.choice, story_so_far:L.superStory.summary,
+        rules:'Это ОДНА непрерывная история Суперквеста (не отдельный квест): акт '+cfg.actIndex+' из '+cfg.actsTotal+', сцена '+Q.scene+' из '+cfg.scenesInAct+' внутри акта. '
+          +'Развилка — ТОЛЬКО в логически уместный момент сюжета, не больше branch_limit_in_act развилок за акт (в этом акте уже использовано: '+Q.branchesUsedInAct+'); основная линия должна оставаться прямой — не превращай историю в лабиринт выборов. '
+          +'Если это последняя сцена акта — заверши акт логичной паузой: is_act_final=true, без развилки. '
+          +(cfg.isLastAct ? 'Это ПОСЛЕДНИЙ акт истории: если это последняя его сцена — обязательно заверши ВСЮ историю целиком (is_final=true и is_act_final=true), без развилки.' : 'Это не последний акт — НЕ завершай всю историю (is_final=false), только аккуратно заверши этот акт, если уместно.')
+          +' Конкретная чувственная сцена в сфере интересов. prompt_for_user — внятное задание на родном (что сказать). Используй преимущественно слова из must_use и пройденную лексику. В answer_glossary — ВСЕ ключевые слова, нужные для ответа (термин+транскрипция+перевод). В encountered_words — значимые слова из текста сцены (до 5, термин+транскрипция+перевод) — они будут доступны по тапу прямо в тексте.'
+      },
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_act_final":false,"is_final":false}');
+    } catch(e) {
+      if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return; }
+      toast('Связь прервалась — Суперквест засчитан', true);
+      return finishSuper();
+    }
+    // слова сцены и слова для ответа — в словарь (без дублей), статус «встречено в контексте»
+    const newGloss = [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])];
+    newGloss.forEach(w => {
+      if (!w || !w.term) return;
+      const ex = DB.vocab.find(v=>norm(v.term)===norm(w.term));
+      if (ex) { ex.seen_in_context = true; if (w.translit && !ex.translit) ex.translit = w.translit; return; }
+      DB.vocab.push({ term:w.term, translation:w.translation||'', translit:w.translit||'', emoji:'💬',
+        part_of_speech:'', article:'', is_irregular:false, forms:'',
+        lesson:'CONTEXT', errors:0, status:'встречено в контексте', source:'quest',
+        seen_in_context:true, mnemonic:'', date_added:today(), date_review:today() });
+      Q.newWordsInAct.add(norm(w.term));
+    });
+    Storage.save(DB);
+
+    const isActFinal = sc.is_act_final || Q.scene >= cfg.scenesInAct;
+    const isWholeFinal = !!(sc.is_final && cfg.isLastAct);
+    let mustRetype = false, correctForm = sc.expected_target || '', sceneWrong = false;
+    const stepKey = 'act'+cfg.actIndex+'_sc'+Q.scene;
+    const tap = tapWordsHTML(sc.scene_text, newGloss);
+
+    Screen.show(`
+      <div class="eyebrow">Суперквест · Акт ${cfg.actIndex}/${cfg.actsTotal}</div>
+      <div class="segbar">${Array.from({length:cfg.scenesInAct},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.scenesInAct-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
+      <div class="scene">
+        <div class="target">${tap.html} <button class="tts" style="vertical-align:middle" id="sayScene">🔊</button></div>
+        <div class="hint">${esc(sc.native_hint||'')}</div>
+      </div>
+      <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
+      <div class="card">
+        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
+        <div class="feedback" id="fb"></div>
+        <div class="btn-row" style="margin-top:12px">
+          ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
+          <button class="btn btn-primary" id="check">Отправить</button>
+        </div>
+      </div>`);
+    tap.words.forEach((w,idx)=>{ const el = document.querySelector(`[data-tw="${idx}"]`); if (el) el.onclick = () => showTapPopup(w); });
+    if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
+    $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
+    speak(sc.scene_text, p.targetLang);
+
+    $('#check').onclick = async () => {
+      const a = $('#ans').value.trim(); if (!a) return;
+      if (mustRetype) {
+        if (norm(a) === norm(correctForm)) return pass();
+        $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
+      }
+      if (correctForm && norm(a) === norm(correctForm)) return pass();
+      // локальная человечная проверка: опечатка / только артикль — засчитываем
+      if (correctForm) {
+        const v = localVerdict(a, correctForm);
+        if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
+        if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
+      }
+      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+      let res = null;
+      try {
+        res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
+          expected: correctForm || '(свободный ответ по смыслу сцены)', user_answer:a,
+          allow_creative:true, rules:'Creative Path: если пользователь решил задачу своими словами без грубых ошибок — correct=true. Проверяй по смыслу, равноценные формы (in dem = im, zum, am…) — верны. Если есть ошибка — в rule_title/rule_summary сформулируй правило точно под эту ошибку (полно), на native_lang, и проставь rule_categories.' },
+          '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","correct_translit":"[транскрипция верной фразы родными буквами]","rule_title":"название правила под ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма","translit":"[транскрипция]","translation":"перевод"}]}');
+      } catch(e){}
+      $('#check').disabled = false;
+      if (!res) { toast('Связь барахлит — ответ засчитан', true); return pass(); }
+      if (res.correct) return pass();
+      sceneWrong = true; Q.errors++; L.errors.quest++;
+      const qTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
+      if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой (счётчик свой на каждый акт)
+        firstTry(stepKey, false);
+        $('#fb').className='feedback ok';
+        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
+        speak(res?.correct_form||correctForm, p.targetLang);
+        showErrorRule(res);
+        $('#check').textContent = isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше');
+        $('#check').onclick = () => advance(sc, isActFinal, isWholeFinal);
+        return;
+      }
+      mustRetype = true; correctForm = res?.correct_form || correctForm || a;
+      $('#fb').className='feedback bad';
+      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
+      speak(correctForm, p.targetLang);
+      showErrorRule(res);
+      $('#ans').value=''; $('#ans').focus();
+    };
+    function pass() {
+      firstTry(stepKey, !sceneWrong);
+      $('#fb').className='feedback ok';
+      $('#fb').innerHTML = correctForm ? `✅ Отлично! <b>${esc(correctForm)}</b>` + sayBtn(correctForm) : `✅ Отлично!`;
+      if (sc.is_branch && !isActFinal && !isWholeFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
+        Q.branchesUsedInAct++;
+        $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
+          sc.choices.slice(0,2).map(c=>`<button class="opt" style="margin-top:8px" data-c="${esc(c.id)}">${esc(c.label_target)}</button>`).join('');
+        document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
+        $('#check').style.display='none';
+      } else {
+        $('#check').textContent = isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше');
+        $('#check').onclick = () => advance(sc, isActFinal, isWholeFinal);
+      }
+    }
+  }
+  function advance(sc, isActFinal, isWholeFinal) {
+    L.superStory.summary = (L.superStory.summary + ' ' + sc.scene_text).slice(-900);
+    if (isWholeFinal) return finishSuper();
+    if (isActFinal) {
+      const learned = Q.newWordsInAct.size;
+      Screen.show(`
+        <div class="eyebrow">Суперквест</div>
+        <h1>${Q.errors>=2?'🤝 Прошли главу вместе!':'📖 Глава '+cfg.actIndex+' пройдена!'}</h1>
+        <div class="chapter-card">
+          <p class="sub" style="margin:0">Слов закреплено: <b style="color:var(--ink)">${learned}</b></p>
+        </div>
+        <button class="btn btn-primary" id="goAct">Продолжить</button>`);
+      $('#goAct').onclick = () => startSuperquestAct(cfg.actIndex+1);
+      return;
+    }
+    Q.scene++; if (!sc.is_branch) Q.choice = null; nextScene();
   }
 }
-function renderSuperStep() {
-  if (L.i >= L.steps.length) return finishSuper();
-  const s = L.steps[L.i];
-  if (s.t==='construct') {
-    if (s.c) return drillConstruct(s);
-    const part = L.superParts[s.group];
-    if (part && part.state==='ready') { s.c = part.data[s.gi % part.data.length]; return drillConstruct(s); }
-    return ensureSuperPart(s.group).then(ok => { if(!ok) return; const pt=L.superParts[s.group]; s.c = pt.data[s.gi % pt.data.length]; drillConstruct(s); });
-  }
-  const qcfg = (mu, sc, title) => ({ title, topic:DB.profile.interests, cefr:DB.profile.cefr,
-    mustUse:mu, maxScenes:sc, onError:()=>{L.errors.quest++;}, onDone:()=>{L.i++; renderSuperStep();} });
-  const lastTerms = DB.vocab.slice(-10).map(w=>w.term);
-  if (s.t==='quest1') { fetchSuperPart('sent'); fetchSuperPart('gram'); return runQuest(qcfg(pick(lastTerms,3), 1, 'Шаг 10 · Quest #1')); }
-  if (s.t==='quest2') { fetchSuperPart('gram'); return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 1, 'Шаг 20 · Quest #2')); }
-  if (s.t==='quest3') return runQuest(qcfg(pick(DB.vocab.map(w=>w.term), Math.min(5,DB.vocab.length)), 2, 'Шаг 30 · Final Mission'));
-}
-/* В супер-уроке используется тот же drillConstruct: он вызывает renderStep,
-   поэтому renderStep маршрутизирует по флагу isSuper. */
-const _renderStepLesson = renderStep;
-renderStep = function() {
-  if (L && L.isSuper) return renderSuperStep();
-  return _renderStepLesson();
-};
+
 async function finishSuper() {
   const acc = L.ft.total ? +(L.ft.ok/L.ft.total).toFixed(2) : 1;
   const hard = Object.keys(L.wordErr).filter(t=>L.wordErr[t]>=2);
   hard.forEach(t=>{ if(!DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
-  // слова без ошибок в супер-уроке считаем закреплёнными
+  // слова без ошибок в Суперквесте считаем закреплёнными
   DB.vocab.forEach(v => { if (DB.reviewQueue.includes(v.term) && !(L.wordErr[v.term])) {
     DB.reviewQueue = DB.reviewQueue.filter(x=>x!==v.term); v.status='освоено'; v.date_review=today(); }});
   DB.progress.push({ code:L.code, date:today(), words:hard.join(', '), next:DB.nextStage, note:'PASS' });
@@ -2292,7 +2457,7 @@ async function finishSuper() {
   Storage.save(DB); toast('Сохранено ✓');
   const code = L.code; L = null;
   Screen.show(`
-    <h1>Супер-урок завершён, прогресс сохранён.</h1>
+    <h1>Суперквест завершён, прогресс сохранён.</h1>
     <p class="sub">Точность: ${Math.round(acc*100)}%. Повторение — половина успеха. Что дальше?</p>
     <button class="btn btn-primary" id="bN">Следующий этап: ${esc(DB.nextStage)}</button>
     <button class="btn btn-ghost" id="bE">Выход в меню</button>`);
@@ -2379,7 +2544,7 @@ function examResult(E) {
     Screen.show(`<h1>Результат: ${E.ok}/${E.qs.length}</h1>
       <p class="sub">До порога 85% не хватило. Это первая попытка — экзамен можно пересдать сразу или после повторения.</p>
       <button class="btn btn-primary" id="re">Пересдать экзамен</button>
-      <button class="btn btn-ghost" id="sup">Супер-урок перед пересдачей</button>
+      <button class="btn btn-ghost" id="sup">Суперквест перед пересдачей</button>
       <button class="btn btn-ghost" id="m">В меню</button>`);
     $('#re').onclick = () => startExam(E.code); $('#sup').onclick = startSuperLesson; $('#m').onclick = mainMenu;
   } else {
