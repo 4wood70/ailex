@@ -208,7 +208,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v29';
+const APP_VERSION = 'v30';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -1287,6 +1287,7 @@ async function startLesson(code) {
   steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
   for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Recognition', n:`Задание ${i+1}/21`, w: words[i % words.length], pool:'lesson' });
   for (let i=0;i<6;i++) steps.push({ t:'context', phase:'Слово в контексте', n:`Задание ${i+6}/21`, ci:i });
+  if (((parseCode(code)||{}).n || 1) % 2 === 1) steps.push({ t:'phrases' });   // повседневные выражения — через урок (4.14)
   for (let i=0;i<9;i++) steps.push({ t:'construct', phase:'Construction', n:`Задание ${i+12}/21`, ci:i });
   steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
 
@@ -1310,12 +1311,13 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока, строго по уровню CEFR. ВАЖНО: prompt_native (русская формулировка) и expected_target (немецкий эталон) должны ТОЧНО соответствовать друг другу по смыслу — эталон не беднее и не богаче задания. instruction — короткая внятная инструкция что сделать («Переведите на немецкий», «Составьте предложение»). В glossary помести ВСЕ ключевые слова, нужные ученику чтобы построить expected_target: существительные, глаголы, прилагательные, термины — каждое как немецкое слово + транскрипция родными буквами + перевод на родной. НЕ ограничивайся служебными словами (артикли/местоимения/связки). Любое слово из задания или эталона, которого нет в known_vocab/lesson_words, ОБЯЗАНО быть в glossary. Включай и немецкие эквиваленты русских понятий из формулировки (например «ответственный» → verantwortlich).'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока, строго по уровню CEFR. ВАЖНО: prompt_native (русская формулировка) и expected_target (немецкий эталон) должны ТОЧНО соответствовать друг другу по смыслу — эталон не беднее и не богаче задания. instruction — короткая внятная инструкция что сделать («Переведите на немецкий», «Составьте предложение»). В glossary помести ВСЕ ключевые слова, нужные ученику чтобы построить expected_target: существительные, глаголы, прилагательные, термины — каждое как немецкое слово + транскрипция родными буквами + перевод на родной. НЕ ограничивайся служебными словами (артикли/местоимения/связки). Любое слово из задания или эталона, которого нет в known_vocab/lesson_words, ОБЯЗАНО быть в glossary. Включай и немецкие эквиваленты русских понятий из формулировки (например «ответственный» → verantwortlich). Также верни everyday_phrases — 3 ХОДОВЫЕ повседневные разговорные фразы-клише по уровню CEFR (готовые выражения для живого общения, напр. Alles klar, Kein Problem, Pass auf!), каждая: phrase + translit (родными буквами) + translation + when (когда так говорят, на родном).'
     },
-    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}]} — ровно 9 объектов');
+    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно 9 объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)"}] — 3 штуки}');
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     L.constructs = constructs;
+    L.phrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);   // повседневные выражения (4.14)
     // пункт 12: короткие предложения для слов ПОВТОРЕНИЯ — чтобы Recap шёл в контексте со скелетами
     if (L.reviewWords && L.reviewWords.length) {
       try {
@@ -1418,6 +1420,10 @@ function renderStep() {
     if (L.constructs && L.constructs.length) return drillContext(s);
     return ensureChunk2().then(ok => { if (ok) drillContext(s); });
   }
+  if (s.t==='phrases') {                  // повседневные выражения (из порции 2)
+    if (L.chunk2.state==='ready') { if (L.phrases && L.phrases.length) return drillPhrases(); L.i++; return renderStep(); }
+    return ensureChunk2().then(ok => { if (!ok) return; if (L.phrases && L.phrases.length) drillPhrases(); else { L.i++; renderStep(); } });
+  }
   if (s.t==='grammar') {                 // правило из порции 2: если не готово — подождём; нет правила — пропустим
     if (L.isSuper) return (L.i++, renderStep());
     if (L.chunk2.state==='ready') { if (L.grammar) return drillGrammar(); L.i++; return renderStep(); }
@@ -1439,6 +1445,35 @@ function renderStep() {
     });
 }
 
+// Повседневные разговорные выражения (Alltagsphrasen, версия 4.14)
+function drillPhrases() {
+  const list = L.phrases || [];
+  // сохраняем выражения в словарь (без дублей)
+  list.forEach(f => {
+    if (!f.phrase) return;
+    const ex = DB.vocab.find(v=>norm(v.term)===norm(f.phrase));
+    if (ex) { ex.seen_in_context = true; return; }
+    DB.vocab.push({ term:f.phrase, translation:f.translation||'', translit:f.translit||'', emoji:'💬',
+      part_of_speech:'phrase', article:'', is_irregular:false, forms:'', lesson:'PHRASE',
+      errors:0, status:'встречено в контексте', source:'phrase', seen_in_context:true,
+      note:f.when||'', mnemonic:'', date_added:today(), date_review:today() });
+  });
+  Storage.save(DB);
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · Повседневные выражения</div>
+    <h1>💬 Фразы на каждый день</h1>
+    <p class="sub">Готовые разговорные выражения для живого общения. Нажмите 🔊, чтобы услышать. Они сохранены в словарь.</p>
+    <div class="card">
+      ${list.map(f=>`
+        <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${sayBtn(f.phrase)}</div>
+          <div class="note" style="margin-top:2px">${esc(f.translation||'')}${f.when?` · <i>${esc(f.when)}</i>`:''}</div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-primary" id="go" style="margin-top:14px">Дальше</button>`);
+  document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  $('#go').onclick = () => { L.i++; renderStep(); };
+}
 /* ---------- Presentation: таблица новых слов ---------- */
 function drillPresent() {
   Screen.show(`
@@ -1868,11 +1903,11 @@ function drillConstruct(s) {
       </div>
     </div>`);
   if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
-  // подсказка: ключевые слова ответа с транскрипцией+переводом (реальная опора, не пустота)
+  // подсказка: ПОЛНЫЙ правильный ответ — фраза целиком + транскрипция + перевод + озвучка (версия 4.14)
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
-    const kw = gloss.length ? gloss.map(g=>`<b>${esc(g.term)}</b> ${esc(g.translit||'')}`).join(', ')
-                            : `<b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`;
-    $('#fb').innerHTML = `💡 Опорные слова: ${kw}<br>Начните так: <b>${esc(correctForm.split(' ').slice(0,2).join(' '))}…</b>`; };
+    const tr = c.expected_translit ? ` <span style="color:var(--orange)">${esc(c.expected_translit)}</span>` : '';
+    $('#fb').innerHTML = `💡 Полный ответ: <b>${esc(correctForm)}</b>${tr}` + sayBtn(correctForm) + `<br><span style="font-size:13px">${esc(c.prompt_native||'')}</span>`;
+    speak(correctForm, DB.profile.targetLang); };
   $('#check').onclick = async () => {
     const a = $('#ans').value.trim();
     if (!a) return;
@@ -2158,7 +2193,7 @@ async function startSuperLesson() {
       rules:'80% — повторение known_vocab (СТРОГО приоритет priority_words — профессиональные термины пользователя), 20% — новая функциональная лексика (предлоги, союзы, частицы). Запрещён обратный перевод. ВАЖНО: instruction — внятная инструкция что сделать; prompt_native и expected_target ТОЧНО соответствуют по смыслу; все слова эталона вне known_vocab перечисли в glossary (term, translit, translation).'
     },
     '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2,'+
-    '"link_drills":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
+    '"link_drills":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","expected_translit":"[транскрипция всей фразы родными буквами]","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
     if (!plan1.link_drills?.length) throw new Error('EMPTY');
   } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
@@ -2202,7 +2237,7 @@ function fetchSuperPart(which) {
       task:'super_lesson_plan', part:which, target_lang:sp.p.targetLang, native_lang:sp.p.nativeLang, cefr:sp.lvl,
       topic:sp.topic, known_vocab:sp.knownSample, priority_words:sp.priority, rules:promptRule
     },
-    '{"'+taskName+'":[{"instruction":"инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
+    '{"'+taskName+'":[{"instruction":"инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталон на целевом, точно по prompt_native","expected_translit":"[транскрипция всей фразы родными буквами]","glossary":[{"term":"новое слово","translit":"[транскр.]","translation":"перевод"}]}] — ровно 9}');
     const arr = (r[taskName]||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (arr.length < 3) throw new Error('FEW_DRILLS');
     part.data = arr; part.state='ready';
