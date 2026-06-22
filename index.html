@@ -130,6 +130,17 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 .feedback{border-radius:12px;padding:13px 14px;font-size:14.5px;margin-top:10px;display:none;line-height:1.55}
 .feedback.ok{display:block;background:rgba(61,214,140,.10);border:1px solid rgba(61,214,140,.35)}
 .feedback.bad{display:block;background:rgba(255,92,108,.08);border:1px solid rgba(255,92,108,.32)}
+/* A0 (Pre-A1) уровень */
+.a0-pattern{text-align:center;margin:12px 0 8px;padding:12px;background:rgba(65,184,255,.08);border-radius:12px;border:1px solid rgba(65,184,255,.25)}
+.a0-patt-main{font-size:28px;font-weight:700;color:var(--cyan);letter-spacing:2px}
+.a0-ipa{display:block;font-size:16px;color:var(--orange);margin-top:4px}
+.a0-examples{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.a0-example{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border-radius:10px;border:1px solid var(--line)}
+.a0-word{font-size:18px;font-weight:600;color:var(--ink)}
+.a0-translit{color:var(--orange);font-size:14px}
+.a0-trans{color:var(--dim);font-size:14px;margin-left:auto}
+.opt.correct-opt{border-color:var(--ok);background:rgba(61,214,140,.15)}
+.opt.wrong-opt{border-color:var(--err);background:rgba(255,92,108,.12)}
 
 .vocab-row{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid var(--line)}
 .vocab-row:last-child{border-bottom:none}
@@ -211,7 +222,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v31';
+const APP_VERSION = 'v32';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -575,9 +586,45 @@ function localizeDOM(root) {
 const LEVELS = ['A1','A2','B1','B2','C1','C2'];
 const LESSONS_PER_SUB = 25;          // Checkpoint после 25, Final после 50
 const EXAM_PASS = 0.85;              // порог 85%
-function parseCode(code){ const m = code.match(/^([ABC][12])\.(\d)\.(\d+)$/); return m ? {lvl:m[1], sub:+m[2], n:+m[3]} : null; }
+function parseCode(code){
+  const m = code.match(/^([ABC][12])\.(\d)\.(\d+)$/); if (m) return {lvl:m[1], sub:+m[2], n:+m[3]};
+  const m0 = code.match(/^A0\.1\.(\d+)$/); if (m0) return {lvl:'A0', sub:1, n:+m0[1]};
+  return null;
+}
 function fmtCode(lvl,sub,n){ return `${lvl}.${sub}.${String(n).padStart(2,'0')}`; }
+/* Определяем количество уроков A0 по "дистанции" систем письма */
+function getA0Total(nativeLang, targetLang) {
+  const ideographic = ['zh','ja','ko'];                         // иероглифы
+  const nonLatin    = ['ar','he','fa','th','hi','bn','ta','te','am','ur','ml','kn','gu','si'];
+  const cyrillic    = ['ru','uk','bg','sr','mk','be'];
+  const greek       = ['el'];
+  const georgian    = ['ka'];
+  const armenian    = ['hy'];
+  const otherAlpha  = [...cyrillic,...greek,...georgian,...armenian];
+  if (ideographic.includes(targetLang) || nonLatin.includes(targetLang)) return 15;
+  const nIsLatin = !ideographic.includes(nativeLang) && !nonLatin.includes(nativeLang) && !otherAlpha.includes(nativeLang);
+  const tIsLatin = !ideographic.includes(targetLang) && !nonLatin.includes(targetLang) && !otherAlpha.includes(targetLang);
+  if (nIsLatin !== tIsLatin) return 10;
+  return 6;  // оба латинские (или оба кириллические) — только правила чтения
+}
+/* Определяем тип блока A0 по номеру урока */
+function getA0Block(lessonN, total) {
+  const pct = lessonN / total;
+  if (pct <= 0.20) return { block:'phonics',         focus:'базовые буквы и простые слоги' };
+  if (pct <= 0.40) return { block:'phonics',         focus:'сложные буквосочетания и особые звуки' };
+  if (pct <= 0.55) return { block:'survival_vocab',  focus:'приветствия, числа 1-20, цвета' };
+  if (pct <= 0.70) return { block:'survival_vocab',  focus:'дни недели, месяцы, члены семьи' };
+  if (pct <= 0.85) return { block:'survival_phrases',focus:'ориентация, магазин, простые вопросы' };
+  return             { block:'first_sentences',      focus:'простые предложения: я есть, это есть' };
+}
 function nextAfterLesson(code) {
+  // A0: пошагово до конца → A1.1.01
+  const a0m = code.match(/^A0\.1\.(\d+)$/);
+  if (a0m) {
+    const n = +a0m[1], total = DB?.profile?.a0Total || 12;
+    if (n >= total) return 'A1.1.01';
+    return `A0.1.${String(n+1).padStart(2,'0')}`;
+  }
   const p = parseCode(code); if (!p) return code;
   if (p.n >= LESSONS_PER_SUB) return `EXAM_${p.lvl}.${p.sub}`;     // экзамен подуровня
   return fmtCode(p.lvl, p.sub, p.n+1);
@@ -604,20 +651,32 @@ function masteryPercent() {
 /* Прогресс по текущему уровню CEFR = доля пройденных уроков уровня (4.8).
    Уровень = 2 подуровня × LESSONS_PER_SUB уроков (по умолчанию 25+25 = 50). */
 function currentLevel() {
-  const p = parseCode(String(DB?.nextStage||'').replace('SUPER_','').replace('EXAM_',''));
+  const next = String(DB?.nextStage||'');
+  if (next.startsWith('A0.')) return 'A0';
+  const p = parseCode(next.replace('SUPER_','').replace('EXAM_',''));
   return (p && p.lvl) || DB?.profile?.cefr || 'A1';
 }
 function levelProgress() {
-  const total = LESSONS_PER_SUB * 2;            // уроков на уровень (50)
-  const raw = String(DB?.nextStage||'').replace('SUPER_','');
-  const lvl = currentLevel();
+  const next = String(DB?.nextStage||'');
+  // A0: особая шкала
+  const a0m = next.match(/^A0\.1\.(\d+)$/);
+  if (a0m || DB?.profile?.cefr === 'A0') {
+    const n     = a0m ? +a0m[1] - 1 : 0;   // пройдено (текущий ещё не пройден)
+    const total = DB?.profile?.a0Total || 12;
+    const pct   = Math.round(Math.max(0,n) / total * 100);
+    return { lvl:'A0', done: Math.max(0,n), total, pct };
+  }
+  // A1+ стандарт
+  const total = LESSONS_PER_SUB * 2;
+  const raw   = next.replace('SUPER_','');
+  const lvl   = currentLevel();
   let done = 0;
   const em = raw.match(/^EXAM_([ABC][12])\.(\d)$/);
   if (em) {
-    done = (+em[2] === 1) ? LESSONS_PER_SUB : total;   // дошёл до экзамена подуровня
+    done = (+em[2] === 1) ? LESSONS_PER_SUB : total;
   } else {
     const p = parseCode(raw);
-    if (p) done = (p.sub === 1 ? 0 : LESSONS_PER_SUB) + (p.n - 1);  // следующий урок ещё не пройден
+    if (p) done = (p.sub === 1 ? 0 : LESSONS_PER_SUB) + (p.n - 1);
   }
   done = Math.max(0, Math.min(total, done));
   const pct = Math.round(done / total * 100);
@@ -862,16 +921,19 @@ function askProfile(i, acc) {
   };
 }
 
-/* ---------- Placement Test (раздел 4, шаг 2) ---------- */
+/* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
 function placementIntro(profile) {
   Screen.show(`
     <div class="eyebrow">Шаг 2</div>
-    <h1>Тест уровня</h1>
-    <p class="sub">Несколько вопросов на ${esc(langName(profile.targetLang))} — от простых к сложным. Не знаете — нажимайте «Не знаю», это нормально: тест завершится раньше.</p>
-    <button class="btn btn-primary" id="go">Начать тест</button>
-    <button class="btn btn-ghost" id="skip">Я новичок — начать с нуля (A1)</button>`);
-  $('#go').onclick = () => runPlacement(profile);
-  $('#skip').onclick = () => finishOnboarding(profile, 'A1');
+    <h1>Определение уровня</h1>
+    <p class="sub">Как лучше начать изучение ${esc(langName(profile.targetLang))}?</p>
+    <button class="btn btn-primary" id="go">Пройти короткий тест (рекомендуется)</button>
+    <p style="font-size:13px;color:var(--dim);text-align:center;margin:6px 0 4px">— или выберите старт вручную —</p>
+    <button class="btn btn-ghost" id="skipA1">Я новичок, но буквы читаю → начать с A1</button>
+    <button class="btn btn-ghost" id="skipA0">Не знаю язык совсем, даже буквы → начать с основ A0</button>`);
+  $('#go').onclick    = () => runPlacement(profile);
+  $('#skipA1').onclick = () => finishOnboarding(profile, 'A1');
+  $('#skipA0').onclick = () => finishOnboarding(profile, 'A0');
 }
 async function runPlacement(profile) {
   Screen.loader('Готовлю вопросы теста…');
@@ -879,39 +941,69 @@ async function runPlacement(profile) {
   try {
     const resp = await Gemini.call({
       task:'placement_test', target_lang: profile.targetLang, native_lang: profile.nativeLang,
-      levels:['A1','A2','B1','B2','C1'], per_level: 2
+      levels:['A1','A2','B1','B2','C1'], per_level: 3
     },
-    '{"questions":[{"level":"A1","question":"вопрос на целевом языке (выбор правильного варианта)","options":["в1","в2","в3","в4"],"correct_index":0}]} — ровно по 2 вопроса на уровень, по возрастанию сложности, варианты на целевом языке');
+    `{"questions":[
+      {"level":"A1","skill":"grammar","question":"вопрос на целевом языке: ТОЛЬКО структура/порядок слов/спряжение — используй лексику уровня НИЖЕ A1 (самые базовые слова)","options":["в1","в2","в3","в4"],"correct_index":0},
+      {"level":"A1","skill":"grammar","question":"ещё один структурный вопрос A1 с базовой лексикой","options":["в1","в2","в3","в4"],"correct_index":0},
+      {"level":"A1","skill":"vocab","question":"вопрос на узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":0}
+    ]} — ровно по 3 вопроса на каждый уровень (2 grammar + 1 vocab), по возрастанию сложности. Grammar-вопросы: лексика строго из уровня НИЖЕ тестируемого. Vocab-вопросы: узнавание слова на целевом языке → перевод (или наоборот). Варианты на целевом языке (кроме vocab-вопросов с переводом).`);
     qs = resp.questions;
-    if (!Array.isArray(qs) || qs.length < 4) throw 0;
+    if (!Array.isArray(qs) || qs.length < 6) throw 0;
   } catch(e) { toast('Не удалось получить тест — начнём с A1', true); return finishOnboarding(profile, 'A1'); }
 
-  let idx = 0, wrongAtLevel = {}, passed = {}, stopped = false;
+  // Счётчики v2: разделяем wrongChoice и dontKnow
+  let idx = 0, wrongChoice = {}, dontKnow = {}, passed = {}, stopped = false;
+
+  const shouldStop = (level) => {
+    const wc = wrongChoice[level]||0;
+    const dk = dontKnow[level]||0;
+    const q  = qs.filter(q=>q.level===level);
+    // Останавливаем если: 2+ явных ошибки ИЛИ сумма ошибок/незнаний >= кол-ва вопросов уровня
+    return wc >= 2 || (wc + dk) >= q.length;
+  };
+
   const step = () => {
     if (stopped || idx >= qs.length) return done();
     const q = qs[idx];
+    const isVocab = q.skill === 'vocab';
     const opts = q.options.map((o,i)=>({o,i}));
     Screen.show(`
       <div class="eyebrow">Тест уровня · вопрос ${idx+1} / ${qs.length}</div>
       <div class="card">
-        <div class="drill-head"><span class="n">${esc(q.level)}</span></div>
+        <div class="drill-head">
+          <span class="n">${esc(q.level)}</span>
+          <span style="font-size:11px;color:var(--dim);margin-left:8px">${isVocab?'лексика':'грамматика'}</span>
+        </div>
         <div class="task-text">${esc(q.question)}</div>
         ${shuffle(opts).map(x=>`<button class="opt" data-i="${x.i}">${esc(x.o)}</button>`).join('')}
         <button class="opt" data-i="-1" style="color:var(--dim)">Не знаю</button>
       </div>`);
     document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
-      const ok = +b.dataset.i === q.correct_index;
-      if (ok) passed[q.level] = (passed[q.level]||0)+1;
-      else {
-        wrongAtLevel[q.level] = (wrongAtLevel[q.level]||0)+1;
-        if (wrongAtLevel[q.level] >= 2) stopped = true;   // досрочное завершение
+      const chosen = +b.dataset.i;
+      if (chosen === -1) {
+        // «Не знаю» — только grammar-вопросы участвуют в остановке
+        if (!isVocab) dontKnow[q.level] = (dontKnow[q.level]||0)+1;
+      } else if (chosen === q.correct_index) {
+        passed[q.level] = (passed[q.level]||0)+1;
+      } else {
+        wrongChoice[q.level] = (wrongChoice[q.level]||0)+1;
       }
+      // Проверяем остановку только после grammar-вопросов
+      if (!isVocab && shouldStop(q.level)) stopped = true;
       idx++; step();
     });
   };
+
   const done = () => {
+    // Уровень подтверждён если ≥ 2 верных из 3 (большинство) и не было ранней остановки
     let level = 'A1';
-    for (const L of ['A1','A2','B1','B2','C1']) if ((passed[L]||0) >= 1 && !( (wrongAtLevel[L]||0)>=2 )) level = L; else break;
+    for (const L of ['A1','A2','B1','B2','C1']) {
+      if ((passed[L]||0) >= 2 && !shouldStop(L)) level = L;
+      else break;
+    }
+    // Если вообще 0 верных на A1 → направляем на A0
+    if ((passed['A1']||0) === 0) level = 'A0';
     finishOnboarding(profile, level);
   };
   step();
@@ -921,14 +1013,21 @@ async function runPlacement(profile) {
 function finishOnboarding(profile, cefr) {
   profile.cefr = cefr;
   DB = Storage.newDB(profile);
-  DB.nextStage = fmtCode(cefr==='C2'?'C1':cefr, 1, 1);
+  if (cefr === 'A0') {
+    const a0Total = getA0Total(profile.nativeLang, profile.targetLang);
+    DB.profile.a0Total = a0Total;
+    DB.nextStage = 'A0.1.01';
+  } else {
+    DB.nextStage = fmtCode(cefr==='C2'?'C1':cefr, 1, 1);
+  }
   DB.progress.push({ code:'START', date: today(), words:'', next: DB.nextStage, note:'' });
   Storage.addProfile(DB);          // новый профиль, становится активным
   toast('Сохранено ✓');
+  const isA0 = cefr === 'A0';
   Screen.show(`
     <div class="eyebrow">Профиль создан</div>
-    <h1>Ваш уровень: ${esc(cefr)}</h1>
-    <p class="sub">Профиль «${esc(profile.name)}» (${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}) создан. Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.</p>
+    <h1>${isA0 ? '🔤 Начинаем с основ!' : 'Ваш уровень: '+esc(cefr)}</h1>
+    <p class="sub">Профиль «${esc(profile.name)}» (${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}) создан.${isA0 ? ` Сначала освоим чтение и базовую лексику (${DB.profile.a0Total} уроков A0), затем перейдём к A1.` : ` Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.`}</p>
     <button class="btn btn-primary" id="go">К главному меню</button>`);
   $('#go').onclick = mainMenu;
 }
@@ -957,6 +1056,7 @@ function mainMenu() {
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
   const next = DB.nextStage;
+  const isA0   = next.startsWith('A0.');
   const isExam = next.startsWith('EXAM_');
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
   const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
@@ -975,7 +1075,7 @@ function mainMenu() {
       ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
-      <button class="menu-item" id="mLesson"><span class="ic">🎯</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mLesson"><span class="ic">${isA0?'🔤':'🎯'}</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):isA0?'Урок A0: '+esc(next):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':isA0?'Чтение, произношение, базовая лексика':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Суперквест</b><small>Повторение: квест-погружение на 30–50 предложений</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
@@ -983,7 +1083,7 @@ function mainMenu() {
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
-  $('#mLesson').onclick = () => isExam ? startExam(next) : startLesson(next);
+  $('#mLesson').onclick = () => isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
   $('#mSuper').onclick  = () => DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
@@ -1228,6 +1328,143 @@ function showSettings() {
   $('#sKey').onclick = () => keyWizard();
   $('#sImport').onclick = () => showImportWords();
   $('#sReset').onclick = () => { if (confirm('Удалить профиль, словарь и весь прогресс на этом устройстве?')) { Storage.wipe(); boot(); } };
+}
+
+/* =====================================================================
+   A0 (Pre-A1): уровень фонетики и выживательной лексики (раздел 4.3).
+   Используется для пользователей с нулевым знанием языка.
+   Контракт: a0_lesson (Пример F, раздел 2.5 спецификации 4.17).
+   ===================================================================== */
+async function startA0Lesson(code) {
+  const p = DB.profile;
+  const nm = code.match(/^A0\.1\.(\d+)$/);
+  if (!nm) return mainMenu();
+  const lessonN = +nm[1];
+  const total   = DB.profile.a0Total || 12;
+  const blk     = getA0Block(lessonN, total);
+
+  Screen.loader('Готовлю урок A0.' + String(lessonN).padStart(2,'0') + '…');
+
+  let lesson;
+  try {
+    lesson = await Gemini.call({
+      task: 'a0_lesson',
+      target_lang: p.targetLang,
+      native_lang: p.nativeLang,
+      lesson_index: lessonN,
+      total_lessons: total,
+      block: blk.block,
+      focus: blk.focus
+    }, `{"lesson_title":"название урока на родном языке пользователя","items":[{"pattern":"буквосочетание или тема","ipa_approx":"приближённый звук родными буквами","native_hint":"подсказка на родном языке — когда/как употребляется","examples":[{"word":"слово на целевом языке","translit":"[транскрипция родными буквами]","translation":"перевод на родной","emoji":"один эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на родном языке","options":[{"word":"вариант 1","correct":true},{"word":"вариант 2","correct":false},{"word":"вариант 3","correct":false}]}]}
+— верни 2-4 item-а и 1-2 mini_check. Транскрипция — средствами native_lang. Все пояснения на native_lang. Блок: ${blk.block}, фокус: ${blk.focus}.`);
+    if (!lesson?.items?.length) throw new Error('NO_ITEMS');
+  } catch(e) {
+    if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+    Screen.show(`
+      <h1>Не удалось загрузить урок A0</h1>
+      <p class="sub">Проверьте соединение и попробуйте снова.</p>
+      <button class="btn btn-primary" id="retry">Повторить</button>
+      <button class="btn btn-ghost" id="back">В меню</button>`);
+    $('#retry').onclick = () => startA0Lesson(code);
+    $('#back').onclick  = mainMenu;
+    return;
+  }
+
+  // Собираем шаги: сначала все items (презентация), потом mini_check (проверка)
+  const steps = [];
+  (lesson.items||[]).forEach((item,i) => steps.push({ type:'item', item, idx:i }));
+  (lesson.mini_check||[]).forEach((check,i) => steps.push({ type:'check', check, idx:i }));
+
+  let stepIdx = 0, correctChecks = 0;
+  const totalChecks = steps.filter(s=>s.type==='check').length;
+  const t0 = Date.now();
+
+  const runStep = () => {
+    if (stepIdx >= steps.length) return finishA0Lesson(code, lessonN, total, correctChecks, totalChecks, t0);
+    const s = steps[stepIdx];
+    if (s.type === 'item')  showA0Item(s.item,  lesson.lesson_title||'', lessonN, total, stepIdx, steps.length, () => { stepIdx++; runStep(); });
+    if (s.type === 'check') showA0Check(s.check, lessonN, total, stepIdx, steps.length, (ok) => { if(ok) correctChecks++; stepIdx++; runStep(); });
+  };
+  runStep();
+}
+
+function showA0Item(item, title, lessonN, total, si, stotal, onNext) {
+  const exHtml = (item.examples||[]).map(ex => `
+    <div class="a0-example">
+      <span class="a0-word">${esc(ex.emoji||'')} ${esc(ex.word||'')}</span>
+      <span class="a0-translit">${esc(ex.translit||'')}</span>
+      <span class="a0-trans">= ${esc(ex.translation||'')}</span>
+      ${sayBtn(ex.word||'')}
+    </div>`).join('');
+  Screen.show(`
+    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${si+1}/${stotal}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
+      <div class="a0-pattern">
+        <span class="a0-patt-main">${esc(item.pattern||'')}</span>
+        ${item.ipa_approx?`<span class="a0-ipa">≈ ${esc(item.ipa_approx)}</span>`:''}
+      </div>
+      ${item.native_hint?`<p class="note" style="margin:8px 0">💡 ${esc(item.native_hint)}</p>`:''}
+      <div class="a0-examples">${exHtml}</div>
+    </div>
+    <button class="btn btn-primary" id="a0next">Дальше →</button>`);
+  if (item.examples?.[0]?.word) speak(item.examples[0].word, DB.profile.targetLang);
+  $('#a0next').onclick = onNext;
+}
+
+function showA0Check(check, lessonN, total, si, stotal, onDone) {
+  const opts = shuffle([...(check.options||[])]);
+  if (!opts.length) { onDone(true); return; }
+  Screen.show(`
+    <div class="eyebrow">A0 · урок ${lessonN}/${total} · проверка</div>
+    <div class="card" id="a0card">
+      <div class="task-text">🎯 ${esc(check.prompt_native||'Выберите правильный вариант:')}</div>
+      <div style="height:10px"></div>
+      ${opts.map((o,i)=>`<button class="opt" data-correct="${!!o.correct}" data-idx="${i}">${esc(o.word||String(o))}</button>`).join('')}
+    </div>`);
+  document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+    const ok = b.dataset.correct === 'true';
+    document.querySelectorAll('.opt').forEach(x => {
+      x.disabled = true;
+      if (x.dataset.correct === 'true') x.classList.add('correct-opt');
+      else if (x === b && !ok)          x.classList.add('wrong-opt');
+    });
+    const fb = document.createElement('div');
+    fb.className = ok ? 'feedback ok' : 'feedback bad';
+    fb.innerHTML = ok ? '✅ Верно!' : '❌ Не совсем — правильный ответ выделен зелёным.';
+    document.getElementById('a0card').appendChild(fb);
+    if (ok && b.textContent) speak(b.textContent.trim(), DB.profile.targetLang);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
+    btn.textContent = 'Дальше →'; btn.onclick = () => onDone(ok);
+    document.getElementById('a0card').after(btn);
+  });
+}
+
+function finishA0Lesson(code, lessonN, total, correct, totalChecks, t0) {
+  const next       = nextAfterLesson(code);
+  const isLastA0   = (next === 'A1.1.01');
+  const secElapsed = Math.round((Date.now() - t0) / 1000);
+  const accuracy   = totalChecks > 0 ? correct / totalChecks : 1;
+
+  DB.progress.push({ code, date:today(), words:'', next, note:`A0 ${correct}/${totalChecks}` });
+  DB.analytics.push({ lesson:code, date:today(), accuracy_first_try:accuracy,
+    errors_by_type:{}, hard_words:[], duration_sec:secElapsed, hints_used:0, delta_accuracy:'' });
+  DB.nextStage = next;
+  if (isLastA0) DB.profile.cefr = 'A1';
+  Storage.save(DB);
+  toast('Сохранено ✓');
+
+  Screen.show(`
+    <div class="eyebrow">Результат: ${totalChecks>0?correct+'/'+totalChecks+' верных':'урок пройден'}</div>
+    <h1>${isLastA0 ? '🎉 Основы пройдены! Добро пожаловать на A1!' : 'Урок A0 завершён'}</h1>
+    <p class="sub">${isLastA0
+      ? 'Вы освоили чтение и базовую лексику. Теперь начинается настоящее обучение — уровень A1!'
+      : `Следующий урок: <b style="color:var(--ink)">${esc(next)}</b> (${lessonN} из ${total} пройдено)`}</p>
+    <button class="btn btn-primary" id="bNext">${isLastA0 ? 'Начать A1 🚀' : 'Следующий урок →'}</button>
+    <button class="btn btn-ghost"  id="bExit">В главное меню</button>`);
+  $('#bNext').onclick = () => isLastA0 ? startLesson(next) : startA0Lesson(next);
+  $('#bExit').onclick = mainMenu;
 }
 
 /* =====================================================================
