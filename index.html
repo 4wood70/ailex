@@ -141,6 +141,23 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 .a0-trans{color:var(--dim);font-size:14px;margin-left:auto}
 .opt.correct-opt{border-color:var(--ok);background:rgba(61,214,140,.15)}
 .opt.wrong-opt{border-color:var(--err);background:rgba(255,92,108,.12)}
+/* Алфавитная сетка A0 */
+.a0-alpha-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:10px 0}
+.a0-alpha-cell{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 4px;
+  text-align:center;cursor:pointer;transition:transform .12s,border-color .12s;user-select:none}
+.a0-alpha-cell:active{transform:scale(.94)}
+.a0-alpha-cell.playing{border-color:var(--cyan)}
+.a0-alpha-cell .a0-ltr{font-size:22px;font-weight:700;color:var(--cyan);line-height:1}
+.a0-alpha-cell .a0-sound{font-size:11px;color:var(--orange);margin-top:3px}
+.a0-alpha-cell .a0-ex{font-size:10px;color:var(--dim);margin-top:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* Мини-сцена A0 */
+.a0-scene-other-line{background:var(--panel2);border-radius:12px;padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--cyan)}
+.a0-scene-you-line{background:rgba(255,184,65,.06);border-radius:12px;padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--orange)}
+.a0-scene-speaker{font-size:11px;color:var(--dim);margin-bottom:4px;font-weight:600;letter-spacing:.3px}
+.a0-scene-target{font-size:17px;font-weight:600;color:var(--ink);line-height:1.4}
+.a0-scene-translit{display:block;font-size:13px;color:var(--orange);margin-top:2px}
+.a0-scene-native{font-size:13px;color:var(--dim);margin-top:4px;font-style:italic}
+.a0-scene-say-box{background:var(--panel2);border-radius:12px;padding:14px;text-align:center;font-size:18px;font-weight:600;margin:10px 0;border:1px solid var(--line)}
 
 .vocab-row{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid var(--line)}
 .vocab-row:last-child{border-bottom:none}
@@ -222,7 +239,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v32';
+const APP_VERSION = 'v33';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -607,15 +624,18 @@ function getA0Total(nativeLang, targetLang) {
   if (nIsLatin !== tIsLatin) return 10;
   return 6;  // оба латинские (или оба кириллические) — только правила чтения
 }
-/* Определяем тип блока A0 по номеру урока */
+/* Определяем тип блока A0 по номеру урока (9 блоков, версия 4.17-rev2) */
 function getA0Block(lessonN, total) {
   const pct = lessonN / total;
-  if (pct <= 0.20) return { block:'phonics',         focus:'базовые буквы и простые слоги' };
-  if (pct <= 0.40) return { block:'phonics',         focus:'сложные буквосочетания и особые звуки' };
-  if (pct <= 0.55) return { block:'survival_vocab',  focus:'приветствия, числа 1-20, цвета' };
-  if (pct <= 0.70) return { block:'survival_vocab',  focus:'дни недели, месяцы, члены семьи' };
-  if (pct <= 0.85) return { block:'survival_phrases',focus:'ориентация, магазин, простые вопросы' };
-  return             { block:'first_sentences',      focus:'простые предложения: я есть, это есть' };
+  if (pct <= 0.17) return { block:'phonics',          focus:'полный алфавит с транскрипцией и произношением',                    hasMiniScene: false };
+  if (pct <= 0.33) return { block:'phonics',          focus:'сложные буквосочетания, диграфы и особые звуки',                    hasMiniScene: false };
+  if (pct <= 0.42) return { block:'first_contact',    focus:'приветствия, прощания, знакомство: имя, откуда, как дела',          hasMiniScene: true  };
+  if (pct <= 0.52) return { block:'numbers_colors',   focus:'числа 1-100, основные цвета',                                      hasMiniScene: false };
+  if (pct <= 0.62) return { block:'time_basics',      focus:'сегодня/завтра/вчера, утро/день/вечер, дни недели, месяцы',        hasMiniScene: true  };
+  if (pct <= 0.70) return { block:'family_world',     focus:'члены семьи, профессии, предметы вокруг (телефон, ключ, деньги)',  hasMiniScene: false };
+  if (pct <= 0.79) return { block:'food_body',        focus:'еда и напитки (выживательный минимум), части тела, самочувствие', hasMiniScene: true  };
+  if (pct <= 0.88) return { block:'orientation_shop', focus:'вопросительные слова (где? что? как?), направления, магазин',      hasMiniScene: true  };
+  return                  { block:'first_sentences',  focus:'первые конструкции: я есть, это есть, у меня есть, я хочу',        hasMiniScene: true  };
 }
 function nextAfterLesson(code) {
   // A0: пошагово до конца → A1.1.01
@@ -1084,7 +1104,10 @@ function mainMenu() {
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
   $('#mLesson').onclick = () => isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
-  $('#mSuper').onclick  = () => DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
+  $('#mSuper').onclick  = () => {
+    if (isA0) return toast('Суперквест откроется после завершения уровня A0 и первых уроков A1', true);
+    DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
+  };
   $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
   $('#mRules').onclick  = showRules;
@@ -1334,6 +1357,8 @@ function showSettings() {
    A0 (Pre-A1): уровень фонетики и выживательной лексики (раздел 4.3).
    Используется для пользователей с нулевым знанием языка.
    Контракт: a0_lesson (Пример F, раздел 2.5 спецификации 4.17).
+   РЕЖИМЫ: "alphabet" — полный алфавит таблицей + 12 упражнений;
+           "standard"  — 5-7 тематических групп + 12 упражнений.
    ===================================================================== */
 async function startA0Lesson(code) {
   const p = DB.profile;
@@ -1343,20 +1368,31 @@ async function startA0Lesson(code) {
   const total   = DB.profile.a0Total || 12;
   const blk     = getA0Block(lessonN, total);
 
+  // Первые два phonics-урока — алфавитный режим; остальные — стандартный
+  const isAlpha = blk.block === 'phonics';
+
   Screen.loader('Готовлю урок A0.' + String(lessonN).padStart(2,'0') + '…');
 
   let lesson;
+  const schemaHint = `{"lesson_title":"заголовок на native_lang","mode":"${isAlpha?'alphabet':'standard'}","items":[{"pattern":"буква/сочетание/тема","ipa_approx":"звук native_lang буквами","native_hint":"подсказка","examples":[{"word":"слово на target_lang","translit":"[транскрипция]","translation":"перевод","emoji":"эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на native_lang","options":[{"word":"вариант","correct":true}]}]${blk.hasMiniScene?`,"mini_scene":{"situation_native":"ситуация на native_lang — 1 предложение","exchanges":[{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_native":"что сказать:","task_options":[{"word":"правильная фраза","translit":"[транскр]","correct":true},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false}]},{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_target":"фраза","translit":"[транскр]","text_native":"скажите:","task_type":"tap_to_say"}]}`:''}}`;
+
+  const rules = isAlpha
+    ? `ПРАВИЛА — АЛФАВИТНЫЙ УРОК (блок: ${blk.focus}):
+items: ПОЛНЫЙ алфавит target_lang — ВСЕ буквы и спецсимволы (ü,ö,ä,ß для немецкого и т.п.), по ОДНОЙ букве на item, ОДНО слово-пример на букву. Транскрипция — native_lang буквами.
+mini_check: РОВНО 12 упражнений трёх типов (по 4 каждого):
+  Тип 1 (4 шт) — буква → звук: "Как читается буква X?" → 4 варианта транскрипции.
+  Тип 2 (4 шт) — звук → буква: "Какая буква даёт звук [Y]?" → 4 варианта букв.
+  Тип 3 (4 шт) — слово → перевод: "Что значит слово Z?" → 4 варианта перевода.
+Все вопросы на native_lang. Транскрипция в квадратных скобках.`
+    : `ПРАВИЛА — СТАНДАРТНЫЙ УРОК (блок: ${blk.block}, фокус: ${blk.focus}):
+items: 5-7 тематических групп слов/фраз по теме фокуса. Для КАЖДОЙ группы — 3-4 слова или фразы в поле examples. Первое слово каждой группы — самое важное. Транскрипция — native_lang буквами.
+mini_check: РОВНО 12 упражнений — узнавание слов, перевод, выбор правильного варианта из 4. Используй слова из items. Каждый вопрос на native_lang.`;
+
   try {
     lesson = await Gemini.call({
-      task: 'a0_lesson',
-      target_lang: p.targetLang,
-      native_lang: p.nativeLang,
-      lesson_index: lessonN,
-      total_lessons: total,
-      block: blk.block,
-      focus: blk.focus
-    }, `{"lesson_title":"название урока на родном языке пользователя","items":[{"pattern":"буквосочетание или тема","ipa_approx":"приближённый звук родными буквами","native_hint":"подсказка на родном языке — когда/как употребляется","examples":[{"word":"слово на целевом языке","translit":"[транскрипция родными буквами]","translation":"перевод на родной","emoji":"один эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на родном языке","options":[{"word":"вариант 1","correct":true},{"word":"вариант 2","correct":false},{"word":"вариант 3","correct":false}]}]}
-— верни 2-4 item-а и 1-2 mini_check. Транскрипция — средствами native_lang. Все пояснения на native_lang. Блок: ${blk.block}, фокус: ${blk.focus}.`);
+      task: 'a0_lesson', target_lang: p.targetLang, native_lang: p.nativeLang,
+      lesson_index: lessonN, total_lessons: total, block: blk.block, focus: blk.focus
+    }, schemaHint + '\n' + rules);
     if (!lesson?.items?.length) throw new Error('NO_ITEMS');
   } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
@@ -1370,10 +1406,20 @@ async function startA0Lesson(code) {
     return;
   }
 
-  // Собираем шаги: сначала все items (презентация), потом mini_check (проверка)
+  // Сборка шагов:
+  // Алфавитный режим: 1 шаг-сетка (все буквы сразу) + 12 упражнений
+  // Стандартный: карточки по группам + 12 упражнений
   const steps = [];
-  (lesson.items||[]).forEach((item,i) => steps.push({ type:'item', item, idx:i }));
+  if (isAlpha) {
+    steps.push({ type:'alpha_grid', items: lesson.items, title: lesson.lesson_title||'' });
+  } else {
+    (lesson.items||[]).forEach((item,i) => steps.push({ type:'item', item, idx:i, title: lesson.lesson_title||'' }));
+  }
   (lesson.mini_check||[]).forEach((check,i) => steps.push({ type:'check', check, idx:i }));
+  // Мини-сцена — финальный шаг тематических уроков (не phonics)
+  if (blk.hasMiniScene && lesson.mini_scene?.exchanges?.length) {
+    steps.push({ type:'scene', scene: lesson.mini_scene });
+  }
 
   let stepIdx = 0, correctChecks = 0;
   const totalChecks = steps.filter(s=>s.type==='check').length;
@@ -1382,13 +1428,46 @@ async function startA0Lesson(code) {
   const runStep = () => {
     if (stepIdx >= steps.length) return finishA0Lesson(code, lessonN, total, correctChecks, totalChecks, t0);
     const s = steps[stepIdx];
-    if (s.type === 'item')  showA0Item(s.item,  lesson.lesson_title||'', lessonN, total, stepIdx, steps.length, () => { stepIdx++; runStep(); });
-    if (s.type === 'check') showA0Check(s.check, lessonN, total, stepIdx, steps.length, (ok) => { if(ok) correctChecks++; stepIdx++; runStep(); });
+    const progress = `${stepIdx+1}/${steps.length}`;
+    if (s.type === 'alpha_grid') showA0AlphaGrid(s.items, s.title, lessonN, total, progress, () => { stepIdx++; runStep(); });
+    else if (s.type === 'item')  showA0Item(s.item, s.title, lessonN, total, progress, () => { stepIdx++; runStep(); });
+    else if (s.type === 'check') showA0Check(s.check, lessonN, total, progress, (ok) => { if(ok) correctChecks++; stepIdx++; runStep(); });
+    else if (s.type === 'scene') showA0MiniScene(s.scene, lessonN, total, progress, () => { stepIdx++; runStep(); });
   };
   runStep();
 }
 
-function showA0Item(item, title, lessonN, total, si, stotal, onNext) {
+/* Алфавитная сетка — все буквы сразу, каждая тапается для TTS */
+function showA0AlphaGrid(items, title, lessonN, total, progress, onNext) {
+  const cells = items.map((item,i) => `
+    <div class="a0-alpha-cell" data-idx="${i}">
+      <div class="a0-ltr">${esc(item.pattern||'')}</div>
+      <div class="a0-sound">${esc(item.ipa_approx||'')}</div>
+      <div class="a0-ex">${esc(item.examples?.[0]?.word||'')}</div>
+    </div>`).join('');
+  Screen.show(`
+    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${progress}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
+      <p class="note" style="margin:4px 0 8px">👆 Нажмите на букву, чтобы услышать её произношение</p>
+      <div class="a0-alpha-grid" id="alphaGrid">${cells}</div>
+    </div>
+    <p class="note" style="text-align:center">Изучите все буквы — затем переходите к заданиям</p>
+    <button class="btn btn-primary" id="a0next">К заданиям →</button>`);
+  // TTS по клику на ячейку
+  document.querySelectorAll('.a0-alpha-cell').forEach((cell, i) => {
+    cell.onclick = () => {
+      const item = items[i];
+      const word = item.examples?.[0]?.word || item.pattern || '';
+      speak(word, DB.profile.targetLang);
+      cell.classList.add('playing');
+      setTimeout(()=>cell.classList.remove('playing'), 800);
+    };
+  });
+  $('#a0next').onclick = onNext;
+}
+
+function showA0Item(item, title, lessonN, total, progress, onNext) {
   const exHtml = (item.examples||[]).map(ex => `
     <div class="a0-example">
       <span class="a0-word">${esc(ex.emoji||'')} ${esc(ex.word||'')}</span>
@@ -1397,7 +1476,7 @@ function showA0Item(item, title, lessonN, total, si, stotal, onNext) {
       ${sayBtn(ex.word||'')}
     </div>`).join('');
   Screen.show(`
-    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${si+1}/${stotal}</div>
+    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${progress}</div>
     <div class="card">
       <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
       <div class="a0-pattern">
@@ -1412,11 +1491,11 @@ function showA0Item(item, title, lessonN, total, si, stotal, onNext) {
   $('#a0next').onclick = onNext;
 }
 
-function showA0Check(check, lessonN, total, si, stotal, onDone) {
+function showA0Check(check, lessonN, total, progress, onDone) {
   const opts = shuffle([...(check.options||[])]);
   if (!opts.length) { onDone(true); return; }
   Screen.show(`
-    <div class="eyebrow">A0 · урок ${lessonN}/${total} · проверка</div>
+    <div class="eyebrow">A0 · урок ${lessonN}/${total} · задание ${progress}</div>
     <div class="card" id="a0card">
       <div class="task-text">🎯 ${esc(check.prompt_native||'Выберите правильный вариант:')}</div>
       <div style="height:10px"></div>
@@ -1441,6 +1520,113 @@ function showA0Check(check, lessonN, total, si, stotal, onDone) {
   });
 }
 
+/* Мини-сцена A0: ситуативный диалог в конце тематического урока.
+   Каждая реплика — отдельный экран (тот же паттерн, что и остальные шаги).
+   Типы: passive (показ реплики + TTS), task_options (выбор фразы), tap_to_say (тап для озвучки). */
+function showA0MiniScene(scene, lessonN, total, progress, onDone) {
+  if (!scene?.exchanges?.length) { onDone(); return; }
+  const sit = scene.situation_native || '';
+  let ei = 0;
+
+  const header = () =>
+    `<div class="eyebrow">A0 · урок ${lessonN}/${total} · мини-сцена</div>
+     <p class="note" style="margin:0 0 8px;font-size:13px">📍 ${esc(sit)}</p>`;
+
+  const nextBtn = (label, cb) => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-primary'; b.style.marginTop = '12px';
+    b.textContent = label; b.onclick = cb;
+    return b;
+  };
+
+  const advance = () => { ei++; showEx(); };
+
+  const showEx = () => {
+    if (ei >= scene.exchanges.length) return onDone();
+    const ex = scene.exchanges[ei];
+    const isLast = ei === scene.exchanges.length - 1;
+    const nextLabel = isLast ? 'Завершить сцену ✓' : 'Дальше →';
+
+    /* --- Выбор фразы (task_options) --- */
+    if (ex.task_options?.length) {
+      const opts = shuffle([...ex.task_options]);
+      Screen.show(`${header()}
+        <div class="card" id="scCard">
+          ${ex.text_target ? `<div class="a0-scene-other-line">
+            <div class="a0-scene-speaker">🧑‍💼</div>
+            <div class="a0-scene-target">${esc(ex.text_target)}</div>
+            ${ex.translit ? `<span class="a0-scene-translit">${esc(ex.translit)}</span>` : ''}
+            ${ex.text_native ? `<div class="a0-scene-native">${esc(ex.text_native)}</div>` : ''}
+            ${sayBtn(ex.text_target)}
+          </div>` : ''}
+          <div class="task-text">🎯 ${esc(ex.text_native || 'Выберите нужную фразу:')}</div>
+          <div style="height:8px"></div>
+          ${opts.map(o => `<button class="opt" data-correct="${!!o.correct}"
+              data-word="${esc(o.word||'')}" data-translit="${esc(o.translit||'')}">
+              ${esc(o.word||'')}
+              ${o.translit ? `<span style="display:block;font-size:11px;color:var(--orange)">${esc(o.translit)}</span>` : ''}
+            </button>`).join('')}
+        </div>`);
+
+      document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+        const ok = b.dataset.correct === 'true';
+        if (ok) speak(b.dataset.word, DB.profile.targetLang);
+        document.querySelectorAll('.opt').forEach(x => {
+          x.disabled = true;
+          if (x.dataset.correct === 'true') x.classList.add('correct-opt');
+          else if (x === b && !ok)          x.classList.add('wrong-opt');
+        });
+        const fb = document.createElement('div');
+        fb.className = ok ? 'feedback ok' : 'feedback bad';
+        const correctOpt = opts.find(o => o.correct);
+        fb.innerHTML = ok
+          ? `✅ Верно! ${esc(b.dataset.translit)}`
+          : `❌ Правильно: <b>${esc(correctOpt?.word||'')}</b> ${esc(correctOpt?.translit||'')}`;
+        document.getElementById('scCard').appendChild(fb);
+        document.getElementById('scCard').after(nextBtn(nextLabel, advance));
+      });
+      return;
+    }
+
+    /* --- Тап для озвучки (tap_to_say) --- */
+    if (ex.task_type === 'tap_to_say') {
+      Screen.show(`${header()}
+        <div class="card" id="scCard">
+          <div class="task-text">🎯 ${esc(ex.text_native || 'Нажмите, чтобы произнести:')}</div>
+          <div class="a0-scene-say-box">
+            ${esc(ex.text_target||'')}
+            ${ex.translit ? `<div class="a0-scene-translit" style="font-size:14px;margin-top:6px">${esc(ex.translit)}</div>` : ''}
+          </div>
+          <button class="btn btn-primary" id="tapSay">🔊 Произнести</button>
+        </div>`);
+      $('#tapSay').onclick = () => {
+        speak(ex.text_target||'', DB.profile.targetLang);
+        $('#tapSay').textContent = '✅ Сказано!'; $('#tapSay').disabled = true;
+        document.getElementById('scCard').after(nextBtn(nextLabel, advance));
+      };
+      return;
+    }
+
+    /* --- Пассивная реплика (чтение + TTS) --- */
+    const isYou = ex.speaker === 'you';
+    Screen.show(`${header()}
+      <div class="card">
+        <div class="${isYou ? 'a0-scene-you-line' : 'a0-scene-other-line'}">
+          <div class="a0-scene-speaker">${isYou ? '👤 Вы' : '🧑‍💼'}</div>
+          <div class="a0-scene-target">${esc(ex.text_target||'')}</div>
+          ${ex.translit ? `<span class="a0-scene-translit">${esc(ex.translit)}</span>` : ''}
+          ${ex.text_native ? `<div class="a0-scene-native">${esc(ex.text_native)}</div>` : ''}
+          ${sayBtn(ex.text_target||'')}
+        </div>
+      </div>
+      <button class="btn btn-primary" id="a0next">${nextLabel}</button>`);
+    if (ex.text_target) speak(ex.text_target, DB.profile.targetLang);
+    $('#a0next').onclick = advance;
+  };
+
+  showEx();
+}
+
 function finishA0Lesson(code, lessonN, total, correct, totalChecks, t0) {
   const next       = nextAfterLesson(code);
   const isLastA0   = (next === 'A1.1.01');
@@ -1455,12 +1641,13 @@ function finishA0Lesson(code, lessonN, total, correct, totalChecks, t0) {
   Storage.save(DB);
   toast('Сохранено ✓');
 
+  const pctOk = totalChecks > 0 ? Math.round(correct/totalChecks*100) : 100;
   Screen.show(`
-    <div class="eyebrow">Результат: ${totalChecks>0?correct+'/'+totalChecks+' верных':'урок пройден'}</div>
+    <div class="eyebrow">Результат: ${totalChecks>0?`${correct}/${totalChecks} верных (${pctOk}%)`:'урок пройден'}</div>
     <h1>${isLastA0 ? '🎉 Основы пройдены! Добро пожаловать на A1!' : 'Урок A0 завершён'}</h1>
     <p class="sub">${isLastA0
       ? 'Вы освоили чтение и базовую лексику. Теперь начинается настоящее обучение — уровень A1!'
-      : `Следующий урок: <b style="color:var(--ink)">${esc(next)}</b> (${lessonN} из ${total} пройдено)`}</p>
+      : `Следующий урок: <b style="color:var(--ink)">${esc(next)}</b> &nbsp;·&nbsp; пройдено ${lessonN} из ${total}`}</p>
     <button class="btn btn-primary" id="bNext">${isLastA0 ? 'Начать A1 🚀' : 'Следующий урок →'}</button>
     <button class="btn btn-ghost"  id="bExit">В главное меню</button>`);
   $('#bNext').onclick = () => isLastA0 ? startLesson(next) : startA0Lesson(next);
