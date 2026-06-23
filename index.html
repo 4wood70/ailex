@@ -242,7 +242,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v35';
+const APP_VERSION = 'v36';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -259,8 +259,8 @@ const I18N = {
       'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Готовлю Суперквест…':'Preparing Superquest…',
       'Догружаю Суперквест…':'Loading Superquest…','Проверяю…':'Checking…',
       'Не получилось подготовить урок':'Could not prepare the lesson',
-      'Дополните предложение: впишите ОДНО пропущенное слово':'Complete the sentence: type the ONE missing word',
-      'Одно слово':'One word','Ваш ответ':'Your answer','Ваша фраза…':'Your phrase…',
+      'Напишите предложение, подставив пропущенное слово':'Write the sentence with the missing word filled in',
+      'Напишите предложение целиком':'Write the full sentence','Одно слово':'One word','Ваш ответ':'Your answer','Ваша фраза…':'Your phrase…',
       'Верно':'Correct','Опорные слова':'Key words','Запомните и введите верный вариант, чтобы продолжить.':'Memorize and type the correct answer to continue.',
       'Импортировать свои слова':'Import my words','Свой словарь (интенсив)':'My vocabulary (intensive)',
       'к изучению':'to learn','трудное':'hard','встречено в контексте':'seen in context',
@@ -2310,15 +2310,16 @@ function drillReviewContext(s, rd) {
   const gap = makeGapSentence(rd.sentence, w.term);
   if (!gap.found) return drillRecog({ ...s, pool:'all' });   // не удалось встроить — откат на узнавание
   const answer = gap.answer;
+  const fullSentence = rd.sentence;   // полное предложение для показа после верного ответа
   const key = 'st'+L.i; let mustRetype = false;
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Повторение')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🔁 повторение в контексте</span></div>
-      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Вспомните слово и впишите его в пропуск${w.translation?` — «${esc(w.translation)}»`:''}.</p>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${w.translation?` — «${esc(w.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
       ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
-      <input type="text" id="ans" placeholder="Одно слово" autocomplete="off" autocapitalize="off">
+      <input type="text" id="ans" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -2330,24 +2331,30 @@ function drillReviewContext(s, rd) {
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
-    const ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a), norm(answer))<=1;
+    // Путь 1: ввод — целое предложение → вырезаем слово на позиции пропуска
+    // Путь 2: ввод — одно слово → засчитываем как раньше (мягкая деградация)
+    const aToks = tokenize(a), ansToks = tokenize(answer), fullToks = tokenize(fullSentence);
+    const gapPos = fullToks.findIndex(t => norm(t) === norm(answer) || editDistance(norm(t), norm(answer)) <= 1);
+    const extractedWord = (aToks.length > 1 && gapPos >= 0 && gapPos < aToks.length) ? aToks[gapPos] : null;
+    const ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a),norm(answer))<=1
+            || (extractedWord !== null && editDistance(norm(extractedWord), norm(answer)) <= 1);
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(answer);
-      speak(answer, DB.profile.targetLang);
+      $('#fb').innerHTML = `✅ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence);
+      speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent='Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ Верно: <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(answer) + `<br>🧠 Запомните и впишите вручную.`;
-      speak(answer, DB.profile.targetLang);
+      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; $('#ans').focus();
     }
   };
 }
 
-// Повторение слова прошлых уроков — в контексте предложения со скелетом (пункт 12)
+// Слово в контексте — пропуск в предложении (пункт 12, версия 4.20)
 function drillContext(s) {
   const item = (L.constructs||[])[s.ci % (L.constructs||[1]).length];
   if (!item) { L.i++; return renderStep(); }
@@ -2356,7 +2363,8 @@ function drillContext(s) {
   const gap = makeGapSentence(item.expected_target, dictWord);
   // не удалось встроить пропуск (другая форма/нет слова) — не показываем кривой прочерк, пропускаем
   if (!gap.found) { L.i++; return renderStep(); }
-  const answer = gap.answer;              // ответ — это форма, реально стоящая в предложении
+  const answer = gap.answer;              // ответ — форма, реально стоящая в предложении
+  const fullSentence = item.expected_target;  // полное предложение для показа после верного ответа
   const hardWord = (L.wordErr[dictWord]||0) > 0 || DB.reviewQueue.includes(dictWord);
   const key = 'st'+L.i; let mustRetype = false;
   const autoHint = hardWord
@@ -2365,10 +2373,10 @@ function drillContext(s) {
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Контекст')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 слово в контексте</span></div>
-      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Дополните предложение: впишите ОДНО пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
       ${autoHint}
-      <input type="text" id="ans" placeholder="Одно слово" autocomplete="off" autocapitalize="off">
+      <input type="text" id="ans" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -2380,20 +2388,25 @@ function drillContext(s) {
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
-    // принимаем словарную форму и форму из предложения; прощаем мелкую опечатку
-    const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a), norm(answer))<=1;
+    // Путь 1: ввод — целое предложение → вырезаем слово на позиции пропуска
+    // Путь 2: ввод — одно слово → засчитываем (мягкая деградация, 4.20)
+    const aToks = tokenize(a), fullToks = tokenize(fullSentence);
+    const gapPos = fullToks.findIndex(t => norm(t) === norm(answer) || editDistance(norm(t), norm(answer)) <= 1);
+    const extractedWord = (aToks.length > 1 && gapPos >= 0 && gapPos < aToks.length) ? aToks[gapPos] : null;
+    const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a),norm(answer))<=1
+            || (extractedWord !== null && editDistance(norm(extractedWord), norm(answer)) <= 1);
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       markSeen(dictWord);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(answer);
-      speak(answer, DB.profile.targetLang);
+      $('#fb').innerHTML = `✅ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence);
+      speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent = 'Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ Верно: <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(answer) + `<br>🧠 Запомните написание и впишите вручную.`;
-      speak(answer, DB.profile.targetLang);
+      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; $('#ans').focus();
     }
   };
