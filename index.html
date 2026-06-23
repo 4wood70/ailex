@@ -242,7 +242,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v38';
+const APP_VERSION = 'v39';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -2607,7 +2607,7 @@ async function runQuest(cfg) {
         task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
         topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.maxScenes,
         user_choice:Q.choice, story_so_far:Q.summary,
-        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user — ВНЯТНОЕ задание на родном (что именно сказать). ВАЖНО: используй преимущественно слова из must_use и пройденную лексику; В answer_glossary помести ВСЕ ключевые слова, нужные чтобы построить ответ (существительные, глаголы, прилагательные, термины) — каждое немецкое слово + транскрипция + перевод; включай и немецкие эквиваленты русских понятий из задания. Не ограничивайся служебными словами. В encountered_words — значимые слова из текста сцены (до 5) с транскрипцией и переводом.'
+        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене обязательно заверши историю (is_final=true, без развилки). prompt_for_user — ВНЯТНОЕ задание на родном (что именно сказать). ВАЖНО: используй преимущественно слова из must_use и пройденную лексику; В answer_glossary помести ВСЕ ключевые слова, нужные чтобы построить ответ (существительные, глаголы, прилагательные, термины) — каждое немецкое слово + транскрипция + перевод; включай и немецкие эквиваленты русских понятий из задания. Не ограничивайся служебными словами. В encountered_words — значимые слова из текста сцены (до 5) с транскрипцией и переводом. ВАЖНО: translit — ТОЛЬКО буквами native_lang (например русскими), никогда не IPA-символами, пример: [форбэрайтн].'
       },
       '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
     } catch(e) {
@@ -2839,12 +2839,18 @@ function showTapPopup(w) {
   ov.innerHTML = `
     <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
                 border-radius:18px 18px 0 0;padding:18px">
-      <div style="font-size:19px;font-weight:600">${esc(w.term)} <span style="color:var(--orange);font-weight:400">${esc(w.translit||'')}</span></div>
-      <div class="note" style="margin-top:4px">${esc(w.translation||'')}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-size:19px;font-weight:600">${esc(w.term)} <span style="color:var(--orange);font-weight:400">${esc(w.translit||'')}</span></div>
+          <div class="note" style="margin-top:4px">${esc(w.translation||'')}</div>
+        </div>
+        <button id="tapClose" aria-label="Закрыть" style="flex-shrink:0;background:none;border:none;font-size:22px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px">✕</button>
+      </div>
       <button class="btn btn-primary" id="tapSay" style="margin-top:14px;width:100%">🔊 Озвучить</button>
     </div>`;
   document.body.appendChild(ov);
   document.getElementById('tapSay').onclick = () => speak(w.term, DB.profile.targetLang);
+  document.getElementById('tapClose').onclick = () => ov.remove();
   ov.onclick = e => { if (e.target===ov) ov.remove(); };
 }
 // Подбор слов для must_use на конкретный акт: ротация приоритетных + известных + стартовой служебной лексики.
@@ -2937,7 +2943,7 @@ async function runSuperquestAct(cfg) {
           +'Развилка — ТОЛЬКО в логически уместный момент сюжета, не больше branch_limit_in_act развилок за акт (в этом акте уже использовано: '+Q.branchesUsedInAct+'); основная линия должна оставаться прямой — не превращай историю в лабиринт выборов. '
           +'Если это последняя сцена акта — заверши акт логичной паузой: is_act_final=true, без развилки. '
           +(cfg.isLastAct ? 'Это ПОСЛЕДНИЙ акт истории: если это последняя его сцена — обязательно заверши ВСЮ историю целиком (is_final=true и is_act_final=true), без развилки.' : 'Это не последний акт — НЕ завершай всю историю (is_final=false), только аккуратно заверши этот акт, если уместно.')
-          +' Конкретная чувственная сцена в сфере интересов. prompt_for_user — внятное задание на родном (что сказать). Используй преимущественно слова из must_use и пройденную лексику. В answer_glossary — ВСЕ ключевые слова, нужные для ответа (термин+транскрипция+перевод). В encountered_words — значимые слова из текста сцены (до 5, термин+транскрипция+перевод) — они будут доступны по тапу прямо в тексте.'
+          +' Конкретная чувственная сцена в сфере интересов. prompt_for_user — внятное задание на родном (что сказать). Используй преимущественно слова из must_use и пройденную лексику. В answer_glossary — ВСЕ ключевые слова, нужные для ответа (термин+транскрипция+перевод). В encountered_words — значимые слова из текста сцены (до 5, термин+транскрипция+перевод) — они будут доступны по тапу прямо в тексте. ВАЖНО: translit — ТОЛЬКО буквами native_lang (например русскими), никогда не IPA-символами, пример: [форбэрайтн].'
       },
       '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_act_final":false,"is_final":false}');
     } catch(e) {
