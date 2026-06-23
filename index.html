@@ -242,7 +242,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v36';
+const APP_VERSION = 'v37';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -2193,15 +2193,29 @@ function drillGrammar() {
 /* ---------- Recognition / Recap: выбор слова по переводу ---------- */
 function drillRecog(s) {
   const w = s.w;
-  const fillerPool = (s.pool==='lesson' ? L.words : DB.vocab.concat(L.words)).filter(x => norm(x.term)!==norm(w.term));
-  const opts = shuffle([w, ...pick(fillerPool, 3)]);
-  const isRecap = s.phase==='Recap';
+  // фильтр дистракторов: только пройденные слова (seen=true), без мусорных строк (длина, скобки, стрелки)
+  const isValidDistractor = x => x.seen === true
+    && norm(x.term) !== norm(w.term)
+    && x.term.length <= 40
+    && !/[()→\d]{2}/.test(x.term)
+    && !/[а-яёА-ЯЁ]{3}/.test(x.term);   // не кириллица в поле целевого языка
+  const lessonPool = L.words.filter(x => norm(x.term) !== norm(w.term));
+  const fillerPool = s.pool==='lesson'
+    ? lessonPool
+    : DB.vocab.concat(L.words).filter(isValidDistractor);
+  // если отфильтрованных не хватает — добираем из lessonPool
+  const fillers = pick(fillerPool, 3);
+  if (fillers.length < 3) {
+    const extra = lessonPool.filter(x => !fillers.some(f=>norm(f.term)===norm(x.term)));
+    while (fillers.length < 3 && extra.length) fillers.push(extra.shift());
+  }
+  const opts = shuffle([w, ...fillers]);
   const key = 'st'+L.i;
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase)}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🎯 узнавание</span></div>
-      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}</div>
+      <p class="note" style="margin:0 0 8px;color:var(--accent)">🎯 Какое слово соответствует: <b>«${esc(w.translation)}»</b>?</p>
       ${opts.map(o=>`<button class="opt" data-t="${esc(o.term)}">${esc(o.term)}</button>`).join('')}
       <div class="feedback" id="fb"></div>
       <button class="btn btn-primary" id="next" style="margin-top:12px" disabled>Дальше</button>
@@ -2331,13 +2345,23 @@ function drillReviewContext(s, rd) {
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
-    // Путь 1: ввод — целое предложение → вырезаем слово на позиции пропуска
-    // Путь 2: ввод — одно слово → засчитываем как раньше (мягкая деградация)
-    const aToks = tokenize(a), ansToks = tokenize(answer), fullToks = tokenize(fullSentence);
-    const gapPos = fullToks.findIndex(t => norm(t) === norm(answer) || editDistance(norm(t), norm(answer)) <= 1);
-    const extractedWord = (aToks.length > 1 && gapPos >= 0 && gapPos < aToks.length) ? aToks[gapPos] : null;
+    // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
+    // Путь 2: ввод — полное предложение → вычитаем каркас, остаток сравниваем с answer
+    const gappedNorm = norm(gap.gapped).replace(/_+/g, '').replace(/\s+/g,' ').trim();
+    const inputNorm  = norm(a).replace(/\s+/g,' ').trim();
+    const gapToks = gappedNorm.split(/\s+/).filter(Boolean);
+    const inToks  = inputNorm.split(/\s+/).filter(Boolean);
+    let extracted = null;
+    if (inToks.length > gapToks.length) {
+      const remaining = []; let gi = 0;
+      for (let ii = 0; ii < inToks.length; ii++) {
+        if (gi < gapToks.length && inToks[ii] === gapToks[gi]) { gi++; }
+        else { remaining.push(inToks[ii]); }
+      }
+      if (remaining.length) extracted = remaining.join(' ');
+    }
     const ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a),norm(answer))<=1
-            || (extractedWord !== null && editDistance(norm(extractedWord), norm(answer)) <= 1);
+            || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1);
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
@@ -2388,13 +2412,23 @@ function drillContext(s) {
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
-    // Путь 1: ввод — целое предложение → вырезаем слово на позиции пропуска
-    // Путь 2: ввод — одно слово → засчитываем (мягкая деградация, 4.20)
-    const aToks = tokenize(a), fullToks = tokenize(fullSentence);
-    const gapPos = fullToks.findIndex(t => norm(t) === norm(answer) || editDistance(norm(t), norm(answer)) <= 1);
-    const extractedWord = (aToks.length > 1 && gapPos >= 0 && gapPos < aToks.length) ? aToks[gapPos] : null;
+    // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
+    // Путь 2: ввод — полное предложение → вычитаем каркас, остаток сравниваем с answer (4.20)
+    const gappedNorm = norm(gap.gapped).replace(/_+/g, '').replace(/\s+/g,' ').trim();
+    const inputNorm  = norm(a).replace(/\s+/g,' ').trim();
+    const gapToks = gappedNorm.split(/\s+/).filter(Boolean);
+    const inToks  = inputNorm.split(/\s+/).filter(Boolean);
+    let extracted = null;
+    if (inToks.length > gapToks.length) {
+      const remaining = []; let gi = 0;
+      for (let ii = 0; ii < inToks.length; ii++) {
+        if (gi < gapToks.length && inToks[ii] === gapToks[gi]) { gi++; }
+        else { remaining.push(inToks[ii]); }
+      }
+      if (remaining.length) extracted = remaining.join(' ');
+    }
     const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a),norm(answer))<=1
-            || (extractedWord !== null && editDistance(norm(extractedWord), norm(answer)) <= 1);
+            || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1);
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       markSeen(dictWord);
