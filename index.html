@@ -127,6 +127,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 .opt:active{transform:scale(.99)}
 .opt.right{border-color:var(--ok);background:rgba(61,214,140,.10)}
 .opt.wrong{border-color:var(--err);background:rgba(255,92,108,.10)}
+/* Lang picker */
+.lang-opt:last-child{border-bottom:none!important}
+.lang-opt:active{background:rgba(65,184,255,.08)}
 .feedback{border-radius:12px;padding:13px 14px;font-size:14.5px;margin-top:10px;display:none;line-height:1.55}
 .feedback.ok{display:block;background:rgba(61,214,140,.10);border:1px solid rgba(61,214,140,.35)}
 .feedback.bad{display:block;background:rgba(255,92,108,.08);border:1px solid rgba(255,92,108,.32)}
@@ -239,7 +242,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v34';
+const APP_VERSION = 'v35';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -335,26 +338,95 @@ function toast(msg, neutral) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-/* ---------- языки ---------- */
+/* ---------- языки ----------
+   bcp  — BCP-47 код для Web Speech API (TTS/STT). null = нет надёжной озвучки;
+          транскрипция родными буквами компенсирует отсутствие TTS.
+   Список охватывает все языки, которые Gemini знает достаточно хорошо для обучения.
+   Порядок: сначала языки с TTS, затем без — внутри каждой группы по алфавиту. */
 const LANGS = [
-  {c:'ru', n:'Русский',     bcp:'ru-RU'},
-  {c:'en', n:'English',     bcp:'en-US'},
-  {c:'de', n:'Deutsch',     bcp:'de-DE'},
-  {c:'fr', n:'Français',    bcp:'fr-FR'},
-  {c:'es', n:'Español',     bcp:'es-ES'},
-  {c:'it', n:'Italiano',    bcp:'it-IT'},
-  {c:'pt', n:'Português',   bcp:'pt-PT'},
-  {c:'pl', n:'Polski',      bcp:'pl-PL'},
-  {c:'tr', n:'Türkçe',      bcp:'tr-TR'},
-  {c:'ar', n:'العربية',     bcp:'ar-SA'},
-  {c:'zh', n:'中文',         bcp:'zh-CN'},
-  {c:'ja', n:'日本語',       bcp:'ja-JP'},
-  {c:'ko', n:'한국어',       bcp:'ko-KR'},
-  {c:'uk', n:'Українська',  bcp:'uk-UA'},
-  {c:'he', n:'עברית',       bcp:'he-IL'},
+  /* ── Европейские, латиница ── */
+  {c:'af', n:'Afrikaans',         bcp:'af-ZA'},
+  {c:'ca', n:'Català',            bcp:'ca-ES'},
+  {c:'cs', n:'Čeština',           bcp:'cs-CZ'},
+  {c:'cy', n:'Cymraeg',           bcp:'cy-GB'},
+  {c:'da', n:'Dansk',             bcp:'da-DK'},
+  {c:'de', n:'Deutsch',           bcp:'de-DE'},
+  {c:'en', n:'English',           bcp:'en-US'},
+  {c:'es', n:'Español',           bcp:'es-ES'},
+  {c:'et', n:'Eesti',             bcp:'et-EE'},
+  {c:'fi', n:'Suomi',             bcp:'fi-FI'},
+  {c:'fr', n:'Français',          bcp:'fr-FR'},
+  {c:'ga', n:'Gaeilge',           bcp:'ga-IE'},
+  {c:'gl', n:'Galego',            bcp:'gl-ES'},
+  {c:'hr', n:'Hrvatski',          bcp:'hr-HR'},
+  {c:'hu', n:'Magyar',            bcp:'hu-HU'},
+  {c:'id', n:'Bahasa Indonesia',  bcp:'id-ID'},
+  {c:'is', n:'Íslenska',          bcp:'is-IS'},
+  {c:'it', n:'Italiano',          bcp:'it-IT'},
+  {c:'lt', n:'Lietuvių',          bcp:'lt-LT'},
+  {c:'lv', n:'Latviešu',          bcp:'lv-LV'},
+  {c:'ms', n:'Bahasa Melayu',     bcp:'ms-MY'},
+  {c:'mt', n:'Malti',             bcp:'mt-MT'},
+  {c:'nl', n:'Nederlands',        bcp:'nl-NL'},
+  {c:'no', n:'Norsk',             bcp:'nb-NO'},
+  {c:'pl', n:'Polski',            bcp:'pl-PL'},
+  {c:'pt', n:'Português',         bcp:'pt-PT'},
+  {c:'ro', n:'Română',            bcp:'ro-RO'},
+  {c:'sk', n:'Slovenčina',        bcp:'sk-SK'},
+  {c:'sl', n:'Slovenščina',       bcp:'sl-SI'},
+  {c:'sq', n:'Shqip',             bcp:'sq-AL'},
+  {c:'sv', n:'Svenska',           bcp:'sv-SE'},
+  {c:'sw', n:'Kiswahili',         bcp:'sw-KE'},
+  {c:'tl', n:'Filipino',          bcp:'fil-PH'},
+  {c:'tr', n:'Türkçe',            bcp:'tr-TR'},
+  {c:'vi', n:'Tiếng Việt',        bcp:'vi-VN'},
+  /* ── Кириллица ── */
+  {c:'be', n:'Беларуская',        bcp:null},
+  {c:'bg', n:'Български',         bcp:'bg-BG'},
+  {c:'mk', n:'Македонски',        bcp:null},
+  {c:'ru', n:'Русский',           bcp:'ru-RU'},
+  {c:'sr', n:'Српски',            bcp:'sr-RS'},
+  {c:'uk', n:'Українська',        bcp:'uk-UA'},
+  /* ── Правосторонние письменности ── */
+  {c:'ar', n:'العربية',           bcp:'ar-SA'},
+  {c:'fa', n:'فارسی',             bcp:'fa-IR'},
+  {c:'he', n:'עברית',             bcp:'he-IL'},
+  {c:'ur', n:'اردو',              bcp:'ur-PK'},
+  /* ── Азиатские ── */
+  {c:'bn', n:'বাংলা',             bcp:'bn-BD'},
+  {c:'gu', n:'ગુજરાતી',           bcp:'gu-IN'},
+  {c:'hi', n:'हिन्दी',             bcp:'hi-IN'},
+  {c:'ja', n:'日本語',             bcp:'ja-JP'},
+  {c:'kn', n:'ಕನ್ನಡ',             bcp:'kn-IN'},
+  {c:'ko', n:'한국어',             bcp:'ko-KR'},
+  {c:'ml', n:'മലയാളം',            bcp:'ml-IN'},
+  {c:'mr', n:'मराठी',             bcp:'mr-IN'},
+  {c:'my', n:'မြန်မာဘာသာ',        bcp:null},
+  {c:'ne', n:'नेपाली',             bcp:'ne-NP'},
+  {c:'si', n:'සිංහල',             bcp:'si-LK'},
+  {c:'ta', n:'தமிழ்',             bcp:'ta-IN'},
+  {c:'te', n:'తెలుగు',            bcp:'te-IN'},
+  {c:'th', n:'ภาษาไทย',           bcp:'th-TH'},
+  {c:'zh', n:'中文',               bcp:'zh-CN'},
+  /* ── Прочие ── */
+  {c:'am', n:'አማርኛ',             bcp:null},
+  {c:'az', n:'Azərbaycan',        bcp:'az-AZ'},
+  {c:'eu', n:'Euskara',           bcp:'eu-ES'},
+  {c:'hy', n:'Հայերեն',           bcp:'hy-AM'},
+  {c:'ka', n:'ქართული',           bcp:'ka-GE'},
+  {c:'kk', n:'Қазақша',           bcp:'kk-KZ'},
+  {c:'km', n:'ភាសាខ្មែរ',         bcp:null},
+  {c:'lo', n:'ລາວ',               bcp:null},
+  {c:'mn', n:'Монгол',            bcp:'mn-MN'},
+  {c:'uz', n:'Oʻzbekcha',         bcp:'uz-UZ'},
+  {c:'yo', n:'Yorùbá',            bcp:null},
+  {c:'zu', n:'isiZulu',           bcp:'zu-ZA'},
 ];
 const langName = c => (LANGS.find(l=>l.c===c)||{}).n || c;
-const langBcp  = c => (LANGS.find(l=>l.c===c)||{}).bcp || c;
+/* langBcp — возвращает BCP-47 для TTS, либо null если озвучки нет */
+const langBcp  = c => { const l = LANGS.find(l=>l.c===c); return (l && l.bcp) || null; };
+/* hasTTS — есть ли озвучка для языка */
+const hasTTS   = c => langBcp(c) !== null;
 
 /* ---------- баланс лексики по CEFR (раздел 5.0, бытовое/интересы) ---------- */
 const SURVIVAL_SHARE = { A1:0.40, A2:0.35, B1:0.30, B2:0.25, C1:0.20, C2:0.20 };
@@ -555,16 +627,19 @@ const Gemini = {
 
 /* ---------- TTS / STT (раздел 5.0 «Чтение и звучание», 5.B) ---------- */
 function speak(text, langCode) {
+  const bcp = langBcp(langCode);
+  if (!bcp) return;          // нет надёжной озвучки → только транскрипция
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = langBcp(langCode); u.rate = 0.92;
+    u.lang = bcp; u.rate = 0.92;
     speechSynthesis.speak(u);
   } catch(e){}
 }
-/* Кнопка повтора озвучки целевой (немецкой) фразы в блоках обратной связи.
-   replaySay читает data-say и проговаривает на целевом языке профиля. */
+/* Кнопка повтора озвучки целевой фразы в блоках обратной связи.
+   Возвращает пустую строку если у целевого языка нет TTS. */
 function sayBtn(text) {
+  if (!DB || !hasTTS(DB.profile.targetLang)) return '';
   return `<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" `
        + `data-say="${esc(text)}" onclick="replaySay(this)" aria-label="Повторить озвучку">🔊</button>`;
 }
@@ -574,8 +649,10 @@ function replaySay(el) {
 function makeRecognizer(langCode, onResult, onEnd) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
+  const bcp = langBcp(langCode);
+  if (!bcp) return null;     // STT тоже недоступен без BCP-47
   const r = new SR();
-  r.lang = langBcp(langCode); r.interimResults = false; r.maxAlternatives = 1;
+  r.lang = bcp; r.interimResults = false; r.maxAlternatives = 1;
   r.onresult = e => onResult(e.results[0][0].transcript);
   r.onend = onEnd; r.onerror = onEnd;
   return r;
@@ -927,12 +1004,65 @@ const PROFILE_Q = [
     ph:'Например: наладка станков с ЧПУ, столярное дело, рыбалка…',
     note:'Самое важное поле: на нём строятся все квесты и рассказы.' },
 ];
+/* Инициализация виджета выбора языка с поиском */
+function _initLangPicker(defVal) {
+  const hidden  = $('#val');
+  const search  = $('#langSearch');
+  const listEl  = $('#langList');
+  const items   = Array.from(listEl.querySelectorAll('.lang-opt'));
+
+  function select(c) {
+    hidden.value = c;
+    items.forEach(el => {
+      const active = el.dataset.c === c;
+      el.style.background = active ? 'var(--accent-dim, #1A2540)' : '';
+      el.style.color = active ? 'var(--accent, #41B8FF)' : '';
+    });
+    // прокрутить выбранный в видимую область
+    const active = listEl.querySelector(`.lang-opt[data-c="${c}"]`);
+    if (active) active.scrollIntoView({block:'nearest'});
+  }
+
+  // клик по элементу
+  items.forEach(el => el.onclick = () => {
+    select(el.dataset.c);
+    search.value = el.textContent.trim();
+    // скрыть не выбранные, оставить только выбранный — как подтверждение
+    filterList('');
+  });
+
+  // фильтр при вводе
+  function filterList(q) {
+    const s = q.toLowerCase();
+    items.forEach(el => {
+      const match = !s || el.textContent.toLowerCase().includes(s) || el.dataset.c.includes(s);
+      el.style.display = match ? '' : 'none';
+    });
+  }
+  search.oninput = () => filterList(search.value);
+
+  // установить начальное значение
+  select(defVal);
+  const initEl = LANGS.find(l=>l.c===defVal);
+  if (initEl) search.value = initEl.n;
+}
+
 function askProfile(i, acc) {
   if (i >= PROFILE_Q.length) return placementIntro(acc);
   const q = PROFILE_Q[i];
   let field = '';
   if (q.type === 'lang') {
-    field = `<select id="val">` + LANGS.map(l=>`<option value="${l.c}">${esc(l.n)}</option>`).join('') + `</select>`;
+    field = `
+      <div class="lang-picker" id="langPicker">
+        <input type="text" id="langSearch" placeholder="Поиск языка…"
+          autocomplete="off" autocorrect="off" spellcheck="false"
+          style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
+                 background:var(--card);color:var(--ink);font-size:16px;box-sizing:border-box;margin-bottom:8px">
+        <div id="langList" style="max-height:240px;overflow-y:auto;border-radius:10px;border:1px solid var(--border)">
+          ${LANGS.map(l=>`<div class="lang-opt" data-c="${l.c}" style="padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:15px">${esc(l.n)}</div>`).join('')}
+        </div>
+        <input type="hidden" id="val" value="">
+      </div>`;
   } else if (q.type === 'area') {
     field = `<textarea id="val" rows="3" placeholder="${esc(q.ph)}"></textarea>`;
   } else {
@@ -945,7 +1075,12 @@ function askProfile(i, acc) {
     <div class="card">${field}</div>
     <button class="btn btn-primary" id="next">Далее</button>`,
     { back: i>0 ? ()=>askProfile(i-1, acc) : null });
-  if (q.type==='lang' && q.k==='targetLang') $('#val').value = acc.nativeLang==='en' ? 'de' : 'en';
+  if (q.type==='lang') {
+    // дефолтное значение
+    const defVal = (q.k==='targetLang') ? (acc.nativeLang==='en' ? 'de' : 'en') : 'ru';
+    const initVal = acc[q.k] || defVal;
+    _initLangPicker(initVal);
+  }
   $('#next').onclick = () => {
     const v = $('#val').value.trim();
     if (!v) return toast('Заполните поле', true);
@@ -1183,7 +1318,7 @@ function showDictionary(letter, irrOnly) {
             ${_forms?`<small style="display:block;margin-top:2px;color:var(--accent2,#9ED7FF)">📋 ${esc(_forms)}</small>`:''}
             ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
             ${w.example?`<small style="display:block;margin-top:4px">${esc(w.example)}</small>`:''}</span>
-          <button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>
+          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>`:''}
         </div>`;
       body.dataset.filled='1';
       body.querySelectorAll('.tts').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang));
@@ -1926,10 +2061,12 @@ function drillPresent() {
           <span class="emoji">${esc(w.emoji||'•')}</span>
           <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
             <small>${esc(w.translation)}${w.is_irregular&&w.irregular_forms?' · ⚠️ '+esc(w.irregular_forms):''}</small></span>
-          <button class="tts" data-t="${esc(w.term)}">🔊</button>
+          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(w.term)}">🔊</button>`:''}
         </div>`).join('')}
     </div>
-    <p class="note">Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.</p>
+    <p class="note">${hasTTS(DB.profile.targetLang)
+      ? 'Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.'
+      : 'Транскрипция родными буквами — ваша главная опора для чтения и произношения.'}</p>
     <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
   // пункт 3: слово показано → отмечаем «увидено»; импортированные переходят из «новое» в «изучается»
@@ -1945,13 +2082,13 @@ function grammarCardHTML(g) {
     <div class="vocab-row">
       <span class="w"><b>${esc(r.form)}</b> <span class="tr">${esc(r.translit||'')}</span>
         <small>${esc(r.translation||'')}</small></span>
-      <button class="tts" data-t="${esc(r.form)}" aria-label="Озвучить">🔊</button>
+      <button class="tts" data-t="${esc(r.form)}" aria-label="Озвучить" ${hasTTS(lang)?'':'style="display:none"'}>🔊</button>
     </div>`).join('');
   const ex = (g.examples||[]).map(e=>`
     <div class="vocab-row">
       <span class="w"><b>${esc(e.target)}</b> <span class="tr">${esc(e.translit||'')}</span>
         <small>${esc(e.translation||'')}</small></span>
-      <button class="tts" data-t="${esc(e.target)}" aria-label="Озвучить">🔊</button>
+      <button class="tts" data-t="${esc(e.target)}" aria-label="Озвучить" ${hasTTS(lang)?'':'style="display:none"'}>🔊</button>
     </div>`).join('');
   return `
     <div style="font-size:15px;line-height:1.55;margin-bottom:10px">${esc(g.summary||'')}</div>
@@ -2447,7 +2584,7 @@ async function runQuest(cfg) {
       <div class="eyebrow">${esc(cfg.title||'Квест')}</div>
       <div class="segbar">${Array.from({length:cfg.maxScenes},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.maxScenes-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
-        <div class="target">${esc(sc.scene_text)} <button class="tts" style="vertical-align:middle" id="sayScene">🔊</button></div>
+        <div class="target">${esc(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
@@ -2785,7 +2922,7 @@ async function runSuperquestAct(cfg) {
       <div class="eyebrow">Суперквест · Акт ${cfg.actIndex}/${cfg.actsTotal}</div>
       <div class="segbar">${Array.from({length:cfg.scenesInAct},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.scenesInAct-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
-        <div class="target">${tap.html} <button class="tts" style="vertical-align:middle" id="sayScene">🔊</button></div>
+        <div class="target">${tap.html} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
