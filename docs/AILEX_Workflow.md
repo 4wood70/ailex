@@ -79,25 +79,24 @@ curl -s https://raw.githubusercontent.com/4wood70/ailex/main/index.html | grep -
 
 # 6. Сообщения коммитов (GitHub Desktop)
 
-Сообщения коммитов пишутся **строго на английском языке**.
+**Где выдаётся коммит-сообщение:** Claude всегда выдаёт готовое сообщение коммита **прямо в чат, отдельным блоком кода для копирования** — НЕ вписывает его в этот документ и не хранит примеры коммитов здесь. Документ описывает только формат; конкретные сообщения живут в чате той сессии, где сделан билд.
 
-Формат — два поля:
+**Язык:** сообщения коммитов пишутся **строго на английском языке**.
 
-**Summary** (одна строка, обязательно):
-```
-v42: remove glossary chips, move word list below input, replace input with auto-grow textarea in construction/quest/superquest screens
-```
+**Формат** — два поля, Summary и Description. Claude выдаёт их в чате одним блоком вида:
 
-**Description** (многострочно, обязательно):
 ```
-- Remove chiplist-must labels (duplicated word list)
-- Move glossary/word list block below the input field
-- Replace text input with auto-growing textarea (wraps to new lines as user types)
+vNN: short imperative summary of the change
+
+- bullet describing change 1
+- bullet describing change 2
+- rationale where it matters
 ```
 
-Примеры summary:
-- `v43: fix TTS degradation on unsupported languages`
-- `docs: update Workflow and Status`
+Правила содержания:
+- Summary — одна строка, начинается с номера билда (`vNN:`), повелительное наклонение, по сути изменения.
+- Description — маркированный список конкретных правок; где важно — краткое обоснование (почему так, а не иначе).
+- Для чисто документальных коммитов summary вида `docs: update Workflow and Status` (без номера билда).
 
 # 7. Два железных правила
 
