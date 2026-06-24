@@ -218,6 +218,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 a{color:var(--cyan)}
 .tapword{cursor:pointer;border-bottom:1.5px dashed var(--orange);transition:opacity .15s}
 .tapword:active{opacity:.55}
+.tapall{cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.2);transition:opacity .15s}
+.tapall:active{opacity:.55}
 .chapter-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
 </style>
 </head>
@@ -242,7 +244,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v40';
+const APP_VERSION = 'v41';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -983,6 +985,81 @@ function networkBlocked() {
 /* =====================================================================
    ОНБОРДИНГ (раздел 4): анкета → placement-тест → создание базы
    ===================================================================== */
+/* ============================================================
+   СИСТЕМА ОДНОРАЗОВЫХ ПОДСКАЗОК (ONBOARDING HINTS)
+   Показывается один раз при первом входе на экран.
+   Флаги хранятся в localStorage под ключами hint_shown_*.
+   ============================================================ */
+const Hints = {
+  shown(key) { return !!localStorage.getItem('hint_shown_' + key); },
+  mark(key)  { localStorage.setItem('hint_shown_' + key, '1'); },
+  reset()    { Object.keys(localStorage).filter(k=>k.startsWith('hint_shown_')).forEach(k=>localStorage.removeItem(k)); },
+
+  show(key, html) {
+    if (Hints.shown(key)) return;
+    Hints.mark(key);
+    const ov = document.createElement('div');
+    ov.id = 'hintOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:80;background:rgba(4,7,14,.72);display:flex;align-items:flex-end;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0)';
+    ov.innerHTML = `
+      <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
+                  border-radius:20px 20px 0 0;padding:20px 20px 28px;position:relative">
+        <div style="font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:10px">Подсказка</div>
+        <div style="font-size:15px;line-height:1.55;color:var(--text)">${html}</div>
+        <button id="hintClose" style="margin-top:18px;width:100%;padding:12px;border-radius:10px;
+          background:var(--accent);border:none;color:#fff;font-size:15px;font-weight:600;cursor:pointer">
+          Понятно ✓
+        </button>
+      </div>`;
+    document.body.appendChild(ov);
+    document.getElementById('hintClose').onclick = () => ov.remove();
+    ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  }
+};
+
+// Конкретные подсказки для каждого экрана
+const HintTexts = {
+  newWords: `
+    <b>Новые слова</b><br><br>
+    Здесь показываются слова урока. Листайте карточки и запоминайте.<br><br>
+    💡 <b>Нажмите на слово</b> — услышите произношение.<br>
+    🔊 Кнопка рядом — также озвучивает слово.<br><br>
+    Когда будете готовы — нажмите <b>«Начать задания»</b>.`,
+
+  drill: `
+    <b>Задания урока</b><br><br>
+    Прочитайте задание и <b>напишите ответ</b> на языке, который изучаете.<br><br>
+    📒 Слова-подсказки внизу помогут составить фразу.<br>
+    📐 Кнопка правила — покажет грамматику.<br><br>
+    Не бойтесь ошибаться — разбор ошибки появится сразу.`,
+
+  quest: `
+    <b>Квест — интерактивная история</b><br><br>
+    Вы участвуете в живом диалоге на изучаемом языке.<br><br>
+    🎯 Читайте сцену → <b>напишите фразу</b> в ответ → нажмите «Отправить».<br>
+    💬 Иногда появится <b>развилка</b> — выберите куда двигаться дальше.<br>
+    👆 <b>Нажмите на любое слово</b> в тексте — появится перевод.`,
+
+  superquest: `
+    <b>Суперквест</b><br><br>
+    Длинная история на <b>несколько актов</b>. Используйте все слова, которые изучали.<br><br>
+    👆 <b>Нажмите на любое слово</b> в тексте — мгновенный перевод и транскрипция.<br>
+    🎯 Отвечайте на задания своими словами — творческий подход приветствуется.<br>
+    🏆 После каждого акта — краткий итог.`,
+
+  vocab: `
+    <b>Словарь</b><br><br>
+    Все слова, которые вы встречали на уроках.<br><br>
+    👆 <b>Нажмите на слово</b> — откроется карточка с формами, транскрипцией и мнемоникой.<br>
+    🔍 Используйте поиск по букве или фильтр «неправильные глаголы».`,
+
+  analytics: `
+    <b>Аналитика</b><br><br>
+    🔵 <b>Кольцо</b> — прогресс по текущему уровню CEFR.<br>
+    📊 <b>Точность</b> — процент правильных ответов с первого раза.<br><br>
+    Здесь видно трудные слова и динамику обучения.`
+};
+
 function onboardingIntro() {
   Screen.show(`
     <div class="eyebrow">Новый профиль</div>
@@ -1262,6 +1339,7 @@ function mainMenu() {
   $('#mRules').onclick  = showRules;
   $('#mProf').onclick   = profileSelect;
   $('#mSet').onclick    = showSettings;
+  Hints.show('analytics', HintTexts.analytics);
 }
 
 /* ---------- Словарь (лист 2.3-С) ---------- */
@@ -1305,6 +1383,7 @@ function showDictionary(letter, irrOnly) {
     </div>`, { back: mainMenu });
   const _ff = document.getElementById('dictFilter'); if (_ff) _ff.onclick = () => showDictionary(null, !irrOnly);
   document.querySelectorAll('.alpha').forEach(b => b.onclick = () => showDictionary(b.dataset.l, irrOnly));
+  Hints.show('vocab', HintTexts.vocab);
   document.querySelectorAll('.dword').forEach(b => b.onclick = () => {
     const i = +b.dataset.i, w = list[i], body = document.getElementById('dw'+i);
     const open = body.style.display !== 'none';
@@ -2069,6 +2148,7 @@ function drillPresent() {
       : 'Транскрипция родными буквами — ваша главная опора для чтения и произношения.'}</p>
     <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  Hints.show('newWords', HintTexts.newWords);
   // пункт 3: слово показано → отмечаем «увидено»; импортированные переходят из «новое» в «изучается»
   L.words.forEach(w => { const v = DB.vocab.find(x=>norm(x.term)===norm(w.term)); if (v) { v.seen = true; if (v.source==='import' && v.status==='новое') v.status='изучается'; } w.seen = true; });
   Storage.save(DB);
@@ -2340,6 +2420,7 @@ function drillReviewContext(s, rd) {
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
+  Hints.show('drill', HintTexts.drill);
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span> — ${esc(w.translation||'')}`; };
   $('#check').onclick = () => {
@@ -2631,7 +2712,7 @@ async function runQuest(cfg) {
       <div class="eyebrow">${esc(cfg.title||'Квест')}</div>
       <div class="segbar">${Array.from({length:cfg.maxScenes},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.maxScenes-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
-        <div class="target">${esc(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
+        <div class="target" id="questSceneText">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
@@ -2646,6 +2727,8 @@ async function runQuest(cfg) {
         </div>
       </div>`);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
+    attachTapAll();
+    if (Q.scene === 1) Hints.show('quest', HintTexts.quest);
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
     speak(sc.scene_text, p.targetLang);
 
@@ -2831,27 +2914,96 @@ function tapWordsHTML(text, words) {
   });
   return { html, words: final };
 }
+// Служебные слова — не кликабельны при тапе всех слов в квестах
+const TAP_SKIP = new Set(['der','die','das','ein','eine','einen','einem','einer','eines',
+  'und','oder','aber','doch','auch','nicht','noch','schon','nur','mal','denn',
+  'in','an','auf','zu','von','mit','bei','aus','nach','vor','über','unter',
+  'für','um','bis','seit','durch','ohne','gegen','je','per',
+  'ich','du','er','sie','es','wir','ihr','sie','mich','dich','sich',
+  'is','the','a','an','and','or','but','in','on','at','to','of','for',
+  'с','в','на','и','или','но','не','а','по','за','от','до','из','к','у','о','со','во']);
+
+// Разбить текст на кликабельные токены (все слова, кроме служебных)
+function tapAllWordsHTML(text) {
+  if (!text) return '';
+  // Токенизация: слова и не-слова (пунктуация, пробелы)
+  const tokens = text.match(/[\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+|[^\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+/g) || [];
+  return tokens.map(tok => {
+    const low = tok.toLowerCase().replace(/[.,!?;:"'«»()]/g,'');
+    if (/^[\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+$/.test(tok) && !TAP_SKIP.has(low) && tok.length > 1) {
+      return `<span class="tapword tapall" data-word="${esc(tok)}">${esc(tok)}</span>`;
+    }
+    return esc(tok);
+  }).join('');
+}
+
+// Поиск слова: сначала словарь, потом Gemini
+async function lookupAndShowWord(raw) {
+  const term = raw.replace(/[.,!?;:"'«»()]/g,'').trim();
+  if (!term) return;
+  // 1. Ищем в словаре пользователя
+  const found = DB.vocab.find(v => norm(v.term) === norm(term)
+    || norm(v.term) === norm(term.replace(/^(der|die|das|ein|eine)\s+/i,''))
+  );
+  if (found) { showTapPopup(found); return; }
+  // 2. Ищем в encountered_words текущего урока (сохранены в L.encounteredCache)
+  const enc = (L && L.encounteredCache) ? L.encounteredCache.find(w => norm(w.term)===norm(term)) : null;
+  if (enc) { showTapPopup(enc); return; }
+  // 3. Запрашиваем Gemini
+  const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
+  const loading = document.createElement('div'); loading.id = 'tapOverlay';
+  loading.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:60;display:flex;justify-content:center;pointer-events:none';
+  loading.innerHTML = `<div style="pointer-events:auto;width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:16px 16px 0 0;padding:12px 16px;display:flex;align-items:center;gap:8px;box-shadow:0 -4px 24px rgba(0,0,0,.4)"><span style="color:var(--faint);font-size:14px">🔍 ${esc(term)}…</span></div>`;
+  document.body.appendChild(loading);
+  let w = null;
+  try {
+    const p = DB.profile;
+    w = await Gemini.call(
+      { task:'translate_word', target_lang:p.targetLang, native_lang:p.nativeLang, word:term },
+      '{"term":"слово как в тексте","translit":"[транскрипция родными буквами native_lang]","translation":"перевод на native_lang"}'
+    );
+  } catch(e) {}
+  loading.remove();
+  if (!w || !w.term) { showTapPopup({term, translit:'', translation:'?'}); return; }
+  // Сохраняем как «встреченное» в словарь
+  if (!DB.vocab.find(v => norm(v.term)===norm(w.term))) {
+    DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:'',
+      part_of_speech:'', is_irregular:false, forms:'', lesson: L ? L.code : 'quest',
+      errors:0, status:'встреченное', mnemonic:'', date_added:today(), date_review:today() });
+    Storage.save(DB);
+  }
+  showTapPopup(w);
+}
+
+// Подключить тап-обработчики на все .tapall в контейнере
+function attachTapAll(container) {
+  (container || document).querySelectorAll('.tapall').forEach(el => {
+    el.onclick = e => { e.stopPropagation(); lookupAndShowWord(el.dataset.word); };
+  });
+}
+
 function showTapPopup(w) {
   if (!w || !w.term) return;
-  let ov = document.getElementById('tapOverlay'); if (ov) ov.remove();
-  ov = document.createElement('div'); ov.id = 'tapOverlay';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:60;background:rgba(4,7,14,.55);display:flex;align-items:flex-end;justify-content:center';
-  ov.innerHTML = `
-    <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
-                border-radius:18px 18px 0 0;padding:18px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div>
-          <div style="font-size:19px;font-weight:600">${esc(w.term)} <span style="color:var(--orange);font-weight:400">${esc(w.translit||'')}</span></div>
-          <div class="note" style="margin-top:4px">${esc(w.translation||'')}</div>
-        </div>
-        <button id="tapClose" aria-label="Закрыть" style="flex-shrink:0;background:none;border:none;font-size:22px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px">✕</button>
-      </div>
-      <button class="btn btn-primary" id="tapSay" style="margin-top:14px;width:100%">🔊 Озвучить</button>
+  let bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
+  bar = document.createElement('div'); bar.id = 'tapOverlay';
+  bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:60;display:flex;justify-content:center;pointer-events:none';
+  const tts = hasTTS(DB.profile.targetLang)
+    ? `<button id="tapSay" aria-label="Озвучить" style="pointer-events:auto;background:none;border:none;font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0">🔊</button>`
+    : '';
+  bar.innerHTML = `
+    <div style="pointer-events:auto;width:100%;max-width:480px;background:var(--panel);
+                border:1px solid var(--line);border-radius:16px 16px 0 0;
+                padding:12px 16px;display:flex;align-items:center;gap:8px;
+                box-shadow:0 -4px 24px rgba(0,0,0,.4)">
+      <span style="font-weight:600;font-size:16px;flex-shrink:0">${esc(w.term)}</span>
+      ${tts}
+      <span style="color:var(--orange);font-size:14px;flex-shrink:0">${esc(w.translit||'')}</span>
+      <span style="color:var(--faint);font-size:13px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(w.translation||'')}</span>
+      <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:20px;line-height:1;color:var(--faint);cursor:pointer;padding:0 2px;flex-shrink:0">✕</button>
     </div>`;
-  document.body.appendChild(ov);
-  document.getElementById('tapSay').onclick = () => speak(w.term, DB.profile.targetLang);
-  document.getElementById('tapClose').onclick = () => ov.remove();
-  ov.onclick = e => { if (e.target===ov) ov.remove(); };
+  document.body.appendChild(bar);
+  if (hasTTS(DB.profile.targetLang)) document.getElementById('tapSay').onclick = () => speak(w.term, DB.profile.targetLang);
+  document.getElementById('tapClose').onclick = () => bar.remove();
 }
 // Подбор слов для must_use на конкретный акт: ротация приоритетных + известных + стартовой служебной лексики.
 function superquestActMustUse() {
@@ -2980,13 +3132,18 @@ async function runSuperquestAct(cfg) {
     const isWholeFinal = !!(sc.is_final && cfg.isLastAct);
     let mustRetype = false, correctForm = sc.expected_target || '', sceneWrong = false;
     const stepKey = 'act'+cfg.actIndex+'_sc'+Q.scene;
-    const tap = tapWordsHTML(sc.scene_text, newGloss);
+    // Кэшируем встреченные слова в L для быстрого lookup
+    if (!L.encounteredCache) L.encounteredCache = [];
+    (sc.encountered_words||[]).concat(newGloss||[]).forEach(w => {
+      if (w && w.term && !L.encounteredCache.find(x=>norm(x.term)===norm(w.term)))
+        L.encounteredCache.push(w);
+    });
 
     Screen.show(`
       <div class="eyebrow">Суперквест · Акт ${cfg.actIndex}/${cfg.actsTotal}</div>
       <div class="segbar">${Array.from({length:cfg.scenesInAct},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.scenesInAct-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
-        <div class="target">${tap.html} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
+        <div class="target">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
@@ -3000,7 +3157,8 @@ async function runSuperquestAct(cfg) {
           <button class="btn btn-primary" id="check">Отправить</button>
         </div>
       </div>`);
-    tap.words.forEach((w,idx)=>{ const el = document.querySelector(`[data-tw="${idx}"]`); if (el) el.onclick = () => showTapPopup(w); });
+    attachTapAll();
+    if (Q.scene === 1 && cfg.actIndex === 1) Hints.show('superquest', HintTexts.superquest);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
     speak(sc.scene_text, p.targetLang);
