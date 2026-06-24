@@ -245,7 +245,8 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v44';
+const APP_VERSION = 'v45';
+const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v45'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -1311,6 +1312,11 @@ function mainMenu() {
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
   const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
   const segs = 10, lit = Math.round(lp.pct/100*segs);
+  // --- проверяем незавершённый урок (v45) ---
+  const cachedLesson = LessonCache.load();
+  const hasCached = !!(cachedLesson && cachedLesson.code && cachedLesson.i > 0 && !isA0 && !isExam);
+  const cachedStep = hasCached ? cachedLesson.i : 0;
+  const cachedTotal = hasCached ? (cachedLesson.steps||[]).length : 0;
   Screen.show(`
     <h1>С возвращением, ${esc(p.name)}!</h1>
     <p class="sub">${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · уровень ${esc(p.cefr)} · следующий этап: <b style="color:var(--ink)">${esc(next)}</b></p>
@@ -1325,6 +1331,7 @@ function mainMenu() {
       ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
+      ${hasCached ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedLesson.code)}</b><small>Задание ${cachedStep} из ${cachedTotal} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
       <button class="menu-item" id="mLesson"><span class="ic">${isA0?'🔤':'🎯'}</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):isA0?'Урок A0: '+esc(next):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':isA0?'Чтение, произношение, базовая лексика':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Суперквест</b><small>Повторение: квест-погружение на 30–50 предложений</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
@@ -1333,6 +1340,16 @@ function mainMenu() {
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
+  if (hasCached && document.getElementById('mResume')) {
+    document.getElementById('mResume').onclick = () => {
+      L = cachedLesson;
+      L.chunk2 = (L.chunk2 && L.chunk2.state === 'ready')
+        ? { state:'ready', promise:null, err:null }
+        : { state:'idle', promise:null, err:null };
+      if (L.chunk2.state === 'idle') fetchLessonChunk2();
+      renderStep();
+    };
+  }
   $('#mLesson').onclick = () => isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
   $('#mSuper').onclick  = () => {
     if (isA0) return toast('Суперквест откроется после завершения уровня A0 и первых уроков A1', true);
@@ -1894,6 +1911,21 @@ let L = null; // состояние текущего урока
 function curCefr(){ const p = parseCode(String(L?.code||'').replace('SUPER_','')); return p ? p.lvl : DB.profile.cefr; }
 
 async function startLesson(code) {
+  // --- восстановление незавершённого урока из кэша (v45) ---
+  const cached = LessonCache.load();
+  if (cached && cached.code === code && cached.i > 0) {
+    L = cached;
+    // если chunk2 уже был готов — восстанавливаем данные; иначе перезапускаем фоновую загрузку
+    if (L.chunk2.state === 'ready') {
+      // данные уже в L.constructs/L.grammar/L.phrases — renderStep сам разберётся
+    } else {
+      L.chunk2 = { state:'idle', promise:null, err:null };
+      fetchLessonChunk2();
+    }
+    renderStep();
+    return;
+  }
+  LessonCache.clear();   // новый урок — чистим старый кэш
   const p = DB.profile, lvl = parseCode(code).lvl;
   Screen.loader('Готовлю урок ' + code + '…');
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
@@ -2061,8 +2093,42 @@ function firstTry(stepKey, ok) {
   L.ft.total++; if (ok) L.ft.ok++;
 }
 
+/* ---------- Кэш урока: сохранение/восстановление прогресса (v45) ----------
+   Сериализуем L целиком, кроме promise-объектов chunk2/superParts.
+   При релоде или выходе из приложения урок восстанавливается с последнего шага.
+   Кэш очищается при завершении урока или явном старте нового. */
+const LessonCache = {
+  save() {
+    if (!L) return;
+    try {
+      const snapshot = Object.assign({}, L, {
+        chunk2: { state: L.chunk2?.state || 'idle', err: null, promise: null },
+        superParts: undefined,   // суперквест не кэшируем
+        _savedAt: Date.now()
+      });
+      localStorage.setItem(LESSON_CACHE_KEY, JSON.stringify(snapshot));
+    } catch(e) { /* хранилище переполнено — не страшно */ }
+  },
+  load() {
+    try {
+      const raw = localStorage.getItem(LESSON_CACHE_KEY);
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      // инвалидация: урок старше 24 часов считается брошенным
+      if (!snap._savedAt || Date.now() - snap._savedAt > 86400000) { this.clear(); return null; }
+      // восстанавливаем promise-обёртку chunk2
+      snap.chunk2 = { state: snap.chunk2?.state || 'idle', err: null, promise: null };
+      return snap;
+    } catch(e) { return null; }
+  },
+  clear() {
+    try { localStorage.removeItem(LESSON_CACHE_KEY); } catch(e) {}
+  }
+};
+
 function renderStep() {
   if (!L || L.i >= L.steps.length) return finishLesson();
+  LessonCache.save();   // сохраняем позицию при каждом переходе
   const s = L.steps[L.i];
   if (s.t==='present')   return drillPresent();
   if (s.t==='ruleRecap') return drillRuleRecap(s);
@@ -2124,12 +2190,11 @@ function drillPhrases() {
     <div class="card">
       ${list.map(f=>`
         <div style="padding:10px 0;border-bottom:1px solid var(--line)">
-          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${sayBtn(f.phrase)}</div>
+          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" data-say="${esc(f.phrase)}" onclick="replaySay(this)" aria-label="Произнести">🔊</button>`:''}</div>
           <div class="note" style="margin-top:2px">${esc(f.translation||'')}${f.when?` · <i>${esc(f.when)}</i>`:''}</div>
         </div>`).join('')}
     </div>
     <button class="btn btn-primary" id="go" style="margin-top:14px">Дальше</button>`);
-  document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
 /* ---------- Presentation: таблица новых слов ---------- */
@@ -2474,17 +2539,16 @@ function drillContext(s) {
   if (!gap.found) { L.i++; return renderStep(); }
   const answer = gap.answer;              // ответ — форма, реально стоящая в предложении
   const fullSentence = item.expected_target;  // полное предложение для показа после верного ответа
-  const hardWord = (L.wordErr[dictWord]||0) > 0 || DB.reviewQueue.includes(dictWord);
   const key = 'st'+L.i; let mustRetype = false;
-  const autoHint = hardWord
-    ? `<div class="feedback ok" style="margin:6px 0">💡 <b>${esc(wordSkeleton(answer,1))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span></div>` : '';
+  // перевод предложения: берём из prompt_native (поле constructs)
+  const sentTranslation = item.prompt_native || '';
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Контекст')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 слово в контексте</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
-      ${autoHint}
+      ${sentTranslation ? `<p class="note" style="margin:4px 0 8px;opacity:.75">📝 ${esc(sentTranslation)}</p>` : ''}
       <input type="text" id="ans" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
@@ -2492,8 +2556,17 @@ function drillContext(s) {
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
-  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span> — ${esc(vEntry.translation||'')}`; };
+  // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
+  let hintLevel = 0;
+  $('#hint').onclick = () => {
+    L.hints++; hintLevel++;
+    $('#fb').className = 'feedback ok';
+    if (hintLevel === 1) {
+      $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>`;
+    } else {
+      $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span> — ${esc(vEntry.translation||'')}`;
+    }
+  };
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
@@ -2815,6 +2888,7 @@ const DIAG_TYPES  = ['recognition','spelling','verb_conjugation','word_order','v
 const DIAG_TRENDS = ['improving','stable','declining'];
 
 async function finishLesson() {
+  LessonCache.clear();   // урок завершён — кэш больше не нужен
   const acc = L.ft.total ? +(L.ft.ok / L.ft.total).toFixed(2) : 1;
   const prev = DB.analytics.length ? DB.analytics[DB.analytics.length-1].accuracy_first_try : null;
   const hard = Object.keys(L.wordErr).filter(t => L.wordErr[t] >= 2);
