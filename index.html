@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v42';
+const APP_VERSION = 'v43';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -569,7 +569,7 @@ let DB = null;
    Модель не знает о базе, не пишет в неё, получает задание на один шаг.
    ===================================================================== */
 const Gemini = {
-  MODELS: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
+  MODELS: ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
   preferred: null,   // последняя успешно ответившая модель — пробуем её первой
   SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
         + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
@@ -2950,10 +2950,12 @@ async function lookupAndShowWord(raw) {
   const found = DB.vocab.find(v => norm(v.term) === norm(term)
     || norm(v.term) === norm(term.replace(/^(der|die|das|ein|eine)\s+/i,''))
   );
-  if (found) { showTapPopup(found); return; }
+  // Показываем из словаря только если запись полная (есть translit или translation).
+  // Иначе идём к Gemini — дополним пустые поля и тогда покажем попап.
+  if (found && (found.translit || found.translation)) { showTapPopup(found); return; }
   // 2. Ищем в encountered_words текущего урока (сохранены в L.encounteredCache)
   const enc = (L && L.encounteredCache) ? L.encounteredCache.find(w => norm(w.term)===norm(term)) : null;
-  if (enc) { showTapPopup(enc); return; }
+  if (enc && (enc.translit || enc.translation)) { showTapPopup(enc); return; }
   // 3. Запрашиваем Gemini
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
@@ -2970,8 +2972,14 @@ async function lookupAndShowWord(raw) {
   } catch(e) {}
   loading.remove();
   if (!w || !w.term) { showTapPopup({term, translit:'', translation:'?'}); return; }
-  // Сохраняем как «встреченное» в словарь
-  if (!DB.vocab.find(v => norm(v.term)===norm(w.term))) {
+  // Сохраняем как «встреченное» в словарь; если слово уже есть — дополняем пустые поля
+  const existingW = DB.vocab.find(v => norm(v.term)===norm(w.term));
+  if (existingW) {
+    let updated = false;
+    if (w.translit && !existingW.translit) { existingW.translit = w.translit; updated = true; }
+    if (w.translation && !existingW.translation) { existingW.translation = w.translation; updated = true; }
+    if (updated) Storage.save(DB);
+  } else {
     DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:'',
       part_of_speech:'', is_irregular:false, forms:'', lesson: L ? L.code : 'quest',
       errors:0, status:'встреченное', mnemonic:'', date_added:today(), date_review:today() });
@@ -3037,17 +3045,20 @@ async function startSuperLesson() {
   const topicMode = `бытовое ≈${Math.round(survShare*100)}% / интересы ≈${Math.round((1-survShare)*100)}% (бытовое: ориентирование и транспорт, магазин, деньги, еда, вежливость, время, здоровье); бытовое вплетать в сюжет, не отдельным списком`;
 
   // небольшой стартовый набор новой служебной лексики (раздел 6.2) — войдёт в must_use по ходу истории
+  // Запрос идёт параллельно с подготовкой данных (Promise выполняется пока мы собираем L)
   let functionalNew = [];
-  try {
-    const r = await Gemini.call({
-      task:'super_lesson_plan', part:'functional', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      known_vocab:knownSample,
-      rules:'Ровно 2 новых служебных слова (предлоги/союзы/частицы), которых нет в known_vocab — будут вплетены в историю Суперквеста по ходу повествования.'
-    }, '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2}');
-    functionalNew = (r.functional_new||[]).filter(w=>w && w.term);
-  } catch(e) {
+  const functionalNewPromise = Gemini.call({
+    task:'super_lesson_plan', part:'functional', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+    known_vocab:knownSample,
+    rules:'Ровно 2 новых служебных слова (предлоги/союзы/частицы), которых нет в known_vocab — будут вплетены в историю Суперквеста по ходу повествования.'
+  }, '{"functional_new":[{"term":"связка/предлог","emoji":"эмодзи","translit":"[родными буквами]","translation":"перевод"}] — ровно 2}')
+    .then(r => { functionalNew = (r.functional_new||[]).filter(w=>w && w.term); })
+    .catch(e => {
+      if (String(e.message||'').startsWith('KEY:')) throw e;
+      // стартовый набор необязателен — история всё равно введёт новые слова по ходу (encountered_words)
+    });
+  try { await functionalNewPromise; } catch(e) {
     if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
-    // стартовый набор необязателен — история всё равно введёт новые слова по ходу (encountered_words)
   }
   functionalNew.forEach(w => {
     if (w.term && !DB.vocab.some(v=>norm(v.term)===norm(w.term)))
@@ -3116,8 +3127,16 @@ async function runSuperquestAct(cfg) {
         $('#bMenu').onclick = mainMenu;
         return;
       }
-      toast('Связь прервалась — прогресс сохранён', true);
-      return finishSuper();
+      // Обрыв сети в середине суперквеста — не завершаем квест, даём повторить сцену.
+      // finishSuper() здесь было бы слишком агрессивно: пользователь теряет весь прогресс из-за одного сбоя.
+      Screen.show(`
+        <h1>Связь прервалась</h1>
+        <p class="sub">Акт ${cfg.actIndex}, сцена ${Q.scene}. Прогресс сохранён — можно продолжить.</p>
+        <button class="btn btn-primary" id="bRetryScene">Повторить сцену</button>
+        <button class="btn btn-ghost" id="bFinishAnyway">Завершить Суперквест</button>`);
+      $('#bRetryScene').onclick = () => nextScene();
+      $('#bFinishAnyway').onclick = () => finishSuper();
+      return;
     }
     // слова сцены и слова для ответа — в словарь (без дублей), статус «встречено в контексте»
     const newGloss = [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])];
