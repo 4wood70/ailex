@@ -242,7 +242,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v39';
+const APP_VERSION = 'v40';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -563,7 +563,7 @@ let DB = null;
    Модель не знает о базе, не пишет в неё, получает задание на один шаг.
    ===================================================================== */
 const Gemini = {
-  MODELS: ['gemini-3.5-flash', 'gemini-2.5-flash'],
+  MODELS: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
   preferred: null,   // последняя успешно ответившая модель — пробуем её первой
   SYSTEM: 'Ты — языковой генератор приложения AILEX (учитель иностранных языков по CEFR; строгий, лаконичный наставник). '
         + 'Отвечай ВСЕГДА одним валидным JSON-объектом точно по запрошенной схеме, без markdown, без текста вне JSON. '
@@ -604,16 +604,16 @@ const Gemini = {
             if (attempt < 2) { await sleep(2000 * (attempt + 1)); continue; }  // подождать и повторить ту же модель
             break;                                      // не вышло — к следующей модели
           }
-          if (!r.ok) { lastErr = new Error('HTTP '+r.status+' ('+m+')'); break; }  // иная ошибка — к следующей модели
+          if (!r.ok) { lastErr = new Error('HTTP '+r.status+' ('+m+')'); await sleep(500); break; }  // иная ошибка — пауза 0.5с, к следующей модели
           const j = await r.json();
           const txt = (j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('');
           const clean = txt.replace(/```json|```/g,'').trim();
-          if (!clean) { lastErr = new Error('EMPTY ('+m+')'); break; }   // пустой ответ — к следующей модели
+          if (!clean) { lastErr = new Error('EMPTY ('+m+')'); await sleep(500); break; }   // пустой ответ — пауза 0.5с, к следующей модели
           try { const out = JSON.parse(clean); this.preferred = m; return out; }
           catch(pe) {
             const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
             if (s >= 0 && e > s) { try { const out = JSON.parse(clean.slice(s, e+1)); this.preferred = m; return out; } catch(_){} }
-            lastErr = new Error('BAD_JSON ('+m+')'); break;
+            lastErr = new Error('BAD_JSON ('+m+')'); await sleep(500); break;
           }
         } catch(e) {
           if (String(e.message).startsWith('KEY:')) throw e;
@@ -2948,7 +2948,18 @@ async function runSuperquestAct(cfg) {
       '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_act_final":false,"is_final":false}');
     } catch(e) {
       if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return; }
-      toast('Связь прервалась — Суперквест засчитан', true);
+      if (Q.scene === 1 && cfg.actIndex === 1) {
+        // Сбой на самой первой сцене — квест не начался, не засчитываем
+        Screen.show(`
+          <h1>Нет связи с сервером</h1>
+          <p class="sub">Суперквест не удалось начать. Проверь соединение и попробуй снова.</p>
+          <button class="btn btn-primary" id="bRetry">Попробовать снова</button>
+          <button class="btn btn-ghost" id="bMenu">Выход в меню</button>`);
+        $('#bRetry').onclick = startSuperLesson;
+        $('#bMenu').onclick = mainMenu;
+        return;
+      }
+      toast('Связь прервалась — прогресс сохранён', true);
       return finishSuper();
     }
     // слова сцены и слова для ответа — в словарь (без дублей), статус «встречено в контексте»
