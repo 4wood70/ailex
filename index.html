@@ -245,8 +245,8 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v45';
-const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v45'; // ключ включает версию → старый кэш автоматически игнорируется
+const APP_VERSION = 'v46';
+const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -2482,7 +2482,7 @@ function drillReviewContext(s, rd) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${w.translation?` — «${esc(w.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
       ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
-      <input type="text" id="ans" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off">
+      <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -2490,6 +2490,7 @@ function drillReviewContext(s, rd) {
       </div>
     </div>`);
   Hints.show('drill', HintTexts.drill);
+  bindAutoGrow('ans');
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span> — ${esc(w.translation||'')}`; };
   $('#check').onclick = () => {
@@ -2523,7 +2524,7 @@ function drillReviewContext(s, rd) {
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
       speak(fullSentence, DB.profile.targetLang);
-      $('#ans').value=''; $('#ans').focus();
+      $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
 }
@@ -2549,13 +2550,14 @@ function drillContext(s) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text">${esc(gap.gapped)}</div>
       ${sentTranslation ? `<p class="note" style="margin:4px 0 8px;opacity:.75">📝 ${esc(sentTranslation)}</p>` : ''}
-      <input type="text" id="ans" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off">
+      <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
+  bindAutoGrow('ans');
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
   $('#hint').onclick = () => {
@@ -2599,7 +2601,7 @@ function drillContext(s) {
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
       speak(fullSentence, DB.profile.targetLang);
-      $('#ans').value=''; $('#ans').focus();
+      $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
 }
