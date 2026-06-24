@@ -81,8 +81,21 @@ curl -s https://raw.githubusercontent.com/4wood70/ailex/main/index.html | grep -
 
 Сообщения коммитов пишутся **строго на английском языке**.
 
-Примеры:
-- `v42: remove chip labels, move glossary below input, textarea auto-grow`
+Формат — два поля:
+
+**Summary** (одна строка, обязательно):
+```
+v42: remove glossary chips, move word list below input, replace input with auto-grow textarea in construction/quest/superquest screens
+```
+
+**Description** (многострочно, обязательно):
+```
+- Remove chiplist-must labels (duplicated word list)
+- Move glossary/word list block below the input field
+- Replace text input with auto-growing textarea (wraps to new lines as user types)
+```
+
+Примеры summary:
 - `v43: fix TTS degradation on unsupported languages`
 - `docs: update Workflow and Status`
 
