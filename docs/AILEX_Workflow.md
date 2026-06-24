@@ -77,7 +77,16 @@ curl -s https://raw.githubusercontent.com/4wood70/ailex/main/sw.js | grep CACHE
 curl -s https://raw.githubusercontent.com/4wood70/ailex/main/index.html | grep -A3 "const LANGS"
 ```
 
-# 6. Два железных правила
+# 6. Сообщения коммитов (GitHub Desktop)
+
+Сообщения коммитов пишутся **строго на английском языке**.
+
+Примеры:
+- `v42: remove chip labels, move glossary below input, textarea auto-grow`
+- `v43: fix TTS degradation on unsupported languages`
+- `docs: update Workflow and Status`
+
+# 7. Два железных правила
 
 **Правило 1. После каждого коммита — проверить билд.**
 Claude читает `APP_VERSION` с GitHub и сравнивает с тем что было отправлено.
@@ -85,13 +94,13 @@ Claude читает `APP_VERSION` с GitHub и сравнивает с тем ч
 **Правило 2. Билд поднимаем всегда — даже для крошечной правки.**
 `APP_VERSION` в index.html и `CACHE` в sw.js должны совпадать (например `v35` и `ailex-v35`). Без этого у пользователей залипает старый кэш PWA.
 
-# 7. Если что-то пошло не так
+# 8. Если что-то пошло не так
 
 - Claude видит старый код → попросить прочитать файл заново с GitHub (команды из раздела 0).
 - Обновление не видно в приложении → проверить что билд поднят и коммит прошёл.
 - Не уверены какая версия в репозитории → `curl` на `APP_VERSION` (см. раздел 5).
 
-# 8. Завершение сессии — обязательный шаг
+# 9. Завершение сессии — обязательный шаг
 
 **После того как готовые файлы выданы Constantin'у, но ДО закрытия чата:**
 

@@ -82,6 +82,7 @@ input[type=text],input[type=number],input[type=password],select,textarea{
   width:100%;background:#0A1120;border:1px solid var(--line);border-radius:11px;color:var(--ink);
   padding:13px 14px;font-size:16px;font-family:'Inter'}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(47,125,246,.18)}
+textarea.ans-grow{resize:none;overflow:hidden;min-height:52px;line-height:1.45}
 
 /* mastery ring (signature) */
 .ring-wrap{display:grid;place-items:center;padding:10px 0 6px}
@@ -244,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v41';
+const APP_VERSION = 'v42';
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
@@ -331,6 +332,9 @@ const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-
   .replace(/ß/g,'ss');
 const shuffle = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const pick = (a,n) => shuffle(a).slice(0,n);
+// авторасширение textarea по мере набора текста
+function autoGrow(el){ if (!el) return; el.style.height='auto'; el.style.height=el.scrollHeight+'px'; }
+function bindAutoGrow(id){ const el=document.getElementById(id); if(!el) return; el.addEventListener('input',()=>autoGrow(el)); autoGrow(el); }
 
 let toastTimer = null;
 function toast(msg, neutral) {
@@ -2559,7 +2563,7 @@ function drillWrite(s) {
       if (!mustRetype) { L.errors.writing++; noteWordError(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ Правильно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span><br>🧠 Введите верный вариант вручную, чтобы продолжить.`;
-      $('#ans').value=''; $('#ans').focus();
+      $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
 }
@@ -2598,8 +2602,8 @@ function drillConstruct(s) {
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 фраза</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>
       <div class="task-text">«${esc(c.prompt_native)}»</div>
+      <textarea id="ans" class="ans-grow" placeholder="Ваш ответ на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
       ${glossHTML}
-      <input type="text" id="ans" placeholder="Ваш ответ на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -2608,6 +2612,7 @@ function drillConstruct(s) {
       </div>
     </div>`);
   if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
+  bindAutoGrow('ans');
   // подсказка: ПОЛНЫЙ правильный ответ — фраза целиком + транскрипция + перевод + озвучка (версия 4.14)
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     const tr = c.expected_translit ? ` <span style="color:var(--orange)">${esc(c.expected_translit)}</span>` : '';
@@ -2715,11 +2720,10 @@ async function runQuest(cfg) {
         <div class="target" id="questSceneText">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
-      <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
       <div class="card">
         <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Понадобятся: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
-        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
+        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -2728,6 +2732,7 @@ async function runQuest(cfg) {
       </div>`);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
     attachTapAll();
+    bindAutoGrow('ans');
     if (Q.scene === 1) Hints.show('quest', HintTexts.quest);
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
     speak(sc.scene_text, p.targetLang);
@@ -3146,11 +3151,10 @@ async function runSuperquestAct(cfg) {
         <div class="target">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
-      <div class="chiplist must">${cfg.mustUse.map(m=>`<span class="chip">${esc(m)}</span>`).join('')}</div>
       <div class="card">
         <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
         ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
-        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…">
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -3158,6 +3162,7 @@ async function runSuperquestAct(cfg) {
         </div>
       </div>`);
     attachTapAll();
+    bindAutoGrow('ans');
     if (Q.scene === 1 && cfg.actIndex === 1) Hints.show('superquest', HintTexts.superquest);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
