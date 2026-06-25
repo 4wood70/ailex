@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v47';
+const APP_VERSION = 'v48';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -2002,13 +2002,18 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. УРОВЕНЬ CEFR: используй ТОЛЬКО грамматические конструкции уровня ' + lvl + ' или ниже (из known_rules). Запрещены конструкции выше уровня: отделяемые приставки, Konjunktiv, Passiv, um...zu, Genitiv, Relativsatz — только если они уже есть в known_rules. СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи дословно; если дословный звучит неестественно — дай оба варианта: дословный + в скобках обычное выражение. instruction — короткая внятная инструкция что сделать. В glossary помести ВСЕ ключевые слова нужные для построения expected_target — каждое: слово на целевом + транскрипция родными буквами + перевод. Любое слово из задания или эталона которого нет в known_vocab/lesson_words ОБЯЗАНО быть в glossary. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. УРОВЕНЬ CEFR: используй ТОЛЬКО грамматические конструкции уровня ' + lvl + ' или ниже (из known_rules). Запрещены конструкции выше уровня: отделяемые приставки, Konjunktiv, Passiv, um...zu, Genitiv, Relativsatz — только если они уже есть в known_rules. СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. В glossary помести ВСЕ ключевые слова нужные для построения expected_target — каждое: слово на целевом + транскрипция родными буквами + перевод. Любое слово из задания или эталона которого нет в known_vocab/lesson_words ОБЯЗАНО быть в glossary. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно 9 объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     L.constructs = constructs;
-    L.phrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);   // повседневные выражения (4.14)
+    // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
+    const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
+    const savedPhrases = (DB.vocab||[]).filter(v=>v.source==='phrase' && v.term)
+      .sort(()=>Math.random()-0.5).slice(0, Math.max(0, 3-newPhrases.length))
+      .map(v=>({phrase:v.term, translit:v.translit||'', translation:v.translation||'', when:v.note||''}));
+    L.phrases = [...newPhrases, ...savedPhrases].slice(0,3);   // всегда 3 фразы
     // пункт 12: короткие предложения для слов ПОВТОРЕНИЯ — чтобы Recap шёл в контексте со скелетами
     if (L.reviewWords && L.reviewWords.length) {
       try {
@@ -2190,7 +2195,7 @@ function drillPhrases() {
     <div class="card">
       ${list.map(f=>`
         <div style="padding:10px 0;border-bottom:1px solid var(--line)">
-          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" data-say="${esc(f.phrase)}" onclick="replaySay(this)" aria-label="Произнести">🔊</button>`:''}</div>
+          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" data-say="${esc(f.phrase)}" onclick="replaySay(this)" aria-label="Произнести">🔊</button>`:''}</div>
           <div class="note" style="margin-top:2px">${esc(f.translation||'')}${f.when?` · <i>${esc(f.when)}</i>`:''}</div>
           ${f.reply&&f.reply.phrase?`<div style="margin-top:6px;padding-left:12px;border-left:2px solid var(--line)">
             <div style="font-size:16px;color:var(--dim)">↩ ${esc(f.reply.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.reply.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button style="width:30px;height:30px;font-size:14px;vertical-align:middle" data-say="${esc(f.reply.phrase)}" onclick="replaySay(this)" aria-label="Произнести ответ">🔊</button>`:''}</div>
@@ -2593,8 +2598,15 @@ function drillContext(s) {
       }
       if (remaining.length) extracted = remaining.join(' ');
     }
+    // QUEUE-05: засчитываем любую форму корня если правило не пройдено
+    const knownRuleCats = (DB.rules||[]).flatMap(r=>r.categories||[]);
+    const grammarKnown = knownRuleCats.length > 0;
+    // rootMatch: ввод содержит корень ответа (первые N букв совпадают)
+    const ansRoot = norm(answer).slice(0, Math.max(3, Math.floor(norm(answer).length*0.6)));
+    const rootMatch = norm(a).includes(ansRoot) || (extracted && norm(extracted).includes(ansRoot));
     const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a),norm(answer))<=1
-            || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1);
+            || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1)
+            || (!grammarKnown && rootMatch);
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       markSeen(dictWord);
@@ -2605,7 +2617,9 @@ function drillContext(s) {
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      // QUEUE-04: при ошибке формы — показываем пояснение если есть
+      const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 В этом предложении: <b>${esc(answer)}</b> — форма слова «${esc(dictWord)}»</span>` : '';
+      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br>🧠 Запомните и напишите предложение целиком.`;
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
@@ -2774,9 +2788,9 @@ async function runQuest(cfg) {
         task:'quest_step', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
         topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.maxScenes,
         user_choice:Q.choice, story_so_far:Q.summary,
-        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене заверши историю (is_final=true, без развилки). УРОВЕНЬ CEFR (критично): вся грамматика сцены и задания — строго уровня '+cfg.cefr+' или ниже. На A1: только Präsens базовых глаголов, простые предложения, никаких um...zu / Konjunktiv / Passiv / отделяемых приставок / Genitiv. prompt_for_user — задание которое пользователь МОЖЕТ выполнить зная только слова урока и базовую грамматику уровня. ПЕРЕВОД (native_hint): на A1–A2 переводи дословно сохраняя каждое слово; если дословный перевод звучит неестественно — дай оба: дословный + в скобках обычное выражение с пояснением ("stehen здесь = находиться"). В answer_glossary — ВСЕ ключевые слова для ответа с транскрипцией и переводом. В encountered_words — значимые слова сцены (до 5). translit — ТОЛЬКО буквами native_lang, пример: [форбэрайтн].'
+        rules:'Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. Конкретная чувственная сцена в сфере интересов. На последней сцене заверши историю (is_final=true, без развилки). УРОВЕНЬ CEFR (критично): вся грамматика сцены и задания — строго уровня '+cfg.cefr+' или ниже. На A1 ЗАПРЕЩЕНО использовать в prompt_for_user и expected_target: модальные глаголы желания (möchten/wollen), können, dürfen; отделяемые приставки; um...zu; Konjunktiv; Passiv; Perfekt; Genitiv; Relativsatz; сравнительные конструкции. На A1 РАЗРЕШЕНО: Präsens обычных глаголов (sein/haben/мочь через dürfen не давать), простые предложения Субъект+Глагол+Объект, müssen только если пройден в known_rules. prompt_for_user — задание которое пользователь МОЖЕТ выполнить зная только слова урока и базовую грамматику уровня. ПЕРЕВОД (native_hint): на A1–A2 переводи корректно по-русски сохраняя ВСЕ смысловые слова оригинала. Служебные глаголы которые в русском опускаются (sein/быть) — опускай ("Ich bin dort" → "Я там", не "Я есть там"). Порядок слов — русский, не немецкий. Если конструкция принципиально не переводится прямо — добавь пояснение в скобках ("stehen здесь = находиться"). В answer_glossary — ВСЕ ключевые слова для ответа с транскрипцией и переводом. В encountered_words — значимые слова сцены (до 5). translit — ТОЛЬКО буквами native_lang, пример: [форбэрайтн].'
       },
-      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","scaffold":"каркас предложения с ___ на месте ключевых слов которые нужно подставить (напр. Ich ___ auch mit dem Bus ___), или null если задание простое","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом"},{"id":"B","label_target":"вариант на целевом"}],"is_final":false}');
     } catch(e) {
       toast('Связь прервалась — квест засчитан', true);
       return cfg.onDone();
@@ -2803,6 +2817,14 @@ async function runQuest(cfg) {
       </div>
       <div class="card">
         <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        ${sc.scaffold?`<div id="questScaffold" style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
+          <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
+          ${sc.scaffold.split('___').map((part,i,arr)=>
+            i<arr.length-1
+              ? esc(part)+'<span style="display:inline-block;min-width:60px;border-bottom:2px solid var(--orange);margin:0 4px;vertical-align:bottom">&nbsp;</span>'
+              : esc(part)
+          ).join('')}
+        </div>`:''}
         <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
         ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
