@@ -1,6 +1,6 @@
 /* AILEX service worker — офлайн-оболочка.
    Версию меняй при каждом обновлении, чтобы кэш обновился. */
-const CACHE = 'ailex-v58';
+const CACHE = 'ailex-v59';
 const SHELL = [
   './',
   './index.html',
