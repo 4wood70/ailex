@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v57';
+const APP_VERSION = 'v58';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -3188,6 +3188,7 @@ async function explainElement(term, sentence, popup, reposition) {
     return;
   }
   box.style.display = 'block';
+  box.style.maxHeight = '42vh'; box.style.overflowY = 'auto';
   box.innerHTML = `<span style="color:var(--faint)">📘 Разбираю…</span>`;
   if (btn) btn.disabled = true;
   if (reposition) reposition();
@@ -3197,13 +3198,12 @@ async function explainElement(term, sentence, popup, reposition) {
     r = await Gemini.call({
       task:'explain_element', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:curCefr(),
       sentence: sentence, element: term,
-      rules:'Объясни простым языком на native_lang, ПОЧЕМУ слово/форма «'+term+'» стоит в предложении именно так. '
-        + 'Аудитория — дети и взрослые без языковой подготовки: БЕЗ лингвистических терминов (не «аккузатив», «отделяемая приставка», «спряжение» — а простыми словами через смысл). '
-        + 'Если «'+term+'» — часть составного глагола (напр. отделяемая приставка): назови глагол целиком в словарной форме и объясни, что его кусочек уехал в конец предложения. '
-        + 'Если это изменённая форма слова (по лицу/числу/падежу/времени): назови словарную форму и коротко скажи, почему здесь именно такая. '
-        + 'Если это служебное слово (артикль/предлог/частица): объясни его роль здесь. '
-        + 'Объём — 1–3 коротких предложения. Не пересказывай перевод всего предложения. Дай один короткий пример той же конструкции на target_lang (поле example), если уместно; иначе example = "".'
-    }, '{"explanation":"объяснение простым языком на native_lang, без терминов","example":"короткий пример той же конструкции на target_lang или пусто"}');
+      rules:'Объясни на native_lang, ПОЧЕМУ слово/форма «'+term+'» стоит в предложении именно так. '
+        + 'СТРОГО БЕЗ лингвистических терминов — аудитория дети и взрослые без подготовки. Запрещены слова: «падеж/аккузатив/датив/родительный», «нулевой/определённый/неопределённый артикль», «абстрактное существительное», «спряжение», «отделяемая приставка», «адвербиальный/наречный оборот», «предложное управление». Заменяй смыслом: «слово-свойство» вместо «абстрактное существительное»; «здесь артикль не нужен» вместо «нулевой артикль»; «отвечает на вопрос как?» вместо «наречный оборот»; «кусочек глагола уехал в конец» вместо «отделяемая приставка». '
+        + 'Верни ДВА уровня. explanation — короткая суть, 1–2 предложения простыми словами (показывается сразу). detail — развёрнутый разбор по структуре: (1) почему именно так, из чего вытекает по смыслу; (2) 2–3 примера ТОЙ ЖЕ модели на target_lang с переводом (например для «mit Sorgfalt»: mit Ruhe — спокойно, mit Geduld — терпеливо); (3) контраст «а когда было бы иначе» — короткий пример, где форма или артикль изменились бы, с пояснением почему. 3–5 предложений, без терминов. '
+        + 'Если «'+term+'» — кусочек составного глагола: в explanation назови глагол целиком и скажи, что часть уехала в конец. Не пересказывай перевод всего предложения. '
+        + 'example — один короткий пример той же конструкции на target_lang (для озвучки), или "".'
+    }, '{"explanation":"короткая суть, 1-2 предложения на native_lang, без терминов","detail":"развёрнутый разбор без терминов: почему так + 2-3 примера той же модели + контраст когда иначе","example":"короткий пример той же конструкции на target_lang или пусто"}');
   } catch(e) {
     box.innerHTML = `<span style="color:var(--faint)">Не удалось получить объяснение. Попробуйте ещё раз.</span>`;
     if (btn) btn.disabled = false;
@@ -3212,10 +3212,24 @@ async function explainElement(term, sentence, popup, reposition) {
   }
   if (btn) btn.disabled = false;
   const expl = (r && r.explanation) ? r.explanation : 'Объяснение недоступно.';
+  const detail = (r && r.detail) ? r.detail : '';
   const ex = (r && r.example) ? r.example : '';
-  box.innerHTML = `<div>${esc(expl)}</div>`
-    + (ex ? `<div style="margin-top:6px;color:var(--orange)">${esc(ex)} ${hasTTS(p.targetLang)?`<button aria-label="Озвучить пример" onclick="speak(${JSON.stringify(ex).replace(/"/g,'&quot;')}, '${p.targetLang}')" style="background:none;border:none;font-size:14px;cursor:pointer;padding:0">🔊</button>`:''}</div>` : '');
+  const exRow = ex ? `<div style="margin-top:6px;color:var(--orange)">${esc(ex)} ${hasTTS(p.targetLang)?`<button aria-label="Озвучить пример" onclick="speak(${JSON.stringify(ex).replace(/"/g,'&quot;')}, '${p.targetLang}')" style="background:none;border:none;font-size:14px;cursor:pointer;padding:0">🔊</button>`:''}</div>` : '';
+  // Вариант Б: суть сразу, развёрнутый разбор — по кнопке «подробнее» (оба уровня уже получены, без второго запроса)
+  const moreBlock = detail
+    ? `<button id="tapMore" style="margin-top:8px;background:none;border:none;color:var(--accent,#6ea8fe);font-size:13px;cursor:pointer;padding:0">подробнее ▼</button>`
+      + `<div id="tapDetail" style="display:none;margin-top:6px;line-height:1.5">${esc(detail).replace(/\n/g,'<br>')}</div>`
+    : '';
+  box.innerHTML = `<div>${esc(expl)}</div>` + exRow + moreBlock;
   box.dataset.loaded = '1';
+  const moreBtn = box.querySelector('#tapMore');
+  if (moreBtn) moreBtn.onclick = () => {
+    const d = box.querySelector('#tapDetail');
+    const open = d.style.display === 'none';
+    d.style.display = open ? 'block' : 'none';
+    moreBtn.textContent = open ? 'свернуть ▲' : 'подробнее ▼';
+    if (reposition) reposition();
+  };
   if (reposition) reposition();
 }
 // Подбор слов для must_use на конкретный акт: ротация приоритетных + известных + стартовой служебной лексики.
