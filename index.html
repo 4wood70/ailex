@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v60';
+const APP_VERSION = 'v61';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -269,7 +269,24 @@ const I18N = {
       'Импортировать свои слова':'Import my words','Свой словарь (интенсив)':'My vocabulary (intensive)',
       'к изучению':'to learn','трудное':'hard','встречено в контексте':'seen in context',
       'Закрепление правила':'Rule reinforcement','Понятно, дальше':'Got it, next',
-      'Слово в контексте':'Word in context','Повторение':'Review','Повторение в контексте':'Review in context'
+      'Слово в контексте':'Word in context','Повторение':'Review','Повторение в контексте':'Review in context',
+      // --- 4.25: расширение охвата (реестр, Приложение А) ---
+      'Поговорить':'Talk','Суперквест':'Superquest','Аналитика':'Analytics','Профиль':'Profile',
+      'Отправить':'Send','Ответить':'Reply','Далее':'Next','Отмена':'Cancel','Сохранить':'Save',
+      'Начать экзамен':'Start exam','Пересдать экзамен':'Retake exam','Начать разбор':'Start review',
+      'Подробнее':'More','Повторить сцену':'Repeat scene','Попробовать снова':'Try again','Проверить ещё раз':'Check again',
+      'Завершить диалог':'End dialogue','Завершить Суперквест':'End Superquest',
+      'В главное меню':'To main menu','К главному меню':'To main menu','Выход в меню':'Exit to menu',
+      'К заданиям':'To exercises','Добавить в словарь':'Add to dictionary','Сохранить профиль':'Save profile',
+      'Экспорт':'Export','Импорт':'Import','Заменить ключ':'Replace key','Позже':'Later',
+      'Как пользоваться':'How to use','Показать подсказки заново':'Show hints again','Понятно ✓':'Got it ✓',
+      'Определение уровня':'Level check','Кто занимается?':'Who is studying?','Новый профиль':'New profile',
+      'Профиль создан':'Profile created','Работа над ошибками':'Working on mistakes','Квест завершён':'Quest complete',
+      'База AILEX_StatusDB':'AILEX_StatusDB database','Ключ Gemini':'Gemini key','Ключ доступа к Gemini':'Gemini access key',
+      'Нет связи с сервером':'No server connection','Связь прервалась':'Connection lost','Похоже, заблокирована сеть':'The network seems blocked',
+      'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
+      'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
+      'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over'
     }
   },
   init() {
@@ -282,6 +299,16 @@ const I18N = {
     Object.keys(this.dict.en).forEach(k => this.registry.add(k));  // весь известный набор — на автоперевод
   },
   setLang(l) { this.lang = l; try { localStorage.setItem('AILEX_UI_LANG', l); } catch(_){} },
+  // 4.25: язык интерфейса привязан к родному языку профиля (а не к устройству).
+  // До создания профиля lang остаётся системным (см. init). Персистентную опцию
+  // AILEX_UI_LANG не используем — язык берётся из профиля при каждом входе/переключении.
+  applyProfileLang(profile) {
+    const nl = (profile && profile.nativeLang) ? String(profile.nativeLang).toLowerCase() : 'ru';
+    this.lang = nl;
+    if (nl === 'ru') return;                 // русский — исходный язык, перевод не нужен
+    // фоновая догрузка переводов надписей + перерисовка текущего экрана
+    setTimeout(() => { this.ensure().then(() => { try { localizeDOM(document.getElementById('screen')); } catch(_){} }); }, 200);
+  },
   t(s) {
     if (s == null) return s;
     const str = String(s);
@@ -309,7 +336,22 @@ const I18N = {
         'Новые слова':'список новых слов этого урока перед упражнениями',
         'Слова задания':'слова, которые понадобятся в следующем упражнении',
         'Чекпойнт':'контрольный экзамен после половины уровня',
-        'Понадобятся':'слова, которые нужно запомнить перед следующим заданием'
+        'Понадобятся':'слова, которые нужно запомнить перед следующим заданием',
+        // --- 4.25: расширение охвата (реестр, Приложение А спеки) ---
+        'Поговорить':'режим свободного голосового диалога с приложением на изучаемом языке',
+        'Аналитика':'экран прогресса и точности обучения',
+        'Свод правил ':'личная коллекция грамматических правил пользователя',
+        'Отправить':'кнопка: отправить ответ или реплику на проверку',
+        'Проверить':'кнопка: отправить ответ на проверку',
+        'Подсказка':'подсказка по заданию (лампочка), раскрывает часть ответа',
+        'Правило':'показать грамматическое правило текущего задания',
+        'Опорные слова':'слова, нужные для составления ответа',
+        'Работа над ошибками':'режим повторной проработки слов, в которых были ошибки',
+        'Определение уровня':'вступительный тест для определения уровня владения языком',
+        'Как пользоваться':'справка: краткий свод жестов и возможностей приложения',
+        'Показать подсказки заново':'сбросить показанные подсказки, чтобы они появились снова',
+        'Экзамен':'контрольный экзамен в конце подуровня',
+        'Чекпойнт':'контрольный экзамен после половины уровня'
       };
       const annotated = missing.map(s => UI_CTX[s] ? s + ' [' + UI_CTX[s] + ']' : s);
       const res = await Gemini.call({
@@ -697,6 +739,33 @@ function localizeDOM(root) {
   });
 }
 
+/* 4.25: второй путь перевода — целые HTML-абзацы (подсказки, справка «Как пользоваться»).
+   localizeDOM не годится (он подменяет только короткие надписи по точному совпадению).
+   Переводим блок целиком через Gemini, кэшируем по языку+ключу в AILEX_UI_BLOCKS.
+   Деградация: кэш → Gemini → русский исходник (blockEl уже показывает русский).
+   Русский язык — исходник, ничего не делаем. */
+const BLOCK_CACHE_KEY = 'AILEX_UI_BLOCKS';
+function _blockCache() { try { return JSON.parse(localStorage.getItem(BLOCK_CACHE_KEY)||'{}'); } catch(_) { return {}; } }
+function _blockCacheSave(c) { try { localStorage.setItem(BLOCK_CACHE_KEY, JSON.stringify(c)); } catch(_){} }
+async function localizeBlocks(blockEl, key, sourceHtml) {
+  if (!blockEl || I18N.lang === 'ru') return;              // русский — исходник
+  const lang = I18N.lang, cache = _blockCache();
+  const hit = cache[lang] && cache[lang][key];
+  if (hit) { blockEl.innerHTML = hit; return; }            // из кэша — мгновенно, офлайн
+  if (typeof Gemini === 'undefined' || !Gemini.key) return; // нет ключа — остаётся русский
+  try {
+    const res = await Gemini.call({
+      task:'translate_block', target_ui_lang: lang, html: sourceHtml,
+      rules:'Переведи ТЕКСТ этого HTML-фрагмента интерфейса языкового приложения на язык target_ui_lang. Это инструкция-подсказка для пользователя: переводи естественно и понятно носителю языка, а не дословно. СОХРАНИ всю HTML-разметку (теги <b>, <br>, <div>, <p>, class, style), эмодзи и структуру без изменений — переводи только видимый человеку текст между тегами. Верни ТОЛЬКО переведённый HTML, без пояснений и без обёрток ```.'
+    }, '{"html":"переведённый HTML-фрагмент"}');
+    const out = res && res.html;
+    if (out && String(out).trim()) {
+      blockEl.innerHTML = out;
+      cache[lang] = cache[lang] || {}; cache[lang][key] = out; _blockCacheSave(cache);
+    }
+  } catch(_) { /* не вышло — остаётся русский исходник, обучение не блокируется */ }
+}
+
 /* ---------- коды этапов (раздел 2.1, 7) ---------- */
 const LEVELS = ['A1','A2','B1','B2','C1','C2'];
 const LESSONS_PER_SUB = 25;          // Checkpoint после 25, Final после 50
@@ -809,7 +878,7 @@ function boot() {
   if (!Storage.getKey()) return keyWizard();
   const profs = Storage.listProfiles();
   if (profs.length === 0) return onboardingIntro();    // новый пользователь
-  if (profs.length === 1) { DB = ensureDbArrays(Storage.load()); Storage.save(DB); return mainMenu(); }
+  if (profs.length === 1) { DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); return mainMenu(); }
   return profileSelect();                              // несколько профилей — выбор
 }
 
@@ -830,7 +899,7 @@ function profileSelect() {
     </div>
     <button class="btn btn-ghost" id="newProf" style="margin-top:14px">＋ Создать профиль / добавить язык</button>`);
   document.querySelectorAll('.menu-item[data-id]').forEach(b => b.onclick = () => {
-    Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); mainMenu();
+    Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); mainMenu();
   });
   $('#newProf').onclick = () => onboardingIntro();
 }
@@ -1009,14 +1078,16 @@ const Hints = {
     ov.innerHTML = `
       <div style="width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
                   border-radius:20px 20px 0 0;padding:20px 20px 28px;position:relative">
-        <div style="font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:10px">Подсказка</div>
-        <div style="font-size:15px;line-height:1.55;color:var(--text)">${html}</div>
+        <div style="font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:10px">${t('Подсказка')}</div>
+        <div id="hintBody" style="font-size:15px;line-height:1.55;color:var(--text)">${html}</div>
         <button id="hintClose" style="margin-top:18px;width:100%;padding:12px;border-radius:10px;
           background:var(--accent);border:none;color:#fff;font-size:15px;font-weight:600;cursor:pointer">
-          Понятно ✓
+          ${t('Понятно ✓')}
         </button>
       </div>`;
     document.body.appendChild(ov);
+    // 4.25: перевести абзац подсказки на язык профиля (путь блоков), с фолбэком на русский
+    try { if (typeof localizeBlocks === 'function') localizeBlocks(ov.querySelector('#hintBody'), 'hint_'+key, html); } catch(_){}
     document.getElementById('hintClose').onclick = () => ov.remove();
     ov.onclick = e => { if (e.target === ov) ov.remove(); };
   }
@@ -1064,6 +1135,36 @@ const HintTexts = {
     📊 <b>Точность</b> — процент правильных ответов с первого раза.<br><br>
     Здесь видно трудные слова и динамику обучения.`
 };
+
+/* ============================================================
+   ЭКРАН «КАК ПОЛЬЗОВАТЬСЯ» — краткий свод жестов приложения.
+   Открывается из Настроек. Текст — цельные абзацы; в 4.25 переводится
+   на родной язык профиля через путь перевода блоков (localizeBlocks).
+   ============================================================ */
+const HowToText = `
+  <p style="line-height:1.7;margin:0 0 14px">В приложении многое делается касанием (тапом). Вот главные жесты:</p>
+  <div class="card" style="line-height:1.8">
+    👆 <b>Тап по слову</b> в тексте сцены или задания — появится перевод и транскрипция. В сцене рядом будет кнопка <b>«почему так?»</b> — короткое объяснение, почему слово стоит именно так.<br><br>
+    🔊 <b>Кнопка со звуком</b> — проговаривает фразу. Нажимайте сколько нужно, чтобы переслушать.<br><br>
+    💡 <b>Лампочка</b> — подсказка по заданию. Первый тап даёт начало слова, второй — полный ответ.<br><br>
+    📐 <b>Линейка</b> — показывает грамматическое правило текущего задания.<br><br>
+    📒 <b>Слова задания</b> внизу — слова с переводом, которые понадобятся для ответа. Словарь искать не нужно.<br><br>
+    📖 <b>Словарь</b>: тап по слову открывает карточку с формами, транскрипцией и мнемоникой.<br><br>
+    🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом.
+  </div>
+  <p class="note" style="margin-top:12px">Не бойтесь ошибаться — разбор ошибки появляется сразу, а прогресс сохраняется автоматически.</p>`;
+
+function showHowTo() {
+  Screen.show(`
+    <div class="eyebrow">Справка</div>
+    <h1>Как пользоваться</h1>
+    <div id="howToBody">${HowToText}</div>
+    <button class="btn btn-primary" id="htOk">Понятно ✓</button>`,
+    { back: showSettings });
+  // 4.25: перевести блок на язык интерфейса профиля (если не русский); фон, с фолбэком на русский.
+  if (typeof localizeBlocks === 'function') localizeBlocks($('#howToBody'), 'howto', HowToText);
+  $('#htOk').onclick = showSettings;
+}
 
 function onboardingIntro() {
   Screen.show(`
@@ -1273,6 +1374,9 @@ function finishOnboarding(profile, cefr) {
   }
   DB.progress.push({ code:'START', date: today(), words:'', next: DB.nextStage, note:'' });
   Storage.addProfile(DB);          // новый профиль, становится активным
+  // 4.25: язык интерфейса привязывается к родному языку профиля; переводы надписей
+  // и блоков-подсказок предзагружаются один раз здесь (ключ и язык уже известны) → офлайн далее.
+  I18N.applyProfileLang(DB.profile);
   toast('Сохранено ✓');
   const isA0 = cefr === 'A0';
   Screen.show(`
@@ -1571,13 +1675,12 @@ function showSettings() {
       <input type="file" id="sFile" accept="application/json" style="display:none">
     </div>
     <div class="card">
-      <h2>Язык интерфейса</h2>
-      <p class="note" style="margin:4px 0 12px">Язык кнопок и подписей приложения. «Авто» — язык телефона; недостающие переводы подгружаются автоматически. На учебный контент не влияет (он на вашем родном языке).</p>
-      <select id="sUiLang" class="fld" style="width:100%;padding:10px;border-radius:10px">
-        <option value="auto">Авто (язык телефона)</option>
-        <option value="ru">Русский</option>
-        <option value="en">English</option>
-      </select>
+      <h2>Подсказки</h2>
+      <p class="note" style="margin:4px 0 12px">Всплывающие подсказки на экранах показываются один раз при первом входе. Их можно вернуть, а также открыть краткий свод жестов приложения.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="sHowTo">Как пользоваться</button>
+        <button class="btn btn-ghost" id="sHintsReset">Показать подсказки заново</button>
+      </div>
     </div>
     <div class="card">
       <h2>Ключ Gemini</h2>
@@ -1585,18 +1688,12 @@ function showSettings() {
     </div>
     <button class="btn btn-ghost" id="sReset" style="color:var(--err)">Удалить профиль и начать заново</button>`,
     { back: mainMenu });
-  try { const cur = localStorage.getItem('AILEX_UI_LANG'); $('#sUiLang').value = cur || 'auto'; } catch(_){}
-  $('#sUiLang').onchange = e => {
-    const v = e.target.value;
-    if (v === 'auto') { try{ localStorage.removeItem('AILEX_UI_LANG'); }catch(_){} I18N.lang = (navigator.language||'ru').slice(0,2).toLowerCase(); }
-    else I18N.setLang(v);
-    if (I18N.lang !== 'ru') I18N.ensure().then(()=>showSettings()); else showSettings();
-    toast('Язык интерфейса обновлён ✓');
-  };
   $('#sSave').onclick = () => { p.name = $('#sName').value.trim()||p.name; p.interests = $('#sInt').value.trim()||p.interests; Storage.save(DB); toast('Сохранено ✓'); };
   $('#sExp').onclick = () => Storage.exportFile();
   $('#sImp').onclick = () => $('#sFile').click();
   $('#sFile').onchange = e => { if (e.target.files[0]) Storage.importFile(e.target.files[0], ok => { toast(ok?'База загружена ✓':'Файл не похож на AILEX_StatusDB', !ok); if (ok) boot(); }); };
+  $('#sHowTo').onclick = () => showHowTo();
+  $('#sHintsReset').onclick = () => { Hints.reset(); toast('Подсказки будут показаны заново ✓'); };
   $('#sKey').onclick = () => keyWizard();
   $('#sImport').onclick = () => showImportWords();
   $('#sReset').onclick = () => { if (confirm('Удалить профиль, словарь и весь прогресс на этом устройстве?')) { Storage.wipe(); boot(); } };
@@ -3739,7 +3836,10 @@ function startDialogue() {
   const add = (role, text, sub) => {
     const d = document.createElement('div');
     d.className = 'msg ' + role;
-    d.innerHTML = esc(text) + (sub?`<small>${esc(sub)}</small>`:'');
+    // QUEUE-44: реплику ИИ (на целевом языке) можно переслушать сколько нужно — кнопка 🔊.
+    // sayBtn сам скрывается, если у целевого языка нет озвучки. Свои реплики не озвучиваем.
+    const replay = (role === 'ai') ? sayBtn(text) : '';
+    d.innerHTML = esc(text) + replay + (sub?`<small>${esc(sub)}</small>`:'');
     chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
   };
   async function aiTurn(userText) {
