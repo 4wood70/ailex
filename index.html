@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v61';
+const APP_VERSION = 'v62';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -1418,7 +1418,8 @@ function mainMenu() {
   const segs = 10, lit = Math.round(lp.pct/100*segs);
   // --- проверяем незавершённый урок (v45) ---
   const cachedLesson = LessonCache.load();
-  const hasCached = !!(cachedLesson && cachedLesson.code && cachedLesson.i > 0 && !isA0 && !isExam);
+  const cachedSuper = (cachedLesson && cachedLesson.isSuper && cachedLesson.sqScene) ? cachedLesson : null;   // QUEUE-46
+  const hasCached = !!(cachedLesson && !cachedLesson.isSuper && cachedLesson.code && cachedLesson.i > 0 && !isA0 && !isExam);
   const cachedStep = hasCached ? cachedLesson.i : 0;
   const cachedTotal = hasCached ? (cachedLesson.steps||[]).length : 0;
   Screen.show(`
@@ -1436,6 +1437,7 @@ function mainMenu() {
     </div>
     <div class="menu-list">
       ${hasCached ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedLesson.code)}</b><small>Задание ${cachedStep} из ${cachedTotal} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
+      ${cachedSuper ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>Глава ${esc(String(cachedSuper.actIndex||1))} из ${esc(String(cachedSuper.actsTotal||'?'))} · сцена ${esc(String(cachedSuper.sqScene))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
       <button class="menu-item" id="mLesson"><span class="ic">${isA0?'🔤':'🎯'}</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):isA0?'Урок A0: '+esc(next):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':isA0?'Чтение, произношение, базовая лексика':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Суперквест</b><small>Повторение: квест-погружение на 30–50 предложений</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
@@ -1453,6 +1455,9 @@ function mainMenu() {
       if (L.chunk2.state === 'idle') fetchLessonChunk2();
       renderStep();
     };
+  }
+  if (cachedSuper && document.getElementById('mResumeSuper')) {
+    document.getElementById('mResumeSuper').onclick = () => resumeSuper(cachedSuper);   // QUEUE-46
   }
   $('#mLesson').onclick = () => isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
   $('#mSuper').onclick  = () => {
@@ -2926,6 +2931,15 @@ async function validateScene(sc, p, cefr) {
 async function runQuest(cfg) {
   const p = DB.profile;
   const Q = { scene:1, errors:0, summary:'', choice:null, branchesUsed:0 };
+  // QUEUE-46: возобновление квеста внутри урока. Позиция квеста хранится на L (L.qResume)
+  // и сериализуется вместе с уроком через LessonCache. При возврате к уроку восстанавливаем сцену.
+  if (L && L.qResume) {
+    Q.scene = L.qResume.scene || 1;
+    Q.summary = L.qResume.summary || '';
+    Q.choice = L.qResume.choice || null;
+    Q.errors = L.qResume.errors || 0;
+    Q.branchesUsed = L.qResume.branchesUsed || 0;
+  }
   nextScene();
 
   async function nextScene() {
@@ -3037,6 +3051,8 @@ async function runQuest(cfg) {
     function pass() {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = correctForm ? `✅ Отлично! <b>${esc(correctForm)}</b>` + sayBtn(correctForm) : `✅ Отлично!`;
+      // QUEUE-45: после верного ответа лампочка бессмысленна и затирает #fb (в т.ч. кнопки развилки) — прячем её.
+      { const _qh = document.getElementById('qhint'); if (_qh) _qh.style.display='none'; }
       if (sc.is_branch && !isFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
         Q.branchesUsed++;
         $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
@@ -3054,13 +3070,19 @@ async function runQuest(cfg) {
     const choiceNote = Q.choice ? ` [Пользователь выбрал: вариант ${Q.choice} — ${(sc.choices||[]).find(c=>c.id===Q.choice)?.label_target||Q.choice}]` : '';
     Q.summary = (Q.summary + ' ' + sc.scene_text + choiceNote).slice(-700);
     if (isFinal) {
+      if (L) { delete L.qResume; LessonCache.save(); }   // QUEUE-46: квест пройден — позицию не храним
       Screen.show(`
         <div class="eyebrow">Квест завершён</div>
         <h1>${Q.errors>=2?'🤝 Дошли вместе!':'🏆 История пройдена!'}</h1>
         <p class="sub">${Q.errors>=2?'Ошибки — часть пути: трудные места вернутся в повторение.':'Лексика урока закреплена в живом сюжете.'}</p>
         <button class="btn btn-primary" id="go">Продолжить</button>`);
       $('#go').onclick = cfg.onDone;
-    } else { Q.scene++; if (!sc.is_branch) Q.choice = null; nextScene(); }
+    } else {
+      Q.scene++; if (!sc.is_branch) Q.choice = null;
+      // QUEUE-46: сохраняем позицию квеста в снимок урока перед генерацией следующей сцены
+      if (L) { L.qResume = { scene:Q.scene, summary:Q.summary, choice:Q.choice, errors:Q.errors, branchesUsed:Q.branchesUsed }; LessonCache.save(); }
+      nextScene();
+    }
   }
 }
 
@@ -3394,6 +3416,7 @@ async function startSuperLesson() {
   const p = DB.profile, lvl = p.cefr;
   const base = DB.nextStage.startsWith('EXAM_') ? DB.nextStage.replace('EXAM_','')+'.25' : DB.nextStage;
   Screen.loader('Готовлю Суперквест…');
+  LessonCache.clear();   // QUEUE-46: новый Суперквест — сбрасываем прежний незавершённый прогресс (единый слот)
   const knownSample = pick(DB.vocab, Math.min(20, DB.vocab.length)).map(w=>w.term);
   const imported = DB.vocab.filter(w=>w.priority || w.source==='import').map(w=>w.term);
   const riskQueue = DB.vocab.filter(w=>DB.reviewQueue.includes(w.term)).map(w=>w.term);
@@ -3458,6 +3481,14 @@ async function startSuperLesson() {
   startSuperquestAct(1);
 }
 
+function resumeSuper(cached) {
+  // QUEUE-46: возобновление Суперквеста из снимка. Восстанавливаем L (арка, сводка, акт,
+  // накопители) и перезаходим в сохранённый акт; runSuperquestAct поднимет сцену из L._resumeScene.
+  L = cached;
+  L._resumeScene = L.sqScene || 1;
+  startSuperquestAct(L.actIndex || 1);
+}
+
 function startSuperquestAct(actIndex) {
   L.actIndex = actIndex;
   const scenesInAct = L.scenesPerAct[actIndex-1];
@@ -3474,9 +3505,27 @@ function startSuperquestAct(actIndex) {
 async function runSuperquestAct(cfg) {
   const p = DB.profile;
   const Q = { scene:1, errors:0, branchesUsedInAct:0, choice:null, newWordsInAct:new Set() };
+  // QUEUE-46: возобновление Суперквеста. Позиция (акт+сцена+сводка+арка) живёт на L и
+  // сериализуется через LessonCache. L._resumeScene выставляется при входе из меню «Продолжить».
+  if (L && L._resumeScene) {
+    Q.scene = L._resumeScene;
+    Q.choice = L.sqChoice || null;
+    Q.branchesUsedInAct = L.sqBranches || 0;
+    Q.newWordsInAct = new Set(L.sqNewWords || []);
+    delete L._resumeScene;   // одноразово
+  }
   nextScene();
 
+  function saveSuperPos() {
+    // снимок позиции Суперквеста перед показом сцены (акт уже в L.actIndex; сводка в L.superStory.summary)
+    if (!L) return;
+    L.sqScene = Q.scene; L.sqChoice = Q.choice;
+    L.sqBranches = Q.branchesUsedInAct; L.sqNewWords = [...Q.newWordsInAct];
+    LessonCache.save();
+  }
+
   async function nextScene() {
+    saveSuperPos();
     Screen.loader(`Акт ${cfg.actIndex}/${cfg.actsTotal} · сцена ${Q.scene} из ${cfg.scenesInAct}…`);
     let sc;
     // СЮЖЕТНЫЙ ДВИЖОК: бит текущей сцены из арки (глобальный индекс сквозь акты)
@@ -3633,6 +3682,8 @@ async function runSuperquestAct(cfg) {
       firstTry(stepKey, !sceneWrong);
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = correctForm ? `✅ Отлично! <b>${esc(correctForm)}</b>` + sayBtn(correctForm) : `✅ Отлично!`;
+      // QUEUE-45: после верного ответа лампочка бессмысленна и затирает #fb (в т.ч. кнопки развилки) — прячем её.
+      { const _qh = document.getElementById('qhint'); if (_qh) _qh.style.display='none'; }
       if (sc.is_branch && !isActFinal && !isWholeFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
         Q.branchesUsedInAct++;
         $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
@@ -3677,6 +3728,7 @@ async function finishSuper() {
   DB.analytics.push({ lesson:L.code, date:today(), accuracy_first_try:acc, errors_by_type:L.errors,
     hard_words:hard, duration_sec:Math.round((Date.now()-L.t0)/1000), hints_used:L.hints, delta_accuracy:'' });
   Storage.save(DB); toast('Сохранено ✓');
+  LessonCache.clear();   // QUEUE-46: Суперквест пройден — снимок больше не нужен
   const code = L.code; L = null;
   Screen.show(`
     <h1>Суперквест завершён, прогресс сохранён.</h1>
