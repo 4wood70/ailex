@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v62';
+const APP_VERSION = 'v63';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -2216,7 +2216,8 @@ const LessonCache = {
       const snapshot = Object.assign({}, L, {
         chunk2: { state: L.chunk2?.state || 'idle', err: null, promise: null },
         superParts: undefined,   // суперквест не кэшируем
-        _savedAt: Date.now()
+        _savedAt: Date.now(),
+        _profileId: Storage.activeId()   // QUEUE-49: снимок принадлежит конкретному профилю
       });
       localStorage.setItem(LESSON_CACHE_KEY, JSON.stringify(snapshot));
     } catch(e) { /* хранилище переполнено — не страшно */ }
@@ -2228,6 +2229,10 @@ const LessonCache = {
       const snap = JSON.parse(raw);
       // инвалидация: урок старше 24 часов считается брошенным
       if (!snap._savedAt || Date.now() - snap._savedAt > 86400000) { this.clear(); return null; }
+      // QUEUE-49: снимок другого профиля (или без метки профиля — старый формат) не показываем,
+      // но НЕ стираем — вернувшись в свой профиль, пользователь продолжит с того же места.
+      // Слот по-прежнему единый: старт нового урока/Суперквеста в любом профиле очищает его (clear).
+      if (snap._profileId !== Storage.activeId()) return null;
       // восстанавливаем promise-обёртку chunk2
       snap.chunk2 = { state: snap.chunk2?.state || 'idle', err: null, promise: null };
       return snap;
