@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v63';
+const APP_VERSION = 'v64';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -527,7 +527,7 @@ const Storage = {
     const v = this._readVault();
     if (!v || !v.profiles.length) return null;
     const p = v.profiles.find(x=>x.id===v.activeId) || v.profiles[0];
-    return p ? p.db : null;
+    return p ? ensureDbArrays(p.db) : null;   // 4.26: базы, созданные до v64, приходят без core/coreMeta
   },
   // save: записывает базу активного профиля обратно в сейф (совместимо: Storage.save(DB))
   save(d){
@@ -564,6 +564,8 @@ const Storage = {
       nextStage: '',                 // код следующего этапа
       reviewQueue: [],               // очередь повторения (трудные слова)
       examAttempts: {},              // попытки экзаменов по уровню
+      core: [],                      // лист «Ядро языка» (раздел 2.3-Я, 4.26) — склад слов, человеку списком не показывается
+      coreMeta: { closedDone:false, levels:[], topicKey:'' },
     };
   },
   // экспорт: весь сейф (все профили) одним файлом
@@ -602,6 +604,9 @@ function ensureDbArrays(d){
   if (!Array.isArray(d.reviewQueue)) d.reviewQueue = [];
   if (!Array.isArray(d.analytics)) d.analytics = [];
   if (!d.examAttempts) d.examAttempts = {};
+  if (!Array.isArray(d.core)) d.core = [];                                   // 4.26: Ядро языка
+  if (!d.coreMeta) d.coreMeta = { closedDone:false, levels:[], topicKey:'' };
+  if (!Array.isArray(d.coreMeta.levels)) d.coreMeta.levels = [];
   return d;
 }
 
@@ -873,6 +878,216 @@ function levelProgress() {
 /* =====================================================================
    BOOT SEQUENCE (раздел 3)
    ===================================================================== */
+
+/* =====================================================================
+   ЯДРО ЯЗЫКА (раздел 2.3-Я + 4.4 + 5, спека 4.26)
+   Склад слов целевого языка в локальной базе. Не Словарь: Словарь — что человек
+   уже видел в уроке, Ядро — сырьё, из которого приложение САМО набирает порцию.
+   Человеку списком не показывается никогда (таблица глаголов отвергнута, 4.26).
+   Gemini делает свою работу один раз (generate_core) — в уроке лексику не подбирает.
+   ===================================================================== */
+const CORE_LEVELS = ['A1','A2','B1','B2','C1','C2'];
+const CORE_LEVEL_TOTAL = 600;   // открытый класс на уровень (раздел 4.4)
+const CORE_BATCH = 120;         // слов за запрос — потолок объёма ответа модели
+const SURVIVAL_TOPICS = 'ориентирование и транспорт, магазин и покупки, деньги и числа, еда, базовая вежливость, время, дни недели и даты, здоровье, дом и быт, работа и учёба, погода';
+// закрытые классы: список в языке конечен — грузим целиком один раз при создании профиля
+const CLOSED_BATCHES = [
+  { part:'function_words', count:100, hint:'служебный костяк языка: местоимения (личные, притяжательные, указательные, вопросительные), предлоги, союзы, частицы, артикли, базовые наречия места и времени' },
+  { part:'irregular_verbs_1', count:100, hint:'неправильные (сильные) глаголы — ПЕРВАЯ сотня по употребимости в живой речи' },
+  { part:'irregular_verbs_2', count:100, hint:'неправильные (сильные) глаголы — ВТОРАЯ сотня по употребимости; не повторяй то, что в exclude' }
+];
+const CORE_SCHEMA = '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция буквами родного языка]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм","cefr":"A1|A2|B1|B2|C1|C2","topic":"тема одним словом","freq_rank":1}]}';
+const CORE_RULES = 'Слова упорядочь по употребимости в живой речи: freq_rank=1 — самое частое. '
+  + 'Для КАЖДОГО слова заполни forms («паспорт»): глаголам — три основные формы и 3-е лицо при смене корня (пример: "sieht, sah, hat gesehen"); '
+  + 'существительным — артикль рода и множественное число (пример: "der Tisch, die Tische"); прочим — пусто. '
+  + 'is_irregular=true ТОЛЬКО для неправильных (сильных) глаголов. article заполняется только для существительных; если в целевом языке артиклей нет — пусто. '
+  + 'cefr — уровень, начиная с которого слово уместно. Транскрипция — ТОЛЬКО буквами native_lang в квадратных скобках, IPA СТРОГО ЗАПРЕЩЁН (пример: [зэ:ен]). '
+  + 'Исключи всё, что перечислено в exclude. Никаких технических кодов, аббревиатур и цифровых команд — только обычные слова целевого языка.';
+
+const Core = {
+  _pf: false, _failed: false,
+  list(){ return (DB && Array.isArray(DB.core)) ? DB.core : []; },
+  meta(){ if (!Array.isArray(DB.core)) DB.core = [];
+          if (!DB.coreMeta) DB.coreMeta = { closedDone:false, levels:[], topicKey:'' };
+          if (!Array.isArray(DB.coreMeta.levels)) DB.coreMeta.levels = []; return DB.coreMeta; },
+  // уровень, для которого нужен открытый класс: на A0 ядро не используется (у A0 свой контракт a0_lesson),
+  // но как только человек переходит на A1 — сборка запускается сама (см. needsBuild)
+  lvlFor(p){ const l = (p && p.cefr) || 'A1'; return (l === 'A0' || !CORE_LEVELS.includes(l)) ? 'A1' : l; },
+  topicKey(){ return norm(String((DB.profile && DB.profile.interests) || '')).slice(0,80); },
+  _known(){ const s = new Set();
+    this.list().forEach(w => s.add(norm(w.term)));
+    (DB.vocab||[]).forEach(w => s.add(norm(w.term)));
+    return s; },
+  // exclude — помощь модели, а НЕ гарантия: гарантию даёт сверка на устройстве при записи (_add)
+  _exclude(){ const a = this.list().map(w=>w.term).slice(-160).concat((DB.vocab||[]).map(w=>w.term).slice(-90));
+              return [...new Set(a)]; },
+
+  _add(words, tag){
+    if (!Array.isArray(DB.core)) DB.core = [];
+    const seen = this._known(); let n = 0;
+    (words||[]).forEach(w => {
+      if (!w || !w.term || !w.translation) return;
+      const term = String(w.term).trim(); const k = norm(term);
+      if (!k || k.length > 40 || seen.has(k)) return;
+      seen.add(k); n++;
+      DB.core.push({ term, translation: String(w.translation).trim(), translit: w.translit||'', emoji: w.emoji||'',
+        part_of_speech: w.part_of_speech||'', article: w.article||'', forms: w.forms||'',
+        is_irregular: w.is_irregular === true,
+        cefr: CORE_LEVELS.includes(w.cefr) ? w.cefr : (tag.cefr || 'A1'),
+        topic: w.topic||'', freq_rank: (+w.freq_rank || 999),
+        klass: tag.klass, layer: tag.layer, status: 'склад',
+        topicKey: tag.layer === 'interests' ? this.topicKey() : '' });
+    });
+    return n;
+  },
+
+  async _batch(o){
+    const p = DB.profile;
+    const req = { task:'generate_core', target_lang:p.targetLang, native_lang:p.nativeLang,
+                  cefr:o.cefr, class:o.class, count:o.count, exclude:this._exclude(), rules:CORE_RULES };
+    if (o.layer) req.layer = o.layer;
+    if (o.part)  req.part  = o.part;
+    if (o.hint)  req.hint  = o.hint;
+    if (o.topic) req.topic = o.topic;
+    const r = await Gemini.call(req, CORE_SCHEMA + ' — ровно ' + o.count + ' объектов');
+    return r.words || [];
+  },
+
+  // закрытые классы целиком + открытый класс уровня (раздел 4.4)
+  async build(onStep){
+    const meta = this.meta(), total = CLOSED_BATCHES.length + 5;
+    if (!meta.closedDone){
+      for (let i=0; i<CLOSED_BATCHES.length; i++){
+        const b = CLOSED_BATCHES[i];
+        onStep && onStep(`Собираю основу языка — служебные слова и неправильные глаголы… ${i+1}/${total}`);
+        const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1' });
+        this._add(w, { klass:'closed', layer:'general', cefr:'A1' });
+        Storage.save(DB);
+      }
+      meta.closedDone = true; Storage.save(DB);
+    }
+    await this.buildLevel(this.lvlFor(DB.profile), onStep, CLOSED_BATCHES.length, total);
+  },
+
+  // открытый класс одного уровня: пропорция бытовое/интересы берётся из раздела 5
+  async buildLevel(lvl, onStep, done, total){
+    const meta = this.meta();
+    if (meta.levels.includes(lvl)) return;
+    const p = DB.profile, share = SURVIVAL_SHARE[lvl] ?? 0.3;
+    const nGen = Math.round(CORE_LEVEL_TOTAL * share), nInt = CORE_LEVEL_TOTAL - nGen;
+    const plan = [];
+    for (let left=nGen; left>0; left-=CORE_BATCH) plan.push({ layer:'general',   count: Math.min(CORE_BATCH,left) });
+    for (let left=nInt; left>0; left-=CORE_BATCH) plan.push({ layer:'interests', count: Math.min(CORE_BATCH,left) });
+    for (let i=0; i<plan.length; i++){
+      const b = plan[i];
+      onStep && onStep(`Собираю словарь уровня ${lvl}… ${(done||0)+i+1}/${total || plan.length}`);
+      const w = await this._batch({ class:'open', layer:b.layer, cefr:lvl, count:b.count,
+        topic: b.layer==='interests' ? (p.interests || 'повседневная жизнь') : SURVIVAL_TOPICS });
+      this._add(w, { klass:'open', layer:b.layer, cefr:lvl });
+      Storage.save(DB);
+    }
+    meta.levels.push(lvl); Storage.save(DB);
+  },
+
+  needsBuild(){
+    if (this._failed || !DB || !DB.profile) return false;
+    if (DB.profile.cefr === 'A0') return false;          // на A0 ядро не нужно — соберём при переходе на A1
+    const m = this.meta();
+    return !m.closedDone || !m.levels.includes(this.lvlFor(DB.profile));
+  },
+
+  // догрузка следующего уровня фоном (раздел 4.4): человек ожидания не видит
+  maybePrefetch(){
+    try {
+      if (this._pf || this._failed || !DB || !DB.profile) return;
+      const m = this.meta(); if (!m.closedDone) return;
+      const lvl = this.lvlFor(DB.profile), li = CORE_LEVELS.indexOf(lvl);
+      const left = this.list().filter(w => w.status==='склад' && w.klass==='open'
+        && CORE_LEVELS.indexOf(w.cefr) <= li).length;
+      if (left >= 100) return;
+      const next = CORE_LEVELS[li+1];
+      if (!next || m.levels.includes(next)) return;
+      this._pf = true;
+      this.buildLevel(next).catch(()=>{}).then(()=>{ this._pf = false; });
+    } catch(e){}
+  },
+
+  // смена интересов (раздел 4.4): перегенерируется ТОЛЬКО тематический слой
+  async retopic(){
+    const key = this.topicKey(); let arch = 0;
+    this.list().forEach(w => {
+      if (w.layer !== 'interests') return;
+      if (w.status === 'склад' && w.topicKey !== key) { w.status = 'архив'; arch++; }   // невыданное старой темы → архив
+      else if (w.status === 'архив' && w.topicKey === key) w.status = 'склад';          // тема вернулась → без генерации
+    });
+    Storage.save(DB);
+    const have = this.list().filter(w => w.layer==='interests' && w.status==='склад' && w.topicKey===key).length;
+    if (have >= 100) { toast('Тема обновлена ✓'); return; }
+    const lvl = this.lvlFor(DB.profile);
+    try {
+      for (let i=0; i<2; i++){
+        Screen.loader(`Подбираю лексику новой темы… ${i+1}/2`);
+        const w = await this._batch({ class:'open', layer:'interests', cefr:lvl, count:100, topic: DB.profile.interests||'' });
+        this._add(w, { klass:'open', layer:'interests', cefr:lvl });
+        Storage.save(DB);
+      }
+      toast('Лексика темы обновлена ✓');
+    } catch(e){ toast('Тему доберём позже — урок работает', true); }
+  },
+
+  // порция урока (раздел 5): 5 новых + 2 неправильных глагола, гарантированно
+  pickPortion(lvl){
+    try {
+      const m = this.meta(); if (!m.closedDone) return null;
+      const li = CORE_LEVELS.indexOf(CORE_LEVELS.includes(lvl) ? lvl : 'A1');
+      const inVocab = new Set((DB.vocab||[]).map(w => norm(w.term)));
+      const avail = f => this.list().filter(w => w.status === 'склад'
+        && CORE_LEVELS.indexOf(w.cefr) <= li && !inVocab.has(norm(w.term)) && f(w));
+      const byFreq = a => a.slice().sort((x,y) => (x.freq_rank||999) - (y.freq_rank||999));
+      // 2 неправильных глагола — не «если уместны», а всегда, пока класс не исчерпан
+      const irr = byFreq(avail(w => w.is_irregular === true)).slice(0,2);
+      const taken = new Set(irr.map(w => norm(w.term)));
+      const need = 7 - irr.length;
+      const share = SURVIVAL_SHARE[lvl] ?? 0.3;
+      const nGen = Math.round(need * share);
+      // общий слой = бытовое + служебные слова закрытого класса (они наконец доходят до урока)
+      const gen  = byFreq(avail(w => w.layer==='general'   && !w.is_irregular && !taken.has(norm(w.term))));
+      const intr = byFreq(avail(w => w.layer==='interests' && !w.is_irregular && !taken.has(norm(w.term))));
+      const out = [];
+      gen.slice(0, nGen).forEach(w => { out.push(w); taken.add(norm(w.term)); });
+      intr.slice(0, need - out.length).forEach(w => { out.push(w); taken.add(norm(w.term)); });
+      if (out.length < need){   // одного слоя не хватило — добираем вторым, порция важнее пропорции
+        byFreq(avail(w => !w.is_irregular && !taken.has(norm(w.term)))).slice(0, need - out.length)
+          .forEach(w => { out.push(w); taken.add(norm(w.term)); });
+      }
+      const portion = [...irr, ...out];
+      if (portion.length < 7) return null;           // Ядро исчерпано → резервный путь (раздел 5)
+      return portion.map(w => ({ term:w.term, translation:w.translation, translit:w.translit, emoji:w.emoji,
+        part_of_speech:w.part_of_speech, article:w.article, forms:w.forms, is_irregular:w.is_irregular }));
+    } catch(e){ return null; }
+  },
+
+  // слово переезжает из Ядра в Словарь в момент записи урока и никогда не наоборот
+  markIssued(words){
+    (words||[]).forEach(x => {
+      const c = this.list().find(w => norm(w.term) === norm(x.term));
+      if (c) c.status = 'выдано';
+    });
+  }
+};
+
+// экран сборки Ядра: один раз при создании профиля и разово при миграции старого профиля
+async function coreBuildScreen(next){
+  Screen.loader('Собираю словарь языка — это один раз…');
+  try { await Core.build(msg => Screen.loader(msg)); }
+  catch(e){
+    Core._failed = true;                                  // не зацикливаемся: урок пойдёт резервным путём
+    if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+    toast('Словарь языка соберём позже — урок будет работать', true);
+  }
+  next();
+}
+
 function boot() {
   Storage.migrate();                                   // прежнюю одиночную базу — в первый профиль
   if (!Storage.getKey()) return keyWizard();
@@ -1362,7 +1577,7 @@ async function runPlacement(profile) {
 }
 
 /* ---------- Шаг 3: создание базы ---------- */
-function finishOnboarding(profile, cefr) {
+async function finishOnboarding(profile, cefr) {
   profile.cefr = cefr;
   DB = Storage.newDB(profile);
   if (cefr === 'A0') {
@@ -1378,6 +1593,12 @@ function finishOnboarding(profile, cefr) {
   // и блоков-подсказок предзагружаются один раз здесь (ключ и язык уже известны) → офлайн далее.
   I18N.applyProfileLang(DB.profile);
   toast('Сохранено ✓');
+  // 4.26: интересы уже известны — здесь и только здесь собирается Ядро языка (раздел 4.4)
+  if (Core.needsBuild()) {
+    Screen.loader('Собираю словарь языка — это один раз…');
+    try { await Core.build(msg => Screen.loader(msg)); }
+    catch(e){ Core._failed = true; toast('Словарь языка соберём позже — урок будет работать', true); }
+  }
   const isA0 = cefr === 'A0';
   Screen.show(`
     <div class="eyebrow">Профиль создан</div>
@@ -1408,6 +1629,8 @@ function ringSVG(pct, lvl) {
 }
 function mainMenu() {
   DB = Storage.load();
+  if (Core.needsBuild()) return coreBuildScreen(mainMenu);   // 4.26: профиль без Ядра (новый или созданный до v64)
+  Core.maybePrefetch();                                      // следующий уровень — фоном, ожидания не видно
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
   const next = DB.nextStage;
@@ -1693,7 +1916,16 @@ function showSettings() {
     </div>
     <button class="btn btn-ghost" id="sReset" style="color:var(--err)">Удалить профиль и начать заново</button>`,
     { back: mainMenu });
-  $('#sSave').onclick = () => { p.name = $('#sName').value.trim()||p.name; p.interests = $('#sInt').value.trim()||p.interests; Storage.save(DB); toast('Сохранено ✓'); };
+  $('#sSave').onclick = async () => {
+    p.name = $('#sName').value.trim() || p.name;
+    const ni = $('#sInt').value.trim();
+    const changed = !!ni && norm(ni) !== norm(p.interests||'');
+    if (ni) p.interests = ni;
+    Storage.save(DB); toast('Сохранено ✓');
+    // 4.26: сменились интересы → перегенерируется ТОЛЬКО тематический слой Ядра;
+    // невыданные слова прежней темы уходят в архив, выученное остаётся в Словаре.
+    if (changed && Core.meta().closedDone && !Core._failed) { await Core.retopic(); showSettings(); }
+  };
   $('#sExp').onclick = () => Storage.exportFile();
   $('#sImp').onclick = () => $('#sFile').click();
   $('#sFile').onchange = e => { if (e.target.files[0]) Storage.importFile(e.target.files[0], ok => { toast(ok?'База загружена ✓':'Файл не похож на AILEX_StatusDB', !ok); if (ok) boot(); }); };
@@ -2012,6 +2244,35 @@ function finishA0Lesson(code, lessonN, total, correct, totalChecks, t0) {
 let L = null; // состояние текущего урока
 function curCefr(){ const p = parseCode(String(L?.code||'').replace('SUPER_','')); return p ? p.lvl : DB.profile.cefr; }
 
+/* Резервный путь набора порции (раздел 5, 4.26): Ядро исчерпано или не собралось.
+   Прежняя схема generate_vocab + ДОБОР: фильтр дубликатов резал порцию до 3–6 слов и добора не было
+   (корень бага «3 слова вместо 7», v63). Теперь недобор добирается вторым запросом с исключениями. */
+async function legacyVocabPortion(p, lvl, survN, known) {
+  const SCHEMA = '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм: для глаголов 3 формы (+3 лицо у неправильных), для существительных артикль+множественное"}]}';
+  const RULES = 'Исключи ВСЕ слова из known_vocab — они уже известны ученику. Включи ровно 2 неправильных глагола с формами (если в целевом языке их нет как класса — 7 обычных слов). Для КАЖДОГО слова заполни поле forms («паспорт»): для глаголов три основные формы + 3-е лицо при смене корня (например "sieht, sah, hat gesehen"), для существительных артикль рода и множественное число (например "der Tisch, die Tische"). Поле part_of_speech: noun/verb/adj/other; для существительных article: der/die/das. Транскрипция — средствами родного языка (native_lang), в квадратных скобках, IPA запрещён.';
+  const fresh = arr => (arr||[]).filter(w => w && w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term)));
+  const ask = async (n, exclude) => {
+    const r = await Gemini.call({
+      task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
+      topic:p.interests, count:n,
+      split:{ survival: Math.round(n*(SURVIVAL_SHARE[lvl] ?? 0.3)), interests: n - Math.round(n*(SURVIVAL_SHARE[lvl] ?? 0.3)) },
+      survival_topics: SURVIVAL_TOPICS, known_vocab: exclude, rules: RULES
+    }, SCHEMA + ' — ровно ' + n + ' объектов');
+    return r.words || [];
+  };
+  let words = fresh(await ask(7, known)).slice(0,7);
+  if (words.length < 7) {                       // ДОБОР: исключаем известное + только что предложенное
+    const exclude = [...new Set([...known, ...words.map(w=>w.term)])];
+    try {
+      const more = fresh(await ask(7 - words.length + 3, exclude))
+        .filter(w => !words.some(x => norm(x.term)===norm(w.term)));
+      words = [...words, ...more].slice(0,7);
+    } catch(e){}                                // добор не удался — идём с тем, что есть
+  }
+  if (words.length < 3) throw new Error('FEW_WORDS');
+  return words;
+}
+
 async function startLesson(code) {
   // --- восстановление незавершённого урока из кэша (v45) ---
   const cached = LessonCache.load();
@@ -2039,22 +2300,15 @@ async function startLesson(code) {
   if (DB.intensive && importedNew.length >= 3) {
     words = importedNew.slice(0, 7);
   } else {
-  // ПОРЦИЯ 1 (быстрый старт): только слова урока. Узнавание/контекст строятся из них локально.
-  try {
-    const r1 = await Gemini.call({
-      task:'generate_vocab', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
-      topic:p.interests, count:7,
-      split:{ survival: survN, interests: 7 - survN },
-      survival_topics:'ориентирование и транспорт, магазин и покупки, деньги и числа, еда, базовая вежливость, время и даты, здоровье',
-      known_vocab: known,
-      rules:'Исключи слова из known_vocab. Если на этом уровне уместны неправильные глаголы — включи 2 (с формами). Для КАЖДОГО слова заполни поле forms («паспорт»): для глаголов три основные формы + 3-е лицо при смене корня (например "sieht, sah, hat gesehen"), для существительных артикль рода и множественное число (например "der Tisch, die Tische"). Поле part_of_speech: noun/verb/adj/other; для существительных article: der/die/das. Транскрипция — средствами родного языка (native_lang), в квадратных скобках.'
-    },
-    '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм: для глаголов 3 формы (+3 лицо у неправильных), для существительных артикль+множественное"}]} — ровно 7 объектов');
-    words = (r1.words||[]).filter(w => w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term))).slice(0,7);
-    if (words.length < 3) throw new Error('FEW_WORDS');
-  } catch(e) {
-    if (String(e.message).startsWith('KEY:')) return keyWizard(true);
-    return lessonLoadError(()=>startLesson(code), e);
+  // 4.26: порцию собирает ПРИЛОЖЕНИЕ из Ядра языка — без запроса к Gemini (раздел 5).
+  // Выбор слов = методика, методика принадлежит приложению. Урок стартует мгновенно.
+  words = Core.pickPortion(lvl);
+  if (!words) {                       // Ядро исчерпано или не построено → резервный путь
+    try { words = await legacyVocabPortion(p, lvl, survN, known); }
+    catch(e) {
+      if (String(e.message).startsWith('KEY:')) return keyWizard(true);
+      return lessonLoadError(()=>startLesson(code), e);
+    }
   }
   }
 
@@ -2329,10 +2583,11 @@ function drillPresent() {
         <div class="vocab-row">
           <span class="emoji">${esc(w.emoji||'•')}</span>
           <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
-            <small>${esc(w.translation)}${w.is_irregular&&w.irregular_forms?' · ⚠️ '+esc(w.irregular_forms):''}</small></span>
+            <small>${esc(w.translation)}${w.is_irregular&&(w.forms||w.irregular_forms)?' · ⚠️ '+esc(w.forms||w.irregular_forms):''}</small></span>
           ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(w.term)}">🔊</button>`:''}
         </div>`).join('')}
     </div>
+    ${L.words.some(w=>w.is_irregular&&(w.forms||w.irregular_forms)) ? `<p class="note">⚠️ Глагол со списком форм — особенный: он не подчиняется общему правилу. Формы даны справочно — просто запомните их вместе со словом. Правило разберём позже, а пока достаточно узнавать эти формы в тексте.</p>` : ''}
     <p class="note">${hasTTS(DB.profile.targetLang)
       ? 'Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.'
       : 'Транскрипция родными буквами — ваша главная опора для чтения и произношения.'}</p>
@@ -3117,6 +3372,22 @@ async function finishLesson() {
   });
   hard.forEach(t => { if (!DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
   DB.vocab.forEach(v => { if ((v.errors||0)===0 && v.lesson !== L.code) v.status='освоено'; });
+  Core.markIssued(L.words);   // 4.26: слово переехало из Ядра в Словарь — обратно не возвращается
+
+  // 4.26 (раздел 2.7): выход из очереди повторения — два урока подряд без ошибок на слове.
+  // До 4.26 очередь чистил только Суперквест и она росла монотонно, размывая повторение.
+  const met = [...L.words.map(w=>w.term), ...((L.reviewWords||[]).map(w=>w.term))];
+  [...new Set(met)].forEach(t => {
+    const v = DB.vocab.find(x => norm(x.term)===norm(t));
+    if (!v) return;
+    if ((L.wordErr[t]||0) > 0) { v.cleanStreak = 0; return; }     // ошибка — счётчик обнуляется
+    if (!DB.reviewQueue.includes(v.term)) return;
+    v.cleanStreak = (v.cleanStreak||0) + 1;
+    if (v.cleanStreak >= 2) {
+      DB.reviewQueue = DB.reviewQueue.filter(x => x !== v.term);
+      v.status = 'освоено'; v.cleanStreak = 0; v.date_review = today();
+    }
+  });
 
   // --- 2) Диагностика (Gemini, строго из словаря категорий) ---
   Screen.loader('Сохраняю и анализирую урок…');
