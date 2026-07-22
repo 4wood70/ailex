@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v65';
+const APP_VERSION = 'v66';
 const LESSON_CACHE_KEY = 'AILEX_lesson_cache_v46'; // ключ включает версию → старый кэш автоматически игнорируется
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -2391,7 +2391,7 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
       topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:9,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. УРОВЕНЬ CEFR: используй ТОЛЬКО грамматические конструкции уровня ' + lvl + ' или ниже (из known_rules). Запрещены конструкции выше уровня: отделяемые приставки, Konjunktiv, Passiv, um...zu, Genitiv, Relativsatz — только если они уже есть в known_rules. СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. В glossary помести ВСЕ ключевые слова нужные для построения expected_target — каждое: слово на целевом + транскрипция родными буквами + перевод. Любое слово из задания или эталона которого нет в known_vocab/lesson_words ОБЯЗАНО быть в glossary. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. УРОВЕНЬ CEFR: используй ТОЛЬКО грамматические конструкции уровня ' + lvl + ' или ниже (из known_rules). Запрещены конструкции выше уровня: отделяемые приставки, Konjunktiv, Passiv, um...zu, Genitiv, Relativsatz — только если они уже есть в known_rules. СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно 9 объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
     const constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
@@ -2589,15 +2589,16 @@ function drillPhrases() {
     <div class="card">
       ${list.map(f=>`
         <div style="padding:10px 0;border-bottom:1px solid var(--line)">
-          <div style="font-size:18px;font-weight:600">${esc(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" data-say="${esc(f.phrase)}" onclick="replaySay(this)" aria-label="Произнести">🔊</button>`:''}</div>
+          <div style="font-size:18px;font-weight:600">${tapAllWordsHTML(f.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" data-say="${esc(f.phrase)}" onclick="replaySay(this)" aria-label="Произнести">🔊</button>`:''}</div>
           <div class="note" style="margin-top:2px">${esc(f.translation||'')}${f.when?` · <i>${esc(f.when)}</i>`:''}</div>
           ${f.reply&&f.reply.phrase?`<div style="margin-top:6px;padding-left:12px;border-left:2px solid var(--line)">
-            <div style="font-size:16px;color:var(--dim)">↩ ${esc(f.reply.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.reply.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button style="width:30px;height:30px;font-size:14px;vertical-align:middle" data-say="${esc(f.reply.phrase)}" onclick="replaySay(this)" aria-label="Произнести ответ">🔊</button>`:''}</div>
+            <div style="font-size:16px;color:var(--dim)">↩ ${tapAllWordsHTML(f.reply.phrase)} <span style="color:var(--orange);font-weight:400">${esc(f.reply.translit||'')}</span> ${hasTTS(DB.profile.targetLang)?`<button style="width:30px;height:30px;font-size:14px;vertical-align:middle" data-say="${esc(f.reply.phrase)}" onclick="replaySay(this)" aria-label="Произнести ответ">🔊</button>`:''}</div>
             <div class="note" style="margin-top:1px">${esc(f.reply.translation||'')}</div>
           </div>`:''}
         </div>`).join('')}
     </div>
     <button class="btn btn-primary" id="go" style="margin-top:14px">Дальше</button>`);
+  attachTapAll(document);   // 4.28: тап-перевод слов во «Фразах на каждый день»
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
 /* ---------- Presentation: таблица новых слов ---------- */
@@ -2884,7 +2885,7 @@ function drillReviewContext(s, rd) {
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🔁 повторение в контексте</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${w.translation?` — «${esc(w.translation)}»`:''}.</p>
-      <div class="task-text">${esc(gap.gapped)}</div>
+      <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
       <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
@@ -2895,6 +2896,7 @@ function drillReviewContext(s, rd) {
     </div>`);
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
+  attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span> — ${esc(w.translation||'')}` + sayBtn(answer);
     speak(answer, DB.profile.targetLang); };
@@ -2921,13 +2923,15 @@ function drillReviewContext(s, rd) {
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence);
+      attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent='Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
@@ -2953,7 +2957,7 @@ function drillContext(s) {
     <div class="card">
       <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 слово в контексте</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
-      <div class="task-text">${esc(gap.gapped)}</div>
+      <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${sentTranslation ? `<p class="note" style="margin:4px 0 8px;opacity:.75">📝 ${esc(sentTranslation)}</p>` : ''}
       <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
@@ -2963,6 +2967,7 @@ function drillContext(s) {
       </div>
     </div>`);
   bindAutoGrow('ans');
+  attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
   $('#hint').onclick = () => {
@@ -3008,7 +3013,8 @@ function drillContext(s) {
     if (ok) {
       markSeen(dictWord);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence);
+      attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent = 'Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
@@ -3016,7 +3022,8 @@ function drillContext(s) {
       $('#fb').className='feedback bad';
       // QUEUE-04: при ошибке формы — показываем пояснение если есть
       const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 В этом предложении: <b>${esc(answer)}</b> — форма слова «${esc(dictWord)}»</span>` : '';
-      $('#fb').innerHTML = `❌ ${esc(fullSentence)} <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br>🧠 Запомните и напишите предложение целиком.`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br>🧠 Запомните и напишите предложение целиком.`;
+      attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
@@ -3085,17 +3092,22 @@ function drillConstruct(s) {
     const v = DB.vocab.find(x=>norm(x.term)===n || norm(x.term).split(' ').pop()===n);
     if (v && (v.translation||v.translit)) { seenG.add(n); gloss.push({ term: tok, translit: v.translit||'', translation: v.translation||'' }); }
   });
-  const glossHTML = gloss.length
-    ? `<div class="note" style="margin:8px 0;line-height:1.7">📒 Слова задания: ${gloss.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>` : '';
-  const instruction = c.instruction || `Переведите на ${esc(langName(DB.profile.targetLang))} и впишите фразу:`;
+  // «Собери фразу» (4.28): набор всех слов эталона, перемешанный — опора для сборки.
+  // Набор строит ПРИЛОЖЕНИЕ из expected_target (split+shuffle) — логика, не Gemini.
+  // Все слова, включая служебные, попадают в набор (иначе фразу не собрать); каждое — с тап-переводом.
+  const bankWords = String(c.expected_target||'').trim().split(/\s+/)
+    .map(x=>x.replace(/^[«»"'(]+|[.,!?;:«»"')]+$/g,'')).filter(Boolean);
+  const bankHTML = bankWords.length
+    ? `<div class="note" style="margin:8px 0 4px;line-height:2">🧩 Соберите фразу из слов <span style="opacity:.6">(тап — перевод)</span>:<br>${shuffle(bankWords.slice()).map(word=>`<span class="tapword tapall" data-word="${esc(word)}">${esc(word)}</span>`).join(', ')}</div>` : '';
+  const instruction = c.instruction || `Соберите и впишите фразу на ${esc(langName(DB.profile.targetLang))}:`;
   Screen.show(`
     <div class="eyebrow">${esc(L.code)} · Construction</div>
     <div class="card">
-      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 фраза</span></div>
+      <div class="drill-head"><span class="n">${esc(s.n)}</span><span class="ph">🧩 собери фразу</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>
       <div class="task-text">«${esc(c.prompt_native)}»</div>
+      ${bankHTML}
       <textarea id="ans" class="ans-grow" placeholder="Ваш ответ на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
-      ${glossHTML}
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -3105,6 +3117,7 @@ function drillConstruct(s) {
     </div>`);
   if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
   bindAutoGrow('ans');
+  attachTapAll(document, gloss);   // 4.28: тап-перевод слов набора (gloss — быстрый источник, дальше словарь/Gemini)
   // подсказка: ПОЛНЫЙ правильный ответ — фраза целиком + транскрипция + перевод + озвучка (версия 4.14)
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     const tr = c.expected_translit ? ` <span style="color:var(--orange)">${esc(c.expected_translit)}</span>` : '';
@@ -3531,7 +3544,7 @@ function tapAllWordsHTML(text) {
   const tokens = text.match(/[\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+|[^\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+/g) || [];
   return tokens.map(tok => {
     const low = tok.toLowerCase().replace(/[.,!?;:"'«»()]/g,'');
-    if (/^[\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+$/.test(tok) && !TAP_SKIP.has(low) && tok.length > 1) {
+    if (/^[\wÄäÖöÜüß\u00C0-\u024F\u0400-\u04FF]+$/.test(tok) && !TAP_SKIP.has(low) && tok.length > 1 && !/^_+$/.test(tok)) {
       return `<span class="tapword tapall" data-word="${esc(tok)}">${esc(tok)}</span>`;
     }
     return esc(tok);
