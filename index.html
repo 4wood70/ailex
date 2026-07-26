@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v69';
+const APP_VERSION = 'v70';
 /* 4.29: ключ хранилища незавершённых занятий ЗАФИКСИРОВАН навсегда — версия схемы живёт ВНУТРИ
    снимка. Прежний ключ нёс номер билда, поэтому каждое обновление приложения убивало
    незавершённый урок у всех пользователей. Старые ключи разово переносятся в новый формат. */
@@ -741,8 +741,18 @@ function makeRecognizer(langCode, onResult, onEnd) {
   const bcp = langBcp(langCode);
   if (!bcp) return null;     // STT тоже недоступен без BCP-47
   const r = new SR();
-  r.lang = bcp; r.interimResults = false; r.maxAlternatives = 1;
-  r.onresult = e => onResult(e.results[0][0].transcript);
+  // QUEUE-62: берём до 3 гипотез — акцент и местное произношение часто уводят первую
+  // не туда, а выбрать осмысленную в контексте разговора может модель.
+  r.lang = bcp; r.interimResults = false; r.maxAlternatives = 3;
+  r.onresult = e => {
+    const res = e.results[0];
+    const alts = [];
+    for (let i = 0; i < res.length && i < 3; i++) {
+      const t = String(res[i] && res[i].transcript || '').trim();
+      if (t && !alts.includes(t)) alts.push(t);
+    }
+    onResult(alts[0] || '', alts);      // второй аргумент — альтернативы (может быть [1 элемент])
+  };
   r.onend = onEnd; r.onerror = onEnd;
   return r;
 }
@@ -887,7 +897,10 @@ function masteryPercent() {
     return p && p.lvl === lvl;
   });
   const set = ofLevel.length ? ofLevel : a;   // если по уровню ещё нет данных — по всем
-  return Math.round(set.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/set.length*100);
+  // QUEUE-62: записи без точности (разговор) в среднее не входят — иначе они его разбавляют.
+  const scored = set.filter(x => typeof x.accuracy_first_try === 'number');
+  if (!scored.length) return 0;
+  return Math.round(scored.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/scored.length*100);
 }
 /* Прогресс по текущему уровню CEFR = доля пройденных уроков уровня (4.8).
    Уровень = 2 подуровня × LESSONS_PER_SUB уроков (по умолчанию 25+25 = 50). */
@@ -1293,6 +1306,44 @@ function levelPromptBlock(cefr){
     + 'БЕЗ ТЕРМИНОВ (критично): в prompt_for_user ЗАПРЕЩЕНЫ слова «конструкция», «структура», «падеж», «спряжение», «инфинитив», «предлог» и прочая грамматическая терминология — аудитория включает детей и взрослых без подготовки. Вместо «используйте конструкцию с haben» — прямой вопрос по смыслу сцены. ';
   return s;
 }
+/* Потолок уровня для живого разговора (QUEUE-62, ред. 4.30 раздела 5.B).
+   Ключевое отличие от задания урока: ограничение стоит на СЛОЖНОСТИ вопроса,
+   а не на лексике. Новые слова в реплике свободны — их закрывают тап-перевод и 📘.
+   Запрещено другое: спрашивать так, что ответить можно только непройденной
+   конструкцией. Разговор — тренировка устной речи, а не замер. */
+function dialogueLevelBlock(cefr){
+  const banned  = GrammarCore.bannedMarkers(cefr);
+  const allowed = GrammarCore.allowedTitles(cefr);
+  let s = 'УРОВЕНЬ РАЗГОВОРА (критично, QUEUE-62). Ограничение — на СЛОЖНОСТИ вопроса, НЕ на словах. '
+    + 'ЛЕКСИКА СВОБОДНА: новые слова в реплике допустимы и полезны — у ученика есть тап-перевод любого слова и разбор формы по запросу. Обеднять речь до известных слов ЗАПРЕЩЕНО. '
+    + 'ПОТОЛОК НА ВОПРОСЕ: спрашивай ТОЛЬКО о том, на что ученик может ответить пройденной грамматикой. Если единственный осмысленный ответ требует непройденной конструкции — такой вопрос ЗАПРЕЩЁН, переформулируй проще. ';
+  if (allowed.length) s += 'Пройденные темы: ' + allowed.join('; ') + '. Всё, чего в списке нет, считай непройденным. ';
+  if (banned.length)  s += 'Ответа с этими формами не требуй (темы не пройдены): ' + banned.join(', ') + '. В своей реплике они допустимы, если ответ их не требует. ';
+  if (cefr === 'A1') s += 'На A1 реплика = ОДНО-ДВА коротких предложения и РОВНО ОДИН вопрос. Два вопроса в одной реплике ЗАПРЕЩЕНЫ («Что ты любишь? Читаешь книги или любишь путешествовать?» — неверно: это два смысловых шага). Спрашивать о двух вещах сразу ЗАПРЕЩЕНО. ';
+  else if (cefr === 'A2') s += 'На A2 реплика — не больше трёх коротких предложений и РОВНО ОДИН вопрос. ';
+  s += 'БЕЗ ТЕРМИНОВ: грамматическая терминология («падеж», «спряжение», «конструкция») в реплике ЗАПРЕЩЕНА. ';
+  return s;
+}
+
+/* Как относиться к ответу ученика (QUEUE-62). Разговор развивает устную речь:
+   задача — чтобы человек перестал бояться говорить, поэтому придирки вреднее ошибок.
+   Плюс вход шумный: модель получает ТЕКСТ распознавания, а не голос. */
+function dialogueToleranceBlock(inputMode, alts){
+  let s = 'ОЦЕНКА ОТВЕТА — ТОЛЬКО СМЫСЛ И ГРАММАТИКА (критично, QUEUE-62). '
+    + 'Жёсткой привязки к одной формулировке НЕТ: любой ответ, который подходит по смыслу к твоему вопросу и грамматически верен, — правильный. '
+    + 'ЗАПРЕЩЕНО переписывать верный ответ ученика на свой «предпочтительный» или «более естественный» вариант. gentle_correction заполняй ТОЛЬКО в двух случаях: (1) ответ не подходит по смыслу к вопросу; (2) грамматика действительно сломана (неверное спряжение, порядок слов, рассогласование). Во всех остальных случаях gentle_correction = null и поддержи ученика. '
+    + 'РЕГИОНАЛЬНЫЕ И РАЗГОВОРНЫЕ ВАРИАНТЫ — НЕ ОШИБКА: местные приветствия, диалектные формы, просторечие и стилистические различия целевого языка законны. Считать единственно верным один вариант ЗАПРЕЩЕНО. ';
+  if (inputMode === 'voice') {
+    s += 'ВХОД — РАСПОЗНАВАНИЕ РЕЧИ (критично). Ученик говорил ГОЛОСОМ; ты получаешь текст автоматического распознавания, а не саму речь. Ошибки распознавания неизбежны: акцент, местное произношение, слипшиеся слова, похожие по звучанию слова, пропавшие или лишние окончания. '
+      + 'Расхождение, объяснимое созвучием или сбоем распознавания, — это ШУМ, а НЕ ошибка ученика: понимай по смыслу разговора и НЕ поправляй такое никогда. Поправляй только то, что не объяснить распознаванием. Ученик не должен получить замечание за то, чего не говорил. '
+      + 'Орфографию и заглавные буквы при голосовом вводе не оценивай вообще. ';
+    if (alts && alts.length > 1) s += 'ВАРИАНТЫ РАСПОЗНАВАНИЯ: устройство вернуло несколько гипотез одной и той же фразы (поле user_speech_alternatives, по убыванию уверенности). Выбери ту, которая осмысленна в контексте разговора, и отвечай на неё; остальные игнорируй. Разночтения между гипотезами — шум распознавания, не ошибки. ';
+  } else {
+    s += 'ВХОД — КЛАВИАТУРА: ученик напечатал ответ сам, опечатки оценивай мягко, по смыслу. ';
+  }
+  return s;
+}
+
 /* Потолок уровня для заданий урока (4.30). У заданий урока сцены нет,
    поэтому берём только «выходную» половину правил: разрешённое и запрещённое. */
 function taskLevelBlock(lvl){
@@ -3768,7 +3819,9 @@ const DIAG_TRENDS = ['improving','stable','declining'];
 async function finishLesson() {
   LessonCache.clearLesson(L.code);   // урок завершён — снимок больше не нужен
   const acc = L.ft.total ? +(L.ft.ok / L.ft.total).toFixed(2) : 1;
-  const prev = DB.analytics.length ? DB.analytics[DB.analytics.length-1].accuracy_first_try : null;
+  // QUEUE-62: сравниваем с последним замером, а не с последней записью: разговор точности не даёт.
+  const scoredPrev = DB.analytics.filter(x => typeof x.accuracy_first_try === 'number');
+  const prev = scoredPrev.length ? scoredPrev[scoredPrev.length-1].accuracy_first_try : null;
   const hard = Object.keys(L.wordErr).filter(t => L.wordErr[t] >= 2);
 
   // --- 1) Сбор: запись слов в «Словарь» ---
@@ -4620,14 +4673,23 @@ function startDialogue() {
     chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
     if (tappable) attachTapAll(d);
   };
-  async function aiTurn(userText) {
+  // QUEUE-62: inputMode — 'voice' | 'text' | null (первая реплика). Приложение знает,
+  // микрофон это был или клавиатура, и обязано сообщить модели: от этого зависит,
+  // считать расхождение ошибкой ученика или шумом распознавания.
+  async function aiTurn(userText, inputMode, alts) {
     if (userText) { add('user', userText); history.push({role:'user', text:userText}); }
     add('ai', '…', null, true);
     let r = null;
+    const known = (DB.vocab || []).map(w => w.term).slice(-60);
     try {
       r = await Gemini.call({ task:'dialogue', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:p.cefr,
         topic:p.interests, must_use:mustUse, history: history.slice(-10),
-        rules:'Ты — доброжелательный напарник, а не судья. Реплики короткие, по уровню CEFR. Грубые ошибки — мягкая поправка в gentle_correction, мелкие — поощряй. После 6–8 обменов плавно завершай (is_final=true).' },
+        known_vocab: known, input_mode: inputMode || 'text',
+        user_speech_alternatives: (inputMode === 'voice' && alts && alts.length > 1) ? alts : undefined,
+        rules:'Ты — доброжелательный напарник, а не судья. Цель режима — чтобы ученик перестал бояться говорить и говорил больше, поэтому поддержка важнее замечаний. '
+          + dialogueLevelBlock(p.cefr)
+          + dialogueToleranceBlock(inputMode || 'text', alts)
+          + 'known_vocab — опора, а не ограда: опирайся на знакомые слова, но новые вводить можно. После 6–8 обменов плавно завершай (is_final=true).' },
         '{"reply_target":"реплика на целевом языке","reply_native":"перевод на родной","understood":true,"gentle_correction":"мягкая поправка на родном или null","is_final":false}');
     } catch(e){}
     chat.lastChild.remove();
@@ -4644,17 +4706,21 @@ function startDialogue() {
     TAP_ORIGIN = null;
     try { speechSynthesis.cancel(); } catch(e){}
     if (turns > 0) {
-      DB.analytics.push({ lesson:'DIALOGUE', date:today(), accuracy_first_try: masteryPercent()/100 || 0.8,
+      // QUEUE-62: разговор — тренировка устной речи, а не замер. Точность НЕ пишется вообще:
+      // прежде здесь стоял masteryPercent()/100 || 0.8 — выдуманное число, которое попадало
+      // и в среднюю точность, и в сравнение «лучше/хуже прошлого раза» следующего урока.
+      // Запись остаётся ради факта занятия (серия, активность), поле accuracy_first_try отсутствует.
+      DB.analytics.push({ lesson:'DIALOGUE', date:today(), turns:turns,
         errors_by_type:{dialogue:0}, hard_words:[], duration_sec:0, hints_used:0, delta_accuracy:'' });
       Storage.save(DB); toast('Сохранено ✓');
     }
     mainMenu();
   }
-  $('#send').onclick = () => { const v = $('#msg').value.trim(); if (v){ $('#msg').value=''; aiTurn(v);} };
+  $('#send').onclick = () => { const v = $('#msg').value.trim(); if (v){ $('#msg').value=''; aiTurn(v, 'text');} };
   $('#msg').onkeydown = e => { if (e.key==='Enter') $('#send').click(); };
   $('#endD').onclick = endDialogue;
   const mic = $('#mic');
-  const rec = makeRecognizer(p.targetLang, t => { mic.classList.remove('rec'); aiTurn(t); }, () => mic.classList.remove('rec'));
+  const rec = makeRecognizer(p.targetLang, (t, alts) => { mic.classList.remove('rec'); if (t) aiTurn(t, 'voice', alts); }, () => mic.classList.remove('rec'));
   mic.onclick = () => {
     if (!rec) return toast('Распознавание речи недоступно — пишите текстом', true);
     if (mic.classList.contains('rec')) { rec.stop(); mic.classList.remove('rec'); }
