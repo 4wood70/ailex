@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v68';
+const APP_VERSION = 'v69';
 /* 4.29: ключ хранилища незавершённых занятий ЗАФИКСИРОВАН навсегда — версия схемы живёт ВНУТРИ
    снимка. Прежний ключ нёс номер билда, поэтому каждое обновление приложения убивало
    незавершённый урок у всех пользователей. Старые ключи разово переносятся в новый формат. */
@@ -1582,6 +1582,13 @@ const HintTexts = {
     🎯 Отвечайте на задания своими словами — творческий подход приветствуется.<br>
     🏆 После каждого акта — краткий итог.`,
 
+  dialogue: `
+    <b>Поговорить</b><br><br>
+    Свободный разговор на изучаемом языке — собеседник поддерживает беседу по вашей теме.<br><br>
+    👆 <b>Нажмите на любое слово</b> в реплике — появится перевод и транскрипция, а рядом кнопка <b>«почему так?»</b> с объяснением формы.<br>
+    🔊 Кнопка рядом с репликой — переслушать произношение.<br>
+    🎙️ Отвечать можно голосом или текстом.`,
+
   vocab: `
     <b>Словарь</b><br><br>
     Все слова, которые вы встречали на уроках.<br><br>
@@ -1609,7 +1616,7 @@ const HowToText = `
     📐 <b>Линейка</b> — показывает грамматическое правило текущего задания.<br><br>
     📒 <b>Слова задания</b> внизу — слова с переводом, которые понадобятся для ответа. Словарь искать не нужно.<br><br>
     📖 <b>Словарь</b>: тап по слову открывает карточку с формами, транскрипцией и мнемоникой.<br><br>
-    🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом.
+    🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом. Тап по слову работает и там: любое слово реплики собеседника можно тронуть и получить перевод.
   </div>
   <p class="note" style="margin-top:12px">Не бойтесь ошибаться — разбор ошибки появляется сразу, а прогресс сохраняется автоматически.</p>`;
 
@@ -3901,6 +3908,10 @@ const TAP_SKIP = new Set(['der','die','das','ein','eine','einen','einem','einer'
   'is','the','a','an','and','or','but','in','on','at','to','of','for',
   'с','в','на','и','или','но','не','а','по','за','от','до','из','к','у','о','со','во']);
 
+// QUEUE-61: откуда пришло слово, тапнутое вне урока ('dialogue' в режиме «Поговорить»).
+// Ставится при входе в режим, снимается при выходе; null → прежнее поведение ('quest').
+let TAP_ORIGIN = null;
+
 // Разбить текст на кликабельные токены (все слова, кроме служебных)
 function tapAllWordsHTML(text) {
   if (!text) return '';
@@ -3964,7 +3975,7 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
     if (updated) Storage.save(DB);
   } else {
     DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:'',
-      part_of_speech:'', is_irregular:false, forms:'', lesson: L ? L.code : 'quest',
+      part_of_speech:'', is_irregular:false, forms:'', lesson: L ? L.code : (TAP_ORIGIN || 'quest'),
       errors:0, status:'встреченное', mnemonic:'', date_added:today(), date_review:today() });
     Storage.save(DB);
   }
@@ -4577,6 +4588,7 @@ function startRemedial(E) {
    ===================================================================== */
 function startDialogue() {
   const p = DB.profile;
+  TAP_ORIGIN = 'dialogue';   // QUEUE-61: слова, тапнутые здесь, помечаются в словаре как пришедшие из диалога
   const mustUse = pick(DB.vocab.slice(-15).map(w=>w.term), Math.min(2, DB.vocab.length));
   const history = [];
   let turns = 0;
@@ -4591,18 +4603,26 @@ function startDialogue() {
     <button class="btn btn-ghost" id="endD" style="margin-top:10px">Завершить диалог</button>`,
     { back: endDialogue });
   const chat = $('#chat');
-  const add = (role, text, sub) => {
+  // QUEUE-61: реплика ИИ идёт на целевом языке — её слова тапабельны так же, как в сцене
+  // Квеста и Суперквеста (перевод + 📘 «почему так?»). Обёртка .target нужна, чтобы
+  // lookupAndShowWord взял из неё контекст предложения для explain_element; перевод на
+  // родной (<small>) остаётся ВНЕ .target — иначе в контекст уедет родной язык.
+  // plain=true — служебные строки (плейсхолдер «…», обрыв связи): их не тапаем и не озвучиваем.
+  const add = (role, text, sub, plain) => {
     const d = document.createElement('div');
     d.className = 'msg ' + role;
+    const tappable = (role === 'ai' && !plain);
     // QUEUE-44: реплику ИИ (на целевом языке) можно переслушать сколько нужно — кнопка 🔊.
     // sayBtn сам скрывается, если у целевого языка нет озвучки. Свои реплики не озвучиваем.
-    const replay = (role === 'ai') ? sayBtn(text) : '';
-    d.innerHTML = esc(text) + replay + (sub?`<small>${esc(sub)}</small>`:'');
+    const replay = tappable ? sayBtn(text) : '';
+    const body = tappable ? `<span class="target">${tapAllWordsHTML(text)}</span>` : esc(text);
+    d.innerHTML = body + replay + (sub?`<small>${esc(sub)}</small>`:'');
     chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+    if (tappable) attachTapAll(d);
   };
   async function aiTurn(userText) {
     if (userText) { add('user', userText); history.push({role:'user', text:userText}); }
-    add('ai', '…');
+    add('ai', '…', null, true);
     let r = null;
     try {
       r = await Gemini.call({ task:'dialogue', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:p.cefr,
@@ -4611,14 +4631,17 @@ function startDialogue() {
         '{"reply_target":"реплика на целевом языке","reply_native":"перевод на родной","understood":true,"gentle_correction":"мягкая поправка на родном или null","is_final":false}');
     } catch(e){}
     chat.lastChild.remove();
-    if (!r) { add('ai','Связь прервалась — попробуйте ещё раз.'); return; }
+    if (!r) { add('ai','Связь прервалась — попробуйте ещё раз.', null, true); return; }
     add('ai', r.reply_target, r.reply_native + (r.gentle_correction ? '\n🤝 ' + r.gentle_correction : ''));
     history.push({role:'ai', text:r.reply_target});
     speak(r.reply_target, p.targetLang);
     turns++;
+    // QUEUE-61: подсказку показываем после ПЕРВОЙ реплики — на пустом экране тапать нечего
+    if (turns === 1) Hints.show('dialogue', HintTexts.dialogue);
     if (r.is_final) setTimeout(endDialogue, 2500);
   }
   function endDialogue() {
+    TAP_ORIGIN = null;
     try { speechSynthesis.cancel(); } catch(e){}
     if (turns > 0) {
       DB.analytics.push({ lesson:'DIALOGUE', date:today(), accuracy_first_try: masteryPercent()/100 || 0.8,
