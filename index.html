@@ -245,13 +245,17 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v70';
+const APP_VERSION = 'v71';
 /* 4.29: ключ хранилища незавершённых занятий ЗАФИКСИРОВАН навсегда — версия схемы живёт ВНУТРИ
    снимка. Прежний ключ нёс номер билда, поэтому каждое обновление приложения убивало
    незавершённый урок у всех пользователей. Старые ключи разово переносятся в новый формат. */
 const EPISODES_KEY = 'AILEX_episodes';
 const EPISODES_SCHEMA = 1;
-const EPISODES_MAX = 5;   // сколько незавершённых занятий держим на профиль (вытесняется самое старое)
+/* QUEUE-63: на профиль — РОВНО ОДИН незавершённый эпизод каждого вида. Курс линейный:
+   пока текущий урок не закрыт, к другому уроку перейти нельзя, поэтому незавершённый урок
+   физически может быть только один. Прежние 5 слотов (4.29) полезного не хранили, а копили
+   мусор и держали мёртвые карточки «Продолжить». Суперквест и разговор идут параллельно
+   уроку и на продвижение по уровню не влияют — у них свои отдельные слоты. */
 const LEGACY_CACHE_KEYS = ['AILEX_lesson_cache_v46','AILEX_lesson_cache_v45'];
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
@@ -1164,13 +1168,23 @@ const GCORE_RULES = 'Верни карту грамматических тем �
   + 'Если в языке нет пробелов между словами (китайский, японский, тайский) — записывай маркер ровно той цепочкой знаков, какой он встречается в тексте. '
   + 'В одном маркере не смешивай слово и окончание. Для языков с богатой морфологией перечисляй реальные употребимые формы, а не словарную. '
   + 'title и gist — на native_lang. Они служебные, человеку не показываются, поэтому title может быть точным и терминологичным; gist — одна короткая фраза без терминов. '
-  + 'Тем на уровень — сколько их реально есть в этой паре, число не подгоняй.';
+  + 'Тем на уровень — сколько их реально есть в этой паре, число не подгоняй. '
+  + 'ПАРАДИГМА НЕ ДРОБИТСЯ (критично, QUEUE-64). Одна тема = ОДНА ЦЕЛАЯ парадигма. ЗАПРЕЩЕНО разносить один и тот же набор форм по отдельным темам по роду, числу, лицу или падежу: '
+  + '«неопределённый артикль (мужской род)», «неопределённый артикль (женский род)», «неопределённый артикль (средний род)» — ОДНА тема «неопределённый артикль» со всеми формами в markers. '
+  + 'Так же: спряжение глагола — одна тема на все лица, а не тема на каждое лицо; склонение — одна тема на всю таблицу. '
+  + 'Причина методическая: формы парадигмы различаются между собой, и учащийся понимает их только в сопоставлении. Разрезанная парадигма учит ложному правилу — в немецком «ein» одинаков для мужского и среднего рода, и тема «ein = мужской род» прямо дезинформирует. '
+  + 'Разделять на разные темы можно только то, что в языке действительно изучается порознь и различается по СУТИ (определённый и неопределённый артикль — разные темы; настоящее и прошедшее время — разные темы).';
+
+/* QUEUE-64: поколение карты грамматики. Поднимается, когда меняются ПРАВИЛА построения
+   карты (не содержание одной темы). Карты прежних поколений пересобираются один раз. */
+const GCORE_GEN = 2;
 
 const GrammarCore = {
   _failed: false,
   list(){ return (DB && Array.isArray(DB.gcore)) ? DB.gcore : []; },
   meta(){ if (!Array.isArray(DB.gcore)) DB.gcore = [];
           if (!DB.gcoreMeta) DB.gcoreMeta = { built:false, migrated:false };
+          if (DB.gcoreMeta.built && !DB.gcoreMeta.gen) DB.gcoreMeta.gen = 1;   // карта, собранная до QUEUE-64
           return DB.gcoreMeta; },
   lvlFor(){ const l = (DB && DB.profile && DB.profile.cefr) || 'A1';
             return GCORE_LEVELS.includes(l) ? l : 'A1'; },
@@ -1182,6 +1196,15 @@ const GrammarCore = {
     if (this._failed || !DB || !DB.profile) return false;
     if (DB.profile.cefr === 'A0') return false;      // на A0 своя методика (a0_lesson), карта не нужна
     return !this.meta().built;
+  },
+
+  /* Карта собрана по прежним правилам (например, с парадигмой, разрезанной по родам) —
+     пересобрать один раз. Уроки, словарь и Свод правил не трогаются: меняется только карта тем. */
+  needsRebuild(){
+    if (this._failed || !DB || !DB.profile) return false;
+    if (DB.profile.cefr === 'A0') return false;
+    const m = this.meta();
+    return !!m.built && (m.gen || 1) < GCORE_GEN;
   },
 
   async build(onStep){
@@ -1204,7 +1227,35 @@ const GrammarCore = {
       status: 'не пройдена', lesson: ''
     })).sort((a,b)=>a.order-b.order);
     this.meta().built = true;
+    this.meta().gen = GCORE_GEN;
     this.migrateProgress();
+    Storage.save(DB);
+  },
+
+  /* Пересборка карты с сохранением прогресса (QUEUE-64).
+     Правило переноса: новая тема считается пройденной, только если старая пройденная тема
+     совпадает с ней по названию ТОЧНО. Совпадение «по куску» намеренно НЕ засчитывается:
+     старая «Неопределённый артикль (мужской род)» — лишь фрагмент новой «Неопределённый
+     артикль», полную парадигму человек ещё не видел, и показать её надо один раз.
+     Темы уровней НИЖЕ текущего считаются пройденными без сверки — как при миграции 4.30.
+     Уроки, счётчик прогресса, словарь и Свод правил не затрагиваются. */
+  async rebuild(onStep){
+    const before = this.list().map(t => ({ title: t.title, status: t.status, lesson: t.lesson }));
+    const passed = new Set(before.filter(t => t.status === 'пройдена').map(t => norm(t.title)));
+    const m = this.meta();
+    // Флаги built/migrated НЕ сбрасываем: при сбое запроса карта и прогресс остаются нетронутыми,
+    // поколение не поднимается, и пересборка честно повторится при следующем запуске.
+    // Сброс флагов отправил бы повтор по пути первичной сборки, где перенос идёт сопоставлением
+    // по подстроке — а оно как раз пометило бы слитую парадигму пройденной.
+    await this.build(onStep);
+    const cur = this.lvlFor(), ci = GCORE_LEVELS.indexOf(cur);
+    this.list().forEach(t => {
+      const ti = GCORE_LEVELS.indexOf(t.cefr);
+      if (ti < ci) { t.status = 'пройдена'; t.lesson = t.lesson || 'до пересборки'; return; }
+      if (ti === ci && passed.has(norm(t.title))) { t.status = 'пройдена'; t.lesson = 'до пересборки'; return; }
+      t.status = 'не пройдена'; t.lesson = '';      // в т.ч. слитая парадигма: покажем целиком один раз
+    });
+    m.migrated = true;
     Storage.save(DB);
   },
 
@@ -1377,6 +1428,14 @@ async function coreBuildScreen(next){
     catch(e){
       GrammarCore._failed = true;                         // курс идёт прежним путём: тему выбирает модель
       if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+    }
+  } else if (GrammarCore.needsRebuild()) {
+    // QUEUE-64: карта прежнего поколения (парадигмы разрезаны по родам) — пересобрать один раз.
+    // Сбой не критичен: остаётся прежняя карта, пересборку повторим при следующем запуске.
+    try { await GrammarCore.rebuild(msg => Screen.loader(msg || 'Обновляю карту грамматики — это один раз…')); }
+    catch(e){
+      if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+      toast('Карту грамматики обновим позже — занятия работают', true);
     }
   }
   next();
@@ -1934,13 +1993,24 @@ function ringSVG(pct, lvl) {
     <div class="core"><div><div class="lbl">Уровень ${esc(lvl||'')}</div><div class="pct">${pct}%</div></div></div>
   </div>`;
 }
+/* QUEUE-65: возврат в сохранённый урок. Вынесено из обработчика карточки — теперь точек входа две
+   (карточка занятия и страховочная карточка «сироты»), логика должна быть одна. */
+function resumeCachedLesson(snap) {
+  L = snap;
+  L.chunk2 = (L.chunk2 && L.chunk2.state === 'ready')
+    ? { state:'ready', promise:null, err:null }
+    : { state:'idle', promise:null, err:null };
+  if (L.chunk2.state === 'idle') fetchLessonChunk2();
+  renderStep();
+}
+
 function mainMenu() {
   DB = Storage.load();
   // v68: занятие закончилось — снимаем состояние урока. Иначе шапка (и «Продолжить»)
   // держали бы код уже завершённого занятия: L нигде не обнулялся с самого начала.
   L = null;
   // 4.26 / 4.30: профиль без Ядра языка или без карты грамматики (новый либо созданный раньше)
-  if (Core.needsBuild() || GrammarCore.needsBuild()) return coreBuildScreen(mainMenu);
+  if (Core.needsBuild() || GrammarCore.needsBuild() || GrammarCore.needsRebuild()) return coreBuildScreen(mainMenu);
   Core.maybePrefetch();                                      // следующий уровень — фоном, ожидания не видно
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
@@ -1950,7 +2020,8 @@ function mainMenu() {
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
   const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
   const segs = 10, lit = Math.round(lp.pct/100*segs);
-  // --- незавершённые занятия (4.29): три раздельных слота, без срока годности ---
+  // --- незавершённые занятия (4.29, ред. QUEUE-63): по одному слоту на вид, без срока годности ---
+  Episodes.sweepDone();   // снять снимки уже пройденных занятий (в т.ч. сирот от старой схемы хранения)
   const _cl = LessonCache.hydrate(Episodes.latest('lesson'));
   const _ca = Episodes.latest('a0');
   const _cs = Episodes.latest('super');
@@ -1960,6 +2031,18 @@ function mainMenu() {
   const hasCached = !!cachedLesson;
   const cachedStep = hasCached ? cachedLesson.i : 0;
   const cachedTotal = hasCached ? (cachedLesson.steps||[]).length : 0;
+  /* QUEUE-65: одно занятие — одна карточка. Прежде их было две: «Продолжить урок X» возвращала
+     на сохранённое место, а «Урок X» вызывала startLesson() и начинала тот же урок ЗАНОВО, молча
+     затирая снимок. Один тап не туда уничтожал десятки сделанных заданий без предупреждения.
+     Теперь карточка занятия САМА становится продолжением, если по нему есть незавершённый эпизод.
+     Отдельной кнопки «начать заново» нет: курс линейный, урок доводится до конца; Суперквест
+     тоже сначала завершается, новый начинается после. Условие по коду — страховка: снимок другого
+     урока при линейном курсе и одном слоте (QUEUE-63) невозможен, но если он вдруг есть,
+     показываем прежние две карточки, чтобы ничего не потерять. */
+  const resumeLesson = (hasCached && cachedLesson.code === next) ? cachedLesson : null;
+  const resumeA0     = (cachedA0 && cachedA0.code === next) ? cachedA0 : null;
+  const orphanLesson = hasCached && !resumeLesson;      // снимок урока, который сейчас не следующий
+  const orphanA0     = !!cachedA0 && !resumeA0;
   Screen.show(`
     <h1>С возвращением, ${esc(p.name)}!</h1>
     <p class="sub">${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · уровень ${esc(p.cefr)} · следующий этап: <b style="color:var(--ink)">${esc(next)}</b></p>
@@ -1974,35 +2057,41 @@ function mainMenu() {
       ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
-      ${hasCached ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedLesson.code)}</b><small>Задание ${cachedStep} из ${cachedTotal} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
-      ${cachedA0 ? `<button class="menu-item" id="mResumeA0" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedA0.code)}</b><small>Шаг ${esc(String(cachedA0.stepIdx+1))} из ${esc(String((cachedA0.steps||[]).length))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
-      ${cachedSuper ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>Глава ${esc(String(cachedSuper.actIndex||1))} из ${esc(String(cachedSuper.actsTotal||'?'))} · сцена ${esc(String(cachedSuper.sqScene))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
-      <button class="menu-item" id="mLesson"><span class="ic">${isA0?'🔤':'🎯'}</span><span class="t"><b>${isExam?'Экзамен '+esc(next.replace('EXAM_','')):isA0?'Урок A0: '+esc(next):'Урок '+esc(next)}</b><small>${isExam?'50 вопросов · порог 85%':isA0?'Чтение, произношение, базовая лексика':'21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
-      <button class="menu-item" id="mSuper"><span class="ic">🔁</span><span class="t"><b>Суперквест</b><small>Повторение: квест-погружение на 30–50 предложений</small></span><span class="chev">›</span></button>
+      ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedLesson.code)}</b><small>Задание ${cachedStep} из ${cachedTotal} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
+      ${orphanA0 ? `<button class="menu-item" id="mResumeA0" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить урок ${esc(cachedA0.code)}</b><small>Шаг ${esc(String(cachedA0.stepIdx+1))} из ${esc(String((cachedA0.steps||[]).length))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
+      ${false ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>Глава ${esc(String(cachedSuper.actIndex||1))} из ${esc(String(cachedSuper.actsTotal||'?'))} · сцена ${esc(String(cachedSuper.sqScene))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
+      <button class="menu-item" id="mLesson"${resumeLesson||resumeA0?' style="border:1px solid var(--accent)"':''}><span class="ic">${resumeLesson||resumeA0?'▶️':(isA0?'🔤':'🎯')}</span><span class="t"><b>${
+        resumeLesson ? 'Продолжить урок '+esc(next)
+        : resumeA0 ? 'Продолжить урок '+esc(next)
+        : isExam ? 'Экзамен '+esc(next.replace('EXAM_',''))
+        : isA0 ? 'Урок A0: '+esc(next)
+        : 'Урок '+esc(next)}</b><small>${
+        resumeLesson ? 'Задание '+cachedStep+' из '+cachedTotal+' · прогресс сохранён'
+        : resumeA0 ? 'Шаг '+esc(String(resumeA0.stepIdx+1))+' из '+esc(String((resumeA0.steps||[]).length))+' · прогресс сохранён'
+        : isExam ? '50 вопросов · порог 85%'
+        : isA0 ? 'Чтение, произношение, базовая лексика'
+        : '21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mSuper"${cachedSuper?' style="border:1px solid var(--accent)"':''}><span class="ic">${cachedSuper?'▶️':'🔁'}</span><span class="t"><b>${cachedSuper?'Продолжить Суперквест':'Суперквест'}</b><small>${cachedSuper?'Глава '+esc(String(cachedSuper.actIndex||1))+' из '+esc(String(cachedSuper.actsTotal||'?'))+' · сцена '+esc(String(cachedSuper.sqScene))+' · прогресс сохранён':'Повторение: квест-погружение на 30–50 предложений'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
-  if (cachedA0 && document.getElementById('mResumeA0')) {
+  if (orphanA0 && document.getElementById('mResumeA0')) {
     document.getElementById('mResumeA0').onclick = () => runA0Lesson(cachedA0);   // 4.29: контент урока A0 в снимке — регенерации нет
   }
-  if (hasCached && document.getElementById('mResume')) {
-    document.getElementById('mResume').onclick = () => {
-      L = cachedLesson;
-      L.chunk2 = (L.chunk2 && L.chunk2.state === 'ready')
-        ? { state:'ready', promise:null, err:null }
-        : { state:'idle', promise:null, err:null };
-      if (L.chunk2.state === 'idle') fetchLessonChunk2();
-      renderStep();
-    };
+  if (orphanLesson && document.getElementById('mResume')) {
+    document.getElementById('mResume').onclick = () => resumeCachedLesson(cachedLesson);
   }
-  if (cachedSuper && document.getElementById('mResumeSuper')) {
-    document.getElementById('mResumeSuper').onclick = () => resumeSuper(cachedSuper);   // QUEUE-46
-  }
-  $('#mLesson').onclick = () => isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
+  // QUEUE-65: карточка занятия ведёт в сохранённую точку, если она есть, и только иначе начинает заново
+  $('#mLesson').onclick = () => {
+    if (resumeA0) return runA0Lesson(resumeA0);            // 4.29: контент урока A0 лежит в снимке — регенерации нет
+    if (resumeLesson) return resumeCachedLesson(resumeLesson);
+    return isExam ? startExam(next) : isA0 ? startA0Lesson(next) : startLesson(next);
+  };
   $('#mSuper').onclick  = () => {
+    if (cachedSuper) return resumeSuper(cachedSuper);      // QUEUE-46 / QUEUE-65: сначала доводим начатый
     if (isA0) return toast('Суперквест откроется после завершения уровня A0 и первых уроков A1', true);
     DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
   };
@@ -2741,7 +2830,12 @@ function fetchLessonChunk2() {
       const rg = await Gemini.call(Object.assign({
         task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
         lesson_words: words.map(w=>w.term), known_rules: knownRules, covered_categories: coveredCats,
-        rules: themeRule + ' ЯЗЫК ОБЪЯСНЕНИЯ: summary — без лингвистических терминов, объясняй через примеры как живому человеку (не "наречная группа" а "можно добавить уточнение — как быстро, где — это всё равно считается одной частью"). ГЛУБИНА ПО УРОВНЮ: на A1–A2 — одна чёткая строка + 2–3 простых примера без оговорок и исключений; на B1+ — основное правило + примечание о расширениях и исключениях. ПОЛНОТА: правило показывает КОНТРАСТ — как форма выглядит в словаре/инфинитиве И как меняется в предложении (пример А → пример Б). ПРИМЕРЫ в examples: на A1–A2 только простые случаи без усложнений — никаких наречий-расширителей в W-Fragen, никаких отделяемых приставок в примерах спряжения. Правило ЦЕЛИКОМ: в table полный набор форм. Пояснения и название — на native_lang. Транскрипция — родными буквами.'
+        rules: themeRule + ' ЯЗЫК ОБЪЯСНЕНИЯ: summary — без лингвистических терминов, объясняй через примеры как живому человеку (не "наречная группа" а "можно добавить уточнение — как быстро, где — это всё равно считается одной частью"). ГЛУБИНА ПО УРОВНЮ: на A1–A2 — одна чёткая строка + 2–3 простых примера без оговорок и исключений; на B1+ — основное правило + примечание о расширениях и исключениях. ПОЛНОТА: правило показывает КОНТРАСТ — как форма выглядит в словаре/инфинитиве И как меняется в предложении (пример А → пример Б). ПРИМЕРЫ в examples: на A1–A2 только простые случаи без усложнений — никаких наречий-расширителей в W-Fragen, никаких отделяемых приставок в примерах спряжения. ПАРАДИГМА ЦЕЛИКОМ (критично, QUEUE-64): в table — ВЕСЬ набор форм темы, а не его часть. Если тема про артикль или склонение — в таблице все роды и все падежи уровня; если про спряжение — все лица. '
+        + 'Обрезать таблицу до одного рода, одного лица или одного падежа ЗАПРЕЩЕНО: формы понятны только в сопоставлении, а урезанная таблица учит ложному правилу (в немецком ein одинаков для мужского и среднего рода — таблица только с мужским дезинформирует). '
+        + 'Порядок строк такой, чтобы совпадения и различия форм читались с одного взгляда. Показ парадигмы целиком НЕ означает, что всё это потребуют в задании: задание остаётся в пределах пройденного, таблица — опора для узнавания. '
+        + 'ТЕРМИНЫ С РАСШИФРОВКОЙ (QUEUE-64): грамматический термин, реально принятый для ЦЕЛЕВОГО языка (нем. Dativ, Akkusativ, Nominativ; рус. творительный падеж), в таблице УМЕСТЕН и полезен — но НИКОГДА не голым. Всегда с пояснением на native_lang рядом: «Dativ — кому/чему», «Akkusativ — вижу кого/что». '
+        + 'Если в целевом языке такой категории нет (в английском нет падежей) — термин не выдумывай. В summary термины по-прежнему не нужны: там объясняем живым языком. '
+        + 'Пояснения и название — на native_lang. Транскрипция — родными буквами.'
       }, themeReq),
       '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) {
@@ -2814,8 +2908,9 @@ function firstTry(stepKey, ok) {
    Принцип: снимок живёт, пока занятие не завершено или пока это же занятие не начато заново.
    СРОКА ГОДНОСТИ НЕТ — заниматься можно раз в три дня, прогресс дождётся (прежняя инвалидация
    через 24 часа молча обнуляла урок и обесценивала уже сделанные задания).
-   Слоты РАЗДЕЛЬНЫЕ по kind+code (урок / урок A0 / Суперквест) и по профилю: старт Суперквеста
-   больше не стирает незавершённый урок. На профиль храним до EPISODES_MAX эпизодов. */
+   Слоты РАЗДЕЛЬНЫЕ по виду (урок / урок A0 / Суперквест) и по профилю: старт Суперквеста
+   больше не стирает незавершённый урок.
+   QUEUE-63: на вид у профиля ровно ОДИН эпизод, и снимок пройденного занятия не хранится. */
 const Episodes = {
   _read() {
     try {
@@ -2829,18 +2924,31 @@ const Episodes = {
     catch(e) { return false; }   // переполнение хранилища — молчать нельзя, разбираем в put()
   },
   _id(kind, code, pid) { return (pid||'?') + '|' + kind + '|' + (code||'?'); },
+  /* QUEUE-63: занятие с этим кодом уже пройдено? Снимок пройденного занятия — мусор:
+     предлагать «продолжить» то, что закрыто, нельзя. Источник истины — DB.progress,
+     куда запись о прохождении кладут finishLesson, финал Суперквеста и финал урока A0. */
+  _isDone(code) {
+    if (!code) return false;
+    return (DB?.progress || []).some(r => String(r.code) === String(code));
+  },
+  /* Снять мусор у активного профиля: эпизоды уже пройденных занятий.
+     Самолечение — чинит и сирот, доставшихся от старой схемы хранения (ключ с номером
+     билда: завершение урока чистило только текущий ключ, снимок в прежнем оставался). */
+  sweepDone() {
+    const pid = Storage.activeId(), v = this._read();
+    const before = v.items.length;
+    v.items = v.items.filter(x => !(x.profileId === pid && this._isDone(x.code)));
+    if (v.items.length !== before) this._write(v);
+  },
   put(kind, code, data) {
     const pid = Storage.activeId(), id = this._id(kind, code, pid);
     const v = this._read();
     const rec = { id, profileId: pid, kind, code, savedAt: Date.now(), data };
+    // QUEUE-63: один эпизод на вид у профиля — прочие эпизоды ЭТОГО ЖЕ вида уходят.
+    // Чужие профили и другие виды (урок / a0 / super) не трогаем.
+    v.items = v.items.filter(x => !(x.profileId === pid && x.kind === kind && x.id !== id));
     const at = v.items.findIndex(x => x.id === id);
     if (at >= 0) v.items[at] = rec; else v.items.push(rec);
-    // вытеснение: на профиль не больше EPISODES_MAX, уходит самый старый
-    const mine = v.items.filter(x => x.profileId === pid).sort((a,b) => b.savedAt - a.savedAt);
-    if (mine.length > EPISODES_MAX) {
-      const keep = new Set(mine.slice(0, EPISODES_MAX).map(x => x.id));
-      v.items = v.items.filter(x => x.profileId !== pid || keep.has(x.id));
-    }
     if (this._write(v)) return true;
     // не влезло: жертвуем старыми эпизодами ради текущего, о котором человек знает
     const keepNow = new Set([id]);
@@ -2850,6 +2958,7 @@ const Episodes = {
     return false;
   },
   get(kind, code) {
+    if (this._isDone(code)) return null;                                // QUEUE-63: снимок пройденного не отдаём
     const r = this._read().items.find(x => x.id === this._id(kind, code, Storage.activeId()));
     return r ? r.data : null;
   },
@@ -2859,7 +2968,10 @@ const Episodes = {
       .filter(x => x.profileId === pid && (!kind || x.kind === kind))
       .sort((a,b) => b.savedAt - a.savedAt);
   },
-  latest(kind) { const l = this.list(kind); return l.length ? l[0].data : null; },
+  latest(kind) {
+    const l = this.list(kind).filter(x => !Episodes._isDone(x.code));   // QUEUE-63: пройденное не предлагаем
+    return l.length ? l[0].data : null;
+  },
   drop(kind, code) {
     const id = this._id(kind, code, Storage.activeId());
     const v = this._read(); v.items = v.items.filter(x => x.id !== id); this._write(v);
@@ -2873,7 +2985,7 @@ const Episodes = {
     LEGACY_CACHE_KEYS.forEach(k => {
       let snap = null;
       try { snap = JSON.parse(localStorage.getItem(k)); } catch(e) {}
-      if (snap && snap.code) {
+      if (snap && snap.code && !this._isDone(snap.code)) {   // QUEUE-63: давно пройденное не переносим
         const kind = snap.isSuper ? 'super' : 'lesson';
         const pid  = snap._profileId || Storage.activeId();
         const v = this._read(), id = this._id(kind, snap.code, pid);
