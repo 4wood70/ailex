@@ -245,7 +245,24 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v73';
+const APP_VERSION = 'v76';
+
+/* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
+   Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
+   во вкладке Safari: в приложении с экрана «Домой» и в обёртке WKWebView объект
+   webkitSpeechRecognition присутствует (проверка поддержки его находит), но при
+   запуске не происходит ничего. Обойти нельзя — это дефект платформы, не наш.
+   Определение по возможностям невозможно именно потому, что объект есть; поэтому
+   гейт по платформе. Режим убран целиком, а не сведён к переписке: разговор
+   текстом дублирует урок и Суперквест и отдельного места в меню не заслуживает
+   (решение Constantin'а, 01.08.2026). Прочие функции на iOS работают полностью. */
+const IS_APPLE = (() => {
+  try {
+    const ua = navigator.userAgent || '', plat = navigator.platform || '';
+    return /iPad|iPhone|iPod/.test(plat) || /iPad|iPhone|iPod/.test(ua)
+        || (/Mac/.test(plat) && (navigator.maxTouchPoints || 0) > 1);   // iPadOS отдаёт платформу Mac
+  } catch(_) { return false; }
+})();
 /* 4.29: ключ хранилища незавершённых занятий ЗАФИКСИРОВАН навсегда — версия схемы живёт ВНУТРИ
    снимка. Прежний ключ нёс номер билда, поэтому каждое обновление приложения убивало
    незавершённый урок у всех пользователей. Старые ключи разово переносятся в новый формат. */
@@ -296,7 +313,49 @@ const I18N = {
       'Нет связи с сервером':'No server connection','Связь прервалась':'Connection lost','Похоже, заблокирована сеть':'The network seems blocked',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
-      'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over'
+      'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over',
+      // --- 4.34: онбординг и мастер ключа. Английский — запасной язык до появления ключа
+      // (перевод на родной делает Gemini, а на первом экране ключа ещё нет). ---
+      'Шаг 1 из 1 · делается один раз':'Step 1 of 1 · one time only',
+      'Чтобы AILEX мог учить вас, нужен бесплатный ключ Gemini API. Это займёт около минуты.':'AILEX needs a free Gemini API key to teach you. This takes about a minute.',
+      'Прежний ключ не работает — получите или вставьте новый.':'The previous key no longer works — get a new one or paste another.',
+      'Нажмите «Получить ключ» — откроется Google AI Studio (войдите в свой Google-аккаунт, если попросит).':'Tap "Get key" — Google AI Studio opens. Sign in with your Google account if asked.',
+      'Нажмите там «Create API key» — ключ создаётся в один-два тапа.':'Tap "Create API key" there — the key is made in one or two taps.',
+      'Скопируйте ключ и вставьте его в поле ниже. Больше вы его не увидите — он хранится на устройстве.':'Copy the key and paste it in the field below. You will not see it again — it is stored on your device.',
+      'Получить ключ в Google AI Studio ↗':'Get key in Google AI Studio ↗',
+      'Вставьте ключ API':'Paste your API key',
+      'Сохранить и продолжить':'Save and continue',
+      'Ключ привязан к вашему аккаунту Google и оплачивается вами (бесплатной квоты достаточно для занятий). AILEX хранит его только на этом устройстве.':'The key belongs to your Google account and is billed to you (the free quota is enough for daily study). AILEX keeps it on this device only.',
+      'Не вижу такой кнопки':'I cannot find that button',
+      'В Google AI Studio кнопка называется «Create API key» или «Get API key» и находится вверху страницы. Если вместо неё видите список проектов — выберите любой проект, кнопка появится. Если страница на английском, а вы ждали другой язык — это нормально, кнопка та же.':'In Google AI Studio the button is called "Create API key" or "Get API key" and sits at the top of the page. If you see a list of projects instead, pick any project and the button appears.',
+      'Что такое ключ API?':'What is an API key?',
+      'Это длинная строка вида AIza… — пароль, по которому Google узнаёт, что запрос ваш. AILEX хранит её только на этом устройстве и никуда не передаёт. Сохраните копию ключа в заметках: Google показывает его один раз.':'It is a long line starting with AIza… — a password that tells Google the request is yours. AILEX keeps it on this device only and sends it nowhere else. Save a copy in your notes: Google shows it once.',
+      'Это платно?':'Does it cost money?',
+      'Нет. У Gemini есть бесплатная квота, и её хватает на ежедневные занятия. Карта не нужна. Если занятия вдруг приостановятся — подождите минуту и продолжайте.':'No. Gemini has a free quota and it is enough for daily study. No card is needed. If lessons pause, wait a minute and carry on.',
+      'Здравствуйте! Я — AILEX.':'Hello! I am AILEX.',
+      'Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.':'A language teacher working to the CEFR standard. A few questions and we begin: your profile, a short level check, your first lesson.',
+      'Прогресс сохраняется автоматически в базу':'Progress saves itself to the database',
+      '— вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.':'— you just do the exercises. In Settings the database can be exported to a file and moved to another device.',
+      'Анкета':'Profile',
+      'Как вас зовут?':'What is your name?',
+      'Ваш родной язык?':'Your native language?',
+      'Какой язык будем изучать?':'Which language will we learn?',
+      'Сколько вам лет?':'How old are you?',
+      'Ваши интересы и сфера деятельности?':'Your interests and line of work?',
+      'Например: наладка станков с ЧПУ, столярное дело, рыбалка…':'For example: CNC machine setup, carpentry, fishing…',
+      'Самое важное поле: на нём строятся все квесты и рассказы.':'The most important field: every quest and story is built on it.',
+      'Заполните поле':'Please fill in the field',
+      'Целевой язык должен отличаться от родного':'The language you learn must differ from your native one',
+      'Шаг 2':'Step 2',
+      'Как лучше начать изучение':'How should we start with',
+      'Пройти короткий тест (рекомендуется)':'Take a short test (recommended)',
+      '— или выберите старт вручную —':'— or choose your starting point —',
+      'Я новичок, но буквы читаю → начать с A1':'I am a beginner but I can read the letters → start at A1',
+      'Не знаю язык совсем, даже буквы → начать с основ A0':'I do not know the language at all, not even the letters → start at A0',
+      'Готовлю вопросы теста…':'Preparing the test…',
+      'Не удалось получить тест — начнём с A1':'Could not load the test — we will start at A1',
+      'Тест уровня · вопрос':'Level test · question',
+      'лексика':'vocabulary','грамматика':'grammar','Не знаю':'I do not know'
     }
   },
   init() {
@@ -319,6 +378,10 @@ const I18N = {
     // фоновая догрузка переводов надписей + перерисовка текущего экрана
     setTimeout(() => { this.ensure().then(() => { try { localizeDOM(document.getElementById('screen')); } catch(_){} }); }, 200);
   },
+  /* 4.34: цепочка деградации родной → английский → исходник. Русский исходник остаётся
+     последним рубежом, а не первым: показывать русский литовцу или арабу бессмысленно,
+     английский распространён несравнимо шире. Английская таблица захардкожена и работает
+     без сети и без ключа — это единственный язык, который доступен на экране мастера ключа. */
   t(s) {
     if (s == null) return s;
     const str = String(s);
@@ -326,7 +389,20 @@ const I18N = {
     this.registry.add(str);
     const d = this.dict[this.lang];
     if (d && d[str] != null) return d[str];
-    return str; // пока не переведено — показываем исходную строку (русскую)
+    const en = this.dict.en;
+    if (en && en[str] != null) return en[str];
+    return str; // ни родного, ни английского — исходная строка
+  },
+  /* Догрузка переводов по ходу: реестр пополняется каждым новым экраном, а ensure() до 4.34
+     звался всего дважды за сессию (на старте, когда ключа ещё нет, и при создании профиля).
+     Поэтому онбординг оставался непереведённым. Дебаунс — чтобы не бить по лимитам Free Tier;
+     результат кэшируется в AILEX_UI_CACHE, так что на язык приходится один проход. */
+  pump() {
+    if (this.lang === 'ru') return;
+    clearTimeout(this._pumpT);
+    this._pumpT = setTimeout(() => {
+      this.ensure().then(() => { try { localizeDOM(document.getElementById('screen')); } catch(_){} }).catch(()=>{});
+    }, 1200);
   },
   // автоперевод накопленных строк интерфейса на текущий язык через Gemini + кэш
   async ensure() {
@@ -908,6 +984,7 @@ const Screen = {
     const s = $('#screen');
     s.innerHTML = html;
     localizeDOM(s);
+    I18N.pump();               // 4.34: новые надписи экрана уходят в очередь на перевод
     const b = $('#btnBack');
     b.style.display = back ? '' : 'none';
     b.onclick = back || null;
@@ -943,7 +1020,8 @@ function localizeDOM(root) {
     const raw = node.nodeValue, key = raw.trim();
     if (!key || known[key] === undefined) return;   // переводим только известные служебные строки
     I18N.registry.add(key);
-    if (d && d[key] != null) node.nodeValue = raw.replace(key, d[key]);
+    const val = (d && d[key] != null) ? d[key] : known[key];   // 4.34: нет родного — ставим английский
+    if (val != null) node.nodeValue = raw.replace(key, val);
   });
 }
 
@@ -1728,24 +1806,43 @@ function splashScreen(done) {
 }
 
 /* ---------- раздел 0: мастер получения ключа Gemini ---------- */
+/* 4.34 (QUEUE-80): подсказки прямо в мастере ключа. Люди застревают ровно в трёх местах —
+   не находят кнопку в AI Studio, не понимают, что такое ключ, боятся, что это платно.
+   Раскрывающиеся блоки не уводят человека из приложения: внешняя ссылка на первом запуске
+   опаснее всего — часть людей просто не возвращается. По той же причине отклонена кнопка
+   «подробная инструкция» на внешний PDF: PDF остаётся тем, что рассылают заранее. */
+function keyFaqHTML() {
+  const items = [
+    ['Не вижу такой кнопки', 'В Google AI Studio кнопка называется «Create API key» или «Get API key» и находится вверху страницы. Если вместо неё видите список проектов — выберите любой проект, кнопка появится. Если страница на английском, а вы ждали другой язык — это нормально, кнопка та же.'],
+    ['Что такое ключ API?', 'Это длинная строка вида AIza… — пароль, по которому Google узнаёт, что запрос ваш. AILEX хранит её только на этом устройстве и никуда не передаёт. Сохраните копию ключа в заметках: Google показывает его один раз.'],
+    ['Это платно?', 'Нет. У Gemini есть бесплатная квота, и её хватает на ежедневные занятия. Карта не нужна. Если занятия вдруг приостановятся — подождите минуту и продолжайте.']
+  ];
+  return '<div style="margin-top:10px">' + items.map(([q,a]) =>
+      '<details style="border-top:1px solid var(--line,#333);padding:8px 0">'
+    + '<summary style="cursor:pointer;font-size:13.5px;color:var(--accent,#6ea8fe)">' + esc(t(q)) + '</summary>'
+    + '<p style="margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--dim)">' + esc(t(a)) + '</p>'
+    + '</details>').join('') + '</div>';
+}
+
 function keyWizard(afterFail) {
   Screen.show(`
-    <div class="eyebrow">Шаг 1 из 1 · делается один раз</div>
-    <h1>Ключ доступа к Gemini</h1>
-    <p class="sub">Чтобы AILEX мог учить вас, нужен бесплатный ключ Gemini API. Это займёт около минуты.${afterFail?'<br><b style="color:var(--err)">Прежний ключ не работает — получите или вставьте новый.</b>':''}</p>
+    <div class="eyebrow">${t('Шаг 1 из 1 · делается один раз')}</div>
+    <h1>${t('Ключ доступа к Gemini')}</h1>
+    <p class="sub">${t('Чтобы AILEX мог учить вас, нужен бесплатный ключ Gemini API. Это займёт около минуты.')}${afterFail?'<br><b style="color:var(--err)">'+t('Прежний ключ не работает — получите или вставьте новый.')+'</b>':''}</p>
     <div class="card glow">
       <div class="steps-guide">
-        <p>Нажмите «Получить ключ» — откроется Google AI Studio (войдите в свой Google-аккаунт, если попросит).</p>
-        <p>Нажмите там «Create API key» — ключ создаётся в один-два тапа.</p>
-        <p>Скопируйте ключ и вставьте его в поле ниже. Больше вы его не увидите — он хранится на устройстве.</p>
+        <p>${t('Нажмите «Получить ключ» — откроется Google AI Studio (войдите в свой Google-аккаунт, если попросит).')}</p>
+        <p>${t('Нажмите там «Create API key» — ключ создаётся в один-два тапа.')}</p>
+        <p>${t('Скопируйте ключ и вставьте его в поле ниже. Больше вы его не увидите — он хранится на устройстве.')}</p>
       </div>
-      <button class="btn btn-ghost" onclick="window.open('https://aistudio.google.com/app/apikey','_blank')">Получить ключ в Google AI Studio ↗</button>
+      <button class="btn btn-ghost" onclick="window.open('https://aistudio.google.com/app/apikey','_blank')">${t('Получить ключ в Google AI Studio ↗')}</button>
       <div class="divider"></div>
-      <label class="fld"><span>Вставьте ключ API</span>
+      <label class="fld"><span>${t('Вставьте ключ API')}</span>
         <input type="password" id="apiKeyInput" placeholder="AIza..." autocomplete="off">
       </label>
-      <button class="btn btn-primary" id="saveKey">Сохранить и продолжить</button>
-      <p class="note">Ключ привязан к вашему аккаунту Google и оплачивается вами (бесплатной квоты достаточно для занятий). AILEX хранит его только на этом устройстве.</p>
+      <button class="btn btn-primary" id="saveKey">${t('Сохранить и продолжить')}</button>
+      <p class="note">${t('Ключ привязан к вашему аккаунту Google и оплачивается вами (бесплатной квоты достаточно для занятий). AILEX хранит его только на этом устройстве.')}</p>
+      ${keyFaqHTML()}
     </div>`);
   $('#saveKey').onclick = async () => {
     const k = $('#apiKeyInput').value.trim();
@@ -1755,6 +1852,7 @@ function keyWizard(afterFail) {
     try {
       await Gemini.validateKey();
       toast('Ключ работает ✓');
+      I18N.pump();          // 4.34: ключ появился — интерфейс можно наконец перевести на родной язык
       boot();
     } catch(e) {
       if (String(e.message).startsWith('KEY:')) { toast('Ключ не принят сервером Google', true); keyWizard(true); }
@@ -1888,8 +1986,8 @@ const HowToText = `
     💡 <b>Лампочка</b> — подсказка по заданию. Первый тап даёт начало слова, второй — полный ответ.<br><br>
     📐 <b>Линейка</b> — показывает грамматическое правило текущего задания.<br><br>
     📒 <b>Слова задания</b> внизу — слова с переводом, которые понадобятся для ответа. Словарь искать не нужно.<br><br>
-    📖 <b>Словарь</b>: тап по слову открывает карточку с формами, транскрипцией и мнемоникой.<br><br>
-    🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом. Тап по слову работает и там: любое слово реплики собеседника можно тронуть и получить перевод.
+    📖 <b>Словарь</b>: тап по слову открывает карточку с формами, транскрипцией и мнемоникой.${IS_APPLE ? '' : `<br><br>
+    🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом. Тап по слову работает и там: любое слово реплики собеседника можно тронуть и получить перевод.`}
   </div>
   <p class="note" style="margin-top:12px">Не бойтесь ошибаться — разбор ошибки появляется сразу, а прогресс сохраняется автоматически.</p>`;
 
@@ -1907,13 +2005,13 @@ function showHowTo() {
 
 function onboardingIntro() {
   Screen.show(`
-    <div class="eyebrow">Новый профиль</div>
-    <h1>Здравствуйте! Я — AILEX.</h1>
-    <p class="sub">Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.</p>
+    <div class="eyebrow">${t('Новый профиль')}</div>
+    <h1>${t('Здравствуйте! Я — AILEX.')}</h1>
+    <p class="sub">${t('Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.')}</p>
     <div class="card glow">
-      <p style="font-size:14.5px;color:var(--dim);line-height:1.6">Прогресс сохраняется автоматически в базу <b style="color:var(--ink)">AILEX_StatusDB</b> — вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.</p>
+      <p style="font-size:14.5px;color:var(--dim);line-height:1.6">${t('Прогресс сохраняется автоматически в базу')} <b style="color:var(--ink)">AILEX_StatusDB</b> ${t('— вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.')}</p>
     </div>
-    <button class="btn btn-primary" id="go">Начать</button>`);
+    <button class="btn btn-primary" id="go">${t('Начать')}</button>`);
   $('#go').onclick = () => askProfile(0, {});
 }
 
@@ -1976,7 +2074,7 @@ function askProfile(i, acc) {
   if (q.type === 'lang') {
     field = `
       <div class="lang-picker" id="langPicker">
-        <input type="text" id="langSearch" placeholder="Поиск языка…"
+        <input type="text" id="langSearch" placeholder="${esc(t('Поиск языка…'))}"
           autocomplete="off" autocorrect="off" spellcheck="false"
           style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
                  background:var(--card);color:var(--ink);font-size:16px;box-sizing:border-box;margin-bottom:8px">
@@ -1986,16 +2084,16 @@ function askProfile(i, acc) {
         <input type="hidden" id="val" value="">
       </div>`;
   } else if (q.type === 'area') {
-    field = `<textarea id="val" rows="3" placeholder="${esc(q.ph)}"></textarea>`;
+    field = `<textarea id="val" rows="3" placeholder="${esc(t(q.ph))}"></textarea>`;
   } else {
-    field = `<input type="${q.type}" id="val" placeholder="${esc(q.ph||'')}">`;
+    field = `<input type="${q.type}" id="val" placeholder="${esc(t(q.ph||''))}">`;
   }
   Screen.show(`
-    <div class="eyebrow">Анкета · ${i+1} / ${PROFILE_Q.length}</div>
-    <h1>${esc(q.q)}</h1>
-    ${q.note?`<p class="sub">${esc(q.note)}</p>`:'<div style="height:6px"></div>'}
+    <div class="eyebrow">${t('Анкета')} · ${i+1} / ${PROFILE_Q.length}</div>
+    <h1>${esc(t(q.q))}</h1>
+    ${q.note?`<p class="sub">${esc(t(q.note))}</p>`:'<div style="height:6px"></div>'}
     <div class="card">${field}</div>
-    <button class="btn btn-primary" id="next">Далее</button>`,
+    <button class="btn btn-primary" id="next">${t('Далее')}</button>`,
     { back: i>0 ? ()=>askProfile(i-1, acc) : null });
   if (q.type==='lang') {
     // дефолтное значение
@@ -2005,8 +2103,8 @@ function askProfile(i, acc) {
   }
   $('#next').onclick = () => {
     const v = $('#val').value.trim();
-    if (!v) return toast('Заполните поле', true);
-    if (q.k==='targetLang' && v===acc.nativeLang) return toast('Целевой язык должен отличаться от родного', true);
+    if (!v) return toast(t('Заполните поле'), true);
+    if (q.k==='targetLang' && v===acc.nativeLang) return toast(t('Целевой язык должен отличаться от родного'), true);
     acc[q.k] = q.type==='number' ? +v : v;
     askProfile(i+1, acc);
   };
@@ -2015,43 +2113,104 @@ function askProfile(i, acc) {
 /* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
 function placementIntro(profile) {
   Screen.show(`
-    <div class="eyebrow">Шаг 2</div>
-    <h1>Определение уровня</h1>
-    <p class="sub">Как лучше начать изучение ${esc(langName(profile.targetLang))}?</p>
-    <button class="btn btn-primary" id="go">Пройти короткий тест (рекомендуется)</button>
-    <p style="font-size:13px;color:var(--dim);text-align:center;margin:6px 0 4px">— или выберите старт вручную —</p>
-    <button class="btn btn-ghost" id="skipA1">Я новичок, но буквы читаю → начать с A1</button>
-    <button class="btn btn-ghost" id="skipA0">Не знаю язык совсем, даже буквы → начать с основ A0</button>`);
+    <div class="eyebrow">${t('Шаг 2')}</div>
+    <h1>${t('Определение уровня')}</h1>
+    <p class="sub">${t('Как лучше начать изучение')} ${esc(langName(profile.targetLang))}?</p>
+    <button class="btn btn-primary" id="go">${t('Пройти короткий тест (рекомендуется)')}</button>
+    <p style="font-size:13px;color:var(--dim);text-align:center;margin:6px 0 4px">${t('— или выберите старт вручную —')}</p>
+    <button class="btn btn-ghost" id="skipA1">${t('Я новичок, но буквы читаю → начать с A1')}</button>
+    <button class="btn btn-ghost" id="skipA0">${t('Не знаю язык совсем, даже буквы → начать с основ A0')}</button>`);
   $('#go').onclick    = () => runPlacement(profile);
   $('#skipA1').onclick = () => finishOnboarding(profile, 'A1');
   $('#skipA0').onclick = () => finishOnboarding(profile, 'A0');
 }
-async function runPlacement(profile) {
-  Screen.loader('Готовлю вопросы теста…');
-  let qs;
-  try {
-    const resp = await Gemini.call({
-      task:'placement_test', target_lang: profile.targetLang, native_lang: profile.nativeLang,
-      levels:['A1','A2','B1','B2','C1'], per_level: 3
-    },
-    `{"questions":[
+/* =====================================================================
+   4.34 — PLACEMENT TEST: НАБОР ВОПРОСОВ ГАРАНТИРУЕТ ПРИЛОЖЕНИЕ (QUEUE-79)
+   Порог подтверждения уровня («2 верных из 3» — большинство) был записан в коде
+   числом, а фактическое число вопросов на уровень приходило от модели и никак не
+   проверялось: единственной проверкой было qs.length < 6. Ответ из 10 вопросов
+   (по 2 на уровень) молча превращал большинство в требование 100% — одна промашка
+   на A2 роняла человека со школьным немецким на A1. Порог — это методика, а методика
+   по конституции принадлежит приложению. Теперь набор нормализует код: группировка
+   по уровням в порядке A1→C1, отсев брака и дублей, обрезка до трёх, добор
+   недостающего отдельным запросом — и только потом тест.
+   Заодно закрыты три спутника: порядок вопросов задаёт приложение (раньше шли в
+   порядке ответа модели, и перемешанные уровни ломали лестницу); лексический вопрос
+   больше не пополняет счётчик ошибок (по спеке он не участвует в ранней остановке,
+   но его ошибка срабатывала на следующем грамматическом вопросе); уровень без
+   вопросов не считается «проваленным» на пустом множестве.
+   ===================================================================== */
+const PLACEMENT_LEVELS    = ['A1','A2','B1','B2','C1'];
+const PLACEMENT_PER_LEVEL = 3;
+const PLACEMENT_PASS      = 2;    // большинство из трёх
+const PLACEMENT_SCHEMA =
+  `{"questions":[
       {"level":"A1","skill":"grammar","question":"вопрос на целевом языке: ТОЛЬКО структура/порядок слов/спряжение — используй лексику уровня НИЖЕ A1 (самые базовые слова)","options":["в1","в2","в3","в4"],"correct_index":0},
-      {"level":"A1","skill":"grammar","question":"ещё один структурный вопрос A1 с базовой лексикой","options":["в1","в2","в3","в4"],"correct_index":0},
-      {"level":"A1","skill":"vocab","question":"вопрос на узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":0}
-    ]} — ровно по 3 вопроса на каждый уровень (2 grammar + 1 vocab), по возрастанию сложности. Grammar-вопросы: лексика строго из уровня НИЖЕ тестируемого. Vocab-вопросы: узнавание слова на целевом языке → перевод (или наоборот). Варианты на целевом языке (кроме vocab-вопросов с переводом).`);
-    qs = resp.questions;
-    if (!Array.isArray(qs) || qs.length < 6) throw 0;
-  } catch(e) { toast('Не удалось получить тест — начнём с A1', true); return finishOnboarding(profile, 'A1'); }
+      {"level":"A1","skill":"grammar","question":"ещё один структурный вопрос A1 с базовой лексикой","options":["в1","в2","в3","в4"],"correct_index":1},
+      {"level":"A1","skill":"vocab","question":"вопрос на узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":2}
+    ]} — РОВНО ПО 3 вопроса на КАЖДЫЙ запрошенный уровень (2 grammar + 1 vocab), по возрастанию сложности. Меньше трёх на уровень — брак ответа. Grammar-вопросы: лексика строго из уровня НИЖЕ тестируемого. Vocab-вопросы: узнавание слова на целевом языке → перевод (или наоборот). Варианты на целевом языке (кроме vocab-вопросов с переводом). correct_index — реальная позиция верного варианта, НЕ всегда 0: раскладывай верный ответ по разным позициям.`;
 
-  // Счётчики v2: разделяем wrongChoice и dontKnow
+// Разбор ответа модели: только валидные вопросы, разложенные по уровням. Брак молча отбрасывается.
+function placementNormalize(list) {
+  const by = {}; PLACEMENT_LEVELS.forEach(L => by[L] = []);
+  (Array.isArray(list) ? list : []).forEach(q => {
+    if (!q || !q.question || !Array.isArray(q.options) || q.options.length < 2) return;
+    const L = String(q.level||'').toUpperCase().trim();
+    if (!by[L]) return;                                    // уровень вне лестницы
+    const ci = +q.correct_index;
+    if (!(ci >= 0 && ci < q.options.length)) return;        // без верного ответа вопрос бесполезен
+    const text = String(q.question).trim();
+    if (by[L].some(x => norm(x.question) === norm(text))) return;   // модель повторилась
+    by[L].push({ level:L, skill: (q.skill === 'vocab' ? 'vocab' : 'grammar'),
+                 question:text, options:q.options.map(o => String(o)), correct_index:ci });
+  });
+  return by;
+}
+
+async function runPlacement(profile) {
+  Screen.loader(t('Готовлю вопросы теста…'));
+  const req = extra => ({ task:'placement_test', target_lang: profile.targetLang, native_lang: profile.nativeLang,
+                          levels: PLACEMENT_LEVELS, per_level: PLACEMENT_PER_LEVEL, ...extra });
+  let by;
+  try {
+    const resp = await Gemini.call(req({}), PLACEMENT_SCHEMA);
+    by = placementNormalize(resp && resp.questions);
+  } catch(e) { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
+
+  // Добор: уровни, на которых пришло меньше трёх вопросов. Один дополнительный запрос,
+  // и только когда есть что добирать — порог остаётся методическим решением, а не следствием
+  // того, сколько строк вернула модель.
+  const short = PLACEMENT_LEVELS.filter(L => by[L].length < PLACEMENT_PER_LEVEL);
+  if (short.length) {
+    try {
+      const add = await Gemini.call(req({ levels: short,
+        exclude: PLACEMENT_LEVELS.flatMap(L => by[L].map(q => q.question)).slice(0, 20) }), PLACEMENT_SCHEMA);
+      const by2 = placementNormalize(add && add.questions);
+      short.forEach(L => by2[L].forEach(q => {
+        if (by[L].length < PLACEMENT_PER_LEVEL && !by[L].some(x => norm(x.question) === norm(q.question))) by[L].push(q);
+      }));
+    } catch(_) { /* добор не вышел — работаем тем, что есть, порог считается ниже по факту */ }
+  }
+
+  // Лестница: только уровни, где есть хотя бы два вопроса, в фиксированном порядке A1→C1.
+  const ladder = PLACEMENT_LEVELS.filter(L => by[L].length >= 2);
+  if (!ladder.length || ladder[0] !== 'A1') { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
+  const count = {}, need = {};
+  ladder.forEach(L => {
+    by[L] = by[L].slice(0, PLACEMENT_PER_LEVEL);
+    count[L] = by[L].length;
+    // Полный набор — большинство из трёх. Неполный (добор не удался) — большинство от фактического
+    // числа с округлением ВНИЗ: требовать 2 из 2 значило бы вернуть ровно тот баг, который чиним.
+    need[L] = count[L] >= PLACEMENT_PER_LEVEL ? PLACEMENT_PASS : Math.max(1, count[L] - 1);
+  });
+  const qs = ladder.flatMap(L => by[L]);          // порядок задаёт приложение, а не ответ модели
+
   let idx = 0, wrongChoice = {}, dontKnow = {}, passed = {}, stopped = false;
 
   const shouldStop = (level) => {
-    const wc = wrongChoice[level]||0;
-    const dk = dontKnow[level]||0;
-    const q  = qs.filter(q=>q.level===level);
-    // Останавливаем если: 2+ явных ошибки ИЛИ сумма ошибок/незнаний >= кол-ва вопросов уровня
-    return wc >= 2 || (wc + dk) >= q.length;
+    if (!count[level]) return false;                       // уровень не тестировался — не «провален»
+    const wc = wrongChoice[level]||0, dk = dontKnow[level]||0;
+    return wc >= 2 || (wc + dk) >= count[level];
   };
 
   const step = () => {
@@ -2060,41 +2219,37 @@ async function runPlacement(profile) {
     const isVocab = q.skill === 'vocab';
     const opts = q.options.map((o,i)=>({o,i}));
     Screen.show(`
-      <div class="eyebrow">Тест уровня · вопрос ${idx+1} / ${qs.length}</div>
+      <div class="eyebrow">${t('Тест уровня · вопрос')} ${idx+1} / ${qs.length}</div>
       <div class="card">
         <div class="drill-head">
           <span class="n">${esc(q.level)}</span>
-          <span style="font-size:11px;color:var(--dim);margin-left:8px">${isVocab?'лексика':'грамматика'}</span>
+          <span style="font-size:11px;color:var(--dim);margin-left:8px">${isVocab?t('лексика'):t('грамматика')}</span>
         </div>
         <div class="task-text">${esc(q.question)}</div>
         ${shuffle(opts).map(x=>`<button class="opt" data-i="${x.i}">${esc(x.o)}</button>`).join('')}
-        <button class="opt" data-i="-1" style="color:var(--dim)">Не знаю</button>
+        <button class="opt" data-i="-1" style="color:var(--dim)">${t('Не знаю')}</button>
       </div>`);
     document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
       const chosen = +b.dataset.i;
       if (chosen === -1) {
-        // «Не знаю» — только grammar-вопросы участвуют в остановке
-        if (!isVocab) dontKnow[q.level] = (dontKnow[q.level]||0)+1;
+        if (!isVocab) dontKnow[q.level] = (dontKnow[q.level]||0)+1;      // vocab в остановке не участвует
       } else if (chosen === q.correct_index) {
         passed[q.level] = (passed[q.level]||0)+1;
-      } else {
-        wrongChoice[q.level] = (wrongChoice[q.level]||0)+1;
+      } else if (!isVocab) {
+        wrongChoice[q.level] = (wrongChoice[q.level]||0)+1;              // ошибка в лексике тоже не копится
       }
-      // Проверяем остановку только после grammar-вопросов
       if (!isVocab && shouldStop(q.level)) stopped = true;
       idx++; step();
     });
   };
 
   const done = () => {
-    // Уровень подтверждён если ≥ 2 верных из 3 (большинство) и не было ранней остановки
     let level = 'A1';
-    for (const L of ['A1','A2','B1','B2','C1']) {
-      if ((passed[L]||0) >= 2 && !shouldStop(L)) level = L;
+    for (const L of ladder) {
+      if ((passed[L]||0) >= need[L] && !shouldStop(L)) level = L;
       else break;
     }
-    // Если вообще 0 верных на A1 → направляем на A0
-    if ((passed['A1']||0) === 0) level = 'A0';
+    if ((passed['A1']||0) === 0) level = 'A0';   // ни одного верного на A1 → путь с основ
     finishOnboarding(profile, level);
   };
   step();
@@ -2235,7 +2390,7 @@ function mainMenu() {
         : isA0 ? 'Чтение, произношение, базовая лексика'
         : '21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSuper"${cachedSuper?' style="border:1px solid var(--accent)"':''}><span class="ic">${cachedSuper?'▶️':'🔁'}</span><span class="t"><b>${cachedSuper?'Продолжить Суперквест':'Суперквест'}</b><small>${cachedSuper?'Глава '+esc(String(cachedSuper.actIndex||1))+' из '+esc(String(cachedSuper.actsTotal||'?'))+' · сцена '+esc(String(cachedSuper.sqScene))+' · прогресс сохранён':'Повторение: квест-погружение на 30–50 предложений'}</small></span><span class="chev">›</span></button>
-      <button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>
+      ${IS_APPLE ? '' : `<button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>`}
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
@@ -2258,7 +2413,7 @@ function mainMenu() {
     if (isA0) return toast('Суперквест откроется после завершения уровня A0 и первых уроков A1', true);
     DB.vocab.length >= 7 ? startSuperLesson() : toast('Сначала пройдите хотя бы один урок', true);
   };
-  $('#mTalk').onclick   = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
+  if ($('#mTalk')) $('#mTalk').onclick = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
   $('#mRules').onclick  = showRules;
   $('#mProf').onclick   = profileSelect;
@@ -4247,11 +4402,11 @@ async function finishLesson() {
     <div style="height:8px"></div>
     <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?'Экзамен '+esc(next.replace('EXAM_','')):'Следующий урок '+esc(next)}</button>
     <button class="btn btn-ghost" id="bSuper">Суперквест (повторение)</button>
-    <button class="btn btn-ghost" id="bTalk">🎙️ Поговорить</button>
+    ${IS_APPLE ? '' : `<button class="btn btn-ghost" id="bTalk">🎙️ Поговорить</button>`}
     <button class="btn btn-ghost" id="bExit">Выход в меню</button>`);
   $('#bNext').onclick  = () => next.startsWith('EXAM_') ? startExam(next) : startLesson(next);
   $('#bSuper').onclick = startSuperLesson;
-  $('#bTalk').onclick  = startDialogue;
+  if ($('#bTalk')) $('#bTalk').onclick = startDialogue;
   $('#bExit').onclick  = mainMenu;
 }
 
@@ -4321,6 +4476,125 @@ function tapAllWordsHTML(text) {
 }
 
 // Поиск слова: сначала словарь, потом Gemini
+/* =====================================================================
+   4.32 — КАРТОЧКА ТАПНУТОГО СЛОВА (QUEUE-75, QUEUE-76, QUEUE-77; билд v74)
+   Прогон Суперквеста SUPER_A1.1.13 вскрыл три связанных дефекта тап-перевода:
+   (1) КОНТЕКСТ НЕ ПЕРЕДАВАЛСЯ. Контракт translate_word получал голый токен без
+       предложения — межъязыковой омограф разрешался наугад: тап по «plant»
+       (форма нем. planen) вернул английское чтение «die Pflanze / растение».
+   (2) ЗАГОЛОВОК БРАЛСЯ ОТ МОДЕЛИ. Попап рисовал term ИЗ ОТВЕТА, а не тапнутый
+       токен, поэтому подмена слова доходила до экрана; дальше 📘 разбирал уже
+       подменённое слово и честно отвечал «„die Pflanze“ нет в тексте». Ошибка
+       ещё и уходила в Словарь как «встреченное» и попадала в очередь SRS.
+   (3) РАЗБОР ТРЕБОВАЛ ВТОРОГО ТАПА. Неопределённая форма глагола, множественное
+       число, формы неправильного глагола открывались только через 📘.
+   Лечение по конституции: привязка карточки к тапнутому токену и проверка
+   родства словарной формы — код; содержание карточки — Gemini. Карточка
+   заполняется одним запросом и кэшируется в Словаре навсегда.
+   ===================================================================== */
+const TAP_CARD_V = 2;                       // версия схемы карточки; запись старее — дозаполняется на месте
+const stripArtG = x => String(x||'').trim().replace(/^(der|die|das|ein|eine)\s+/i,'');
+
+const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в тексте","term":"словарная форма","translit":"[транскрипция буквами native_lang]",'
+  + '"translation":"перевод формы из текста на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other",'
+  + '"morph":"одна короткая строка о форме на native_lang или пусто","forms":"три формы неправильного глагола или пусто","is_irregular":true}';
+
+const TAP_CARD_RULES =
+    'КОНТЕКСТ (критично): слово word стоит в предложении sentence и является словом target_lang. Разбирай его ТОЛЬКО как слово target_lang в этом предложении. '
+  + 'ЗАПРЕЩЕНО читать его как слово другого языка, даже если написание совпадает: нем. «plant» — форма глагола planen («планирует»), а НЕ английское plant («растение»). Если sentence пуст — всё равно считай word словом target_lang. '
+  + 'surface — ровно та форма, что стоит в тексте, без изменений. '
+  + 'term — словарная форма: существительное с артиклем рода (das Buch), глагол в неопределённой форме (planen), прилагательное в начальной форме. Если форма из текста и есть словарная — повтори её. '
+  + 'translation — перевод формы так, как она стоит в предложении («планирует», а не «планировать»). '
+  + 'morph — ОДНА короткая строка на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). Для глагола: словарная форма с переводом и лицо/время — «planen — планировать; здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer». Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
+  + 'forms — ТОЛЬКО для неправильного глагола: три основные формы («fahren – fuhr – ist gefahren»). Для правильного глагола и других частей речи — пустая строка. is_irregular — true только для неправильного глагола. '
+  + 'ТРАНСКРИПЦИЯ (критично): translit — буквами native_lang, без знаков IPA, и передаёт звучание формы surface. Перед выдачей сверь звук за звуком: КАЖДЫЙ согласный слова surface обязан быть отражён в транскрипции. Пропуск согласной — брак: Abenteuer → [абэнтойэр], а НЕ [абэнойэр].';
+
+/* QUEUE-76: словарная форма обязана быть родственна тапнутому токену. Это гарантия кода,
+   а не просьба к модели: приложение знает, по чему тапнули, и не имеет права показать
+   вместо этого другое слово. Проверка нарочно терпима к аблауту (liest → lesen):
+   помимо общего начала принимается совпадение по полю forms из Ядра языка/Словаря. */
+function tapRelated(tapped, dict) {
+  const a = norm(stripArtG(tapped)), b = norm(stripArtG(dict));
+  if (!a || !b) return false;
+  if (a === b || a.indexOf(b) === 0 || b.indexOf(a) === 0) return true;
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (i >= 3) return true;                                    // общий корень: plant ↔ planen
+  try {                                                       // аблаут/супплетивизм — по локальным формам
+    const pool = [].concat((typeof Core!=='undefined' && Core.list) ? Core.list() : [], (DB && DB.vocab) || []);
+    const rec = pool.find(w => w && w.term && norm(stripArtG(w.term)) === b);
+    if (rec && rec.forms) {
+      const esc0 = a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      if (new RegExp('(^|[^\\wÄäÖöÜüß])' + esc0 + '([^\\wÄäÖöÜüß]|$)').test(norm(rec.forms))) return true;
+    }
+  } catch(_) {}
+  return false;
+}
+
+// Совпадение записи с тапнутым токеном: словарная форма, форма без артикля или запомненная словоформа
+function tapMatch(rec, t) {
+  if (!rec || !rec.term) return false;
+  return norm(rec.term) === norm(t) || norm(stripArtG(rec.term)) === norm(stripArtG(t))
+      || (Array.isArray(rec.surfaces) && rec.surfaces.indexOf(norm(t)) >= 0);
+}
+
+// Запись сделана до 4.32 (нет морфологии) — её надо дозаполнить. Служебные слова пропускаем:
+// закрытые классы полностью описаны в Ядре языка (v64), контекст даёт 📘.
+function tapNeedsCard(w) {
+  if (!w || w.mv >= TAP_CARD_V) return false;
+  return !CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase());
+}
+
+async function fetchWordCard(token, sentence, strict) {
+  const p = DB.profile;
+  let out = null;
+  try {
+    out = await Gemini.call({
+      task:'translate_word', target_lang:p.targetLang, native_lang:p.nativeLang,
+      word: token, sentence: sentence || '',
+      rules: TAP_CARD_RULES + (strict
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал словарную форму, не связанную со словом «'+token+'». «'+token+'» — слово target_lang из sentence; верни term, формой которого «'+token+'» действительно является.'
+        : '')
+    }, TAP_CARD_SCHEMA);
+  } catch(e) { return null; }
+  if (!out || typeof out !== 'object') return null;
+  out.surface = token;                       // гарантия кода: карточка всегда о тапнутом токене
+  out.mv = TAP_CARD_V;
+  if (out.term && !tapRelated(token, out.term)) {
+    if (!strict) return await fetchWordCard(token, sentence, true);
+    out.term = ''; out.morph = ''; out.forms = ''; out.unverified = true;   // непроверяемое не показываем и не храним
+  }
+  return out;
+}
+
+function mergeWordCard(w, f) {
+  ['term','surface','translit','translation','part_of_speech','morph','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
+  if (typeof f.is_irregular === 'boolean') w.is_irregular = f.is_irregular;
+  if (f.unverified) w.unverified = true; else w.mv = f.mv;
+}
+
+// Запись «встреченного» в Словарь. Служебные слова не пишем (QUEUE-69);
+// непроверенную словарную форму не пишем тем более (QUEUE-76) — иначе SRS учит чужому слову.
+function saveTappedWord(w, tapped) {
+  try {
+    if (!w || !w.term || w.unverified) return;
+    if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return;
+    const ex = DB.vocab.find(v => norm(v.term) === norm(w.term) || norm(stripArtG(v.term)) === norm(stripArtG(w.term)));
+    const rec = ex || { term:w.term, translation:'', translit:'', emoji:'', part_of_speech:'', is_irregular:false,
+      forms:'', morph:'', lesson: L ? L.code : (TAP_ORIGIN || 'quest'), errors:0, status:'встреченное',
+      mnemonic:'', date_added:today(), date_review:today() };
+    // старая запись (нет mv) чинится целиком: транскрипция v73 могла потерять согласную
+    const repair = !(rec.mv >= TAP_CARD_V);
+    ['translit','translation','part_of_speech','forms','morph'].forEach(k => { if (w[k] && (repair || !rec[k])) rec[k] = w[k]; });
+    if (typeof w.is_irregular === 'boolean') rec.is_irregular = w.is_irregular;
+    rec.mv = TAP_CARD_V;
+    const sf = norm(tapped||'');
+    if (sf && sf !== norm(stripArtG(rec.term))) rec.surfaces = [...new Set([...(rec.surfaces||[]), sf])].slice(0,8);
+    if (!ex) DB.vocab.push(rec);
+    Storage.save(DB);
+  } catch(_) {}
+}
+
+// Поиск слова: сначала локальные источники, потом Gemini
 async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   const term = raw.replace(/[.,!?;:"'«»()]/g,'').trim();
   if (!term) return;
@@ -4330,60 +4604,31 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
     : '';
   // QUEUE-19: добавляем sceneWords в кэш сцены
   if (sceneWords && L) { if (!L.encounteredCache) L.encounteredCache = []; sceneWords.forEach(w=>{ if(w&&w.term&&!L.encounteredCache.find(x=>norm(x.term)===norm(w.term))) L.encounteredCache.push(w); }); }
-  // 1. Ищем в словаре пользователя
-  const _stripArt = x => String(x||'').replace(/^(der|die|das|ein|eine)\s+/i,'');
-  // QUEUE-19: сначала слова ТЕКУЩЕЙ сцены — контекст важнее общего словаря (иначе 'plane' → 'самолёт')
-  const sc0 = Array.isArray(sceneWords) ? sceneWords.find(w => w && w.term && (norm(w.term)===norm(term) || norm(_stripArt(w.term))===norm(_stripArt(term)))) : null;
-  if (sc0 && (sc0.translit || sc0.translation)) { showTapPopup(sc0, anchorEl, ctx); return; }
-  const found = DB.vocab.find(v => norm(v.term) === norm(term)
-    || norm(_stripArt(v.term)) === norm(_stripArt(term))
-  );
-  // Показываем из словаря только если запись полная (есть translit или translation).
-  // Иначе идём к Gemini — дополним пустые поля и тогда покажем попап.
-  if (found && (found.translit || found.translation)) { showTapPopup(found, anchorEl, ctx); return; }
-  // 2. Ищем в encountered_words текущего урока (сохранены в L.encounteredCache)
-  const enc = (L && L.encounteredCache) ? L.encounteredCache.find(w => norm(w.term)===norm(term) || norm(_stripArt(w.term))===norm(_stripArt(term))) : null;
-  if (enc && (enc.translit || enc.translation)) { showTapPopup(enc, anchorEl, ctx); return; }
-  // 2б. Ядро языка (QUEUE-69): закрытые классы — предлоги, союзы, частицы, местоимения, артикли —
+  // 1. Слова ТЕКУЩЕЙ сцены — контекст важнее общего словаря (QUEUE-19: иначе 'plane' → 'самолёт')
+  const sc0 = Array.isArray(sceneWords) ? sceneWords.find(w => tapMatch(w, term)) : null;
+  if (sc0 && (sc0.translit || sc0.translation)) { showTapPopup(sc0, anchorEl, ctx, term); return; }
+  // 2. Словарь пользователя. Показываем только полную запись; неполную дозаполняет Gemini.
+  const found = DB.vocab.find(v => tapMatch(v, term));
+  if (found && (found.translit || found.translation)) { showTapPopup(found, anchorEl, ctx, term); return; }
+  // 3. encountered_words текущего урока (сохранены в L.encounteredCache)
+  const enc = (L && L.encounteredCache) ? L.encounteredCache.find(w => tapMatch(w, term)) : null;
+  if (enc && (enc.translit || enc.translation)) { showTapPopup(enc, anchorEl, ctx, term); return; }
+  // 4. Ядро языка (QUEUE-69): закрытые классы — предлоги, союзы, частицы, местоимения, артикли —
   // сгенерированы при создании профиля и лежат локально. Тап по служебному слову отвечает
   // мгновенно, без запроса к Gemini и без записи в Словарь. Контекстное значение — по 📘.
-  const inCore = (typeof Core!=='undefined' && Core.list)
-    ? Core.list().find(w => w && w.term && (norm(w.term)===norm(term) || norm(_stripArt(w.term))===norm(_stripArt(term))))
-    : null;
-  if (inCore && (inCore.translit || inCore.translation)) { showTapPopup(inCore, anchorEl, ctx); return; }
-  // 3. Запрашиваем Gemini
+  const inCore = (typeof Core!=='undefined' && Core.list) ? Core.list().find(w => tapMatch(w, term)) : null;
+  if (inCore && (inCore.translit || inCore.translation)) { showTapPopup(inCore, anchorEl, ctx, term); return; }
+  // 5. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
   loading.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:60;display:flex;justify-content:center;pointer-events:none';
   loading.innerHTML = `<div style="pointer-events:auto;width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:16px 16px 0 0;padding:12px 16px;display:flex;align-items:center;gap:8px;box-shadow:0 -4px 24px rgba(0,0,0,.4)"><span style="color:var(--faint);font-size:14px">🔍 ${esc(term)}…</span></div>`;
   document.body.appendChild(loading);
-  let w = null;
-  try {
-    const p = DB.profile;
-    w = await Gemini.call(
-      { task:'translate_word', target_lang:p.targetLang, native_lang:p.nativeLang, word:term,
-        rules:'part_of_speech — часть речи слова. Если это существительное целевого языка, term верни в словарной форме с артиклем рода (нем.: das Buch).' },
-      '{"term":"слово как в тексте","translit":"[транскрипция родными буквами native_lang]","translation":"перевод на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other"}'
-    );
-  } catch(e) {}
+  const w = await fetchWordCard(term, ctx);
   loading.remove();
-  if (!w || !w.term) { showTapPopup({term, translit:'', translation:'?'}, anchorEl, ctx); return; }
-  // Сохраняем как «встреченное» в словарь; если слово уже есть — дополняем пустые поля
-  const existingW = DB.vocab.find(v => norm(v.term)===norm(w.term));
-  if (existingW) {
-    let updated = false;
-    if (w.translit && !existingW.translit) { existingW.translit = w.translit; updated = true; }
-    if (w.translation && !existingW.translation) { existingW.translation = w.translation; updated = true; }
-    if (updated) Storage.save(DB);
-  } else if (!CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) {
-    // QUEUE-69: служебные слова в Словарь не пишем — иначе счётчик прогресса и очередь
-    // повторения засоряются артиклями и союзами. Карточку показываем, запись не создаём.
-    DB.vocab.push({ term:w.term, translation:w.translation, translit:w.translit||'', emoji:'',
-      part_of_speech:w.part_of_speech||'', is_irregular:false, forms:'', lesson: L ? L.code : (TAP_ORIGIN || 'quest'),
-      errors:0, status:'встреченное', mnemonic:'', date_added:today(), date_review:today() });
-    Storage.save(DB);
-  }
-  showTapPopup(w, anchorEl, ctx);
+  if (!w) { showTapPopup({ term:'', surface:term, translit:'', translation:'?' }, anchorEl, ctx, term); return; }
+  saveTappedWord(w, term);
+  showTapPopup(w, anchorEl, ctx, term);
 }
 
 // Подключить тап-обработчики на все .tapall в контейнере
@@ -4393,9 +4638,31 @@ function attachTapAll(container, _sceneWords) {
   });
 }
 
-function showTapPopup(w, anchorEl, ctx) {
+/* Тело карточки (4.32). Порядок строк фиксирован: слово → транскрипция → перевод →
+   форма → формы неправильного глагола. Заголовок — тапнутый токен; словарная форма
+   рядом в скобках. Для существительного, тапнутого в словарной форме, заголовком
+   служит форма с артиклем (правило v53), скобка не дублируется. */
+function tapCardRows(w, tok, tts, whyBtn) {
+  const dict = w.term ? String(w.term) : '';
+  const same = dict && norm(stripArtG(dict)) === norm(stripArtG(tok));
+  const head = same ? dict : tok;
+  const paren = (dict && !same) ? ` <span style="color:var(--faint);font-weight:400;font-size:14px">(${esc(dict)})</span>` : '';
+  const morph = w.morph ? `<div style="margin-top:5px;color:var(--faint);font-size:12px;line-height:1.45">${esc(w.morph)}</div>` : '';
+  const forms = w.forms ? `<div style="margin-top:3px;color:var(--faint);font-size:12px;line-height:1.45">${w.is_irregular?'⚡ ':''}${esc(w.forms)}</div>` : '';
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-weight:600;font-size:15px">${esc(head)}${paren}</span>
+      ${tts}
+      <span style="color:var(--orange);font-size:13px;flex:1">${esc(w.translit||'')}</span>
+      ${whyBtn}
+      <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0">✕</button>
+    </div>
+    <div style="margin-top:4px;font-size:13px;line-height:1.45">${esc(w.translation||'')}</div>${morph}${forms}`;
+}
+
+function showTapPopup(w, anchorEl, ctx, tapped) {
   // QUEUE-18: попап рядом со словом, не снизу экрана
-  if (!w || !w.term) return;
+  if (!w || !(w.term || w.surface)) return;
+  const tok = tapped || w.surface || w.term;
   let old = document.getElementById('tapOverlay'); if (old) old.remove();
   const popup = document.createElement('div');
   popup.id = 'tapOverlay';
@@ -4406,15 +4673,8 @@ function showTapPopup(w, anchorEl, ctx) {
   const whyBtn = ctx
     ? `<button id="tapWhy" aria-label="Объяснить почему так" title="Почему так?" style="background:none;border:none;font-size:16px;cursor:pointer;padding:0 2px;flex-shrink:0">📘</button>`
     : '';
-  popup.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span style="font-weight:600;font-size:15px">${esc(w.term)}</span>
-      ${tts}
-      <span style="color:var(--orange);font-size:13px">${esc(w.translit||'')}</span>
-      <span style="color:var(--faint);font-size:13px;flex:1">${esc(w.translation||'')}</span>
-      ${whyBtn}
-      <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0">✕</button>
-    </div>
-    <div id="tapWhyBox" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--line,#333);font-size:13px;line-height:1.5"></div>`;
+  popup.innerHTML = `<div id="tapBody"></div>`
+    + `<div id="tapWhyBox" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--line,#333);font-size:13px;line-height:1.5"></div>`;
   popup.style.cssText = [
     'position:fixed',
     'z-index:200',
@@ -4444,12 +4704,31 @@ function showTapPopup(w, anchorEl, ctx) {
     popup.style.left = left + 'px';
     popup.style.top  = top  + 'px';
   }
-  clampPopup();
-  if (hasTTS(DB.profile.targetLang)) document.getElementById('tapSay').onclick = () => speak(w.term, DB.profile.targetLang);
-  document.getElementById('tapClose').onclick = () => popup.remove();
-  // explain_element: «почему так?» → запрос правила к Gemini, разворачиваем в том же попапе
-  const whyEl = document.getElementById('tapWhy');
-  if (whyEl) whyEl.onclick = () => explainElement(w.term, ctx, popup, clampPopup);
+  // Перерисовка тела: карточка может дозаполниться морфологией уже после открытия
+  function render() {
+    const body = popup.querySelector('#tapBody');
+    if (!body) return;
+    body.innerHTML = tapCardRows(w, tok, tts, whyBtn);
+    const sayEl = popup.querySelector('#tapSay');
+    if (sayEl) sayEl.onclick = () => speak(w.surface || w.term, DB.profile.targetLang);
+    popup.querySelector('#tapClose').onclick = () => popup.remove();
+    // explain_element разбирает ТУ форму, по которой тапнули, а не словарную (QUEUE-76)
+    const whyEl = popup.querySelector('#tapWhy');
+    if (whyEl) whyEl.onclick = () => explainElement(tok, ctx, popup, clampPopup);
+    clampPopup();
+  }
+  render();
+  // QUEUE-77: разбор формы не требует второго тапа. Если запись сделана до 4.32 —
+  // карточка дозаполняется в фоне и обновляется на месте; экран не блокируется.
+  if (tapNeedsCard(w)) {
+    (async () => {
+      const fresh = await fetchWordCard(tok, ctx);
+      if (!fresh) return;
+      mergeWordCard(w, fresh);
+      saveTappedWord(w, tok);
+      if (document.getElementById('tapOverlay') === popup) render();
+    })();
+  }
   // Закрывать при тапе вне попапа
   setTimeout(() => { document.addEventListener('click', function h(e){ if(!popup.contains(e.target)){popup.remove(); document.removeEventListener('click',h);} }); }, 50);
 }
@@ -4993,6 +5272,7 @@ function startRemedial(E) {
    двойной ввод (голос/текст), напарник, а не судья.
    ===================================================================== */
 function startDialogue() {
+  if (IS_APPLE) return mainMenu();   // входа нет, но на случай старой ссылки/эпизода — не открываем нерабочий режим
   const p = DB.profile;
   TAP_ORIGIN = 'dialogue';   // QUEUE-61: слова, тапнутые здесь, помечаются в словаре как пришедшие из диалога
   const mustUse = pick(DB.vocab.slice(-15).map(w=>w.term), Math.min(2, DB.vocab.length));
