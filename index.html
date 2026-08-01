@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v76';
+const APP_VERSION = 'v77';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1177,6 +1177,13 @@ const SURVIVAL_TOPICS = 'ориентирование и транспорт, м�
 // закрытые классы: список в языке конечен — грузим целиком один раз при создании профиля
 const CLOSED_BATCHES = [
   { part:'function_words', count:100, hint:'служебный костяк языка: местоимения (личные, притяжательные, указательные, вопросительные), предлоги, союзы, частицы, артикли, базовые наречия места и времени' },
+  /* 4.35: артикли отдельной партией и с захватом списка. Раньше набор артиклей лежал в коде
+     двенадцатью немецкими словами — на всех прочих языках проверка артикля молча не работала.
+     Список конечен и принадлежит языку, поэтому его отдаёт модель один раз при создании профиля.
+     Языку без артиклей (русский, польский, японский) приходит пусто — и вся логика артиклей
+     в приложении выключается сама, без отдельного условия «а есть ли они тут». */
+  { part:'articles', count:24, exact:false, capture:'articles',
+    hint:'ВСЕ формы артиклей целевого языка: определённые и неопределённые, во всех родах, числах и падежах, а также слитные с предлогами формы, если они в языке есть (нем. im, zum, zur). Каждая форма — отдельным объектом, term строго одно слово. ЕСЛИ АРТИКЛЕЙ В ЦЕЛЕВОМ ЯЗЫКЕ НЕТ — верни "words":[] и ничего не выдумывай.' },
   { part:'irregular_verbs_1', count:100, hint:'неправильные (сильные) глаголы — ПЕРВАЯ сотня по употребимости в живой речи' },
   { part:'irregular_verbs_2', count:100, hint:'неправильные (сильные) глаголы — ВТОРАЯ сотня по употребимости; не повторяй то, что в exclude' }
 ];
@@ -1233,7 +1240,9 @@ const Core = {
     if (o.part)  req.part  = o.part;
     if (o.hint)  req.hint  = o.hint;
     if (o.topic) req.topic = o.topic;
-    const r = await Gemini.call(req, CORE_SCHEMA + ' — ровно ' + o.count + ' объектов');
+    const r = await Gemini.call(req, CORE_SCHEMA + (o.exact === false
+      ? ' — не более ' + o.count + ' объектов; если таких слов в языке нет, верни "words":[]'
+      : ' — ровно ' + o.count + ' объектов'));
     return r.words || [];
   },
 
@@ -1244,7 +1253,8 @@ const Core = {
       for (let i=0; i<CLOSED_BATCHES.length; i++){
         const b = CLOSED_BATCHES[i];
         onStep && onStep(`Собираю основу языка — служебные слова и неправильные глаголы… ${i+1}/${total}`);
-        const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1' });
+        const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:b.exact });
+        if (b.capture === 'articles') this._captureArticles(w);
         this._add(w, { klass:'closed', layer:'general', cefr:'A1' });
         Storage.save(DB);
       }
@@ -1271,6 +1281,32 @@ const Core = {
       Storage.save(DB);
     }
     meta.levels.push(lvl); Storage.save(DB);
+  },
+
+  /* Артикли языка (4.35): список кладётся в coreMeta.articles, пустой список — законный ответ
+     и означает «в этом языке артиклей нет». Слова с пробелом внутри отбрасываем: артикль — одно
+     слово, а всё длинное в этом поле почти всегда пояснение модели, а не форма. */
+  _captureArticles(words){
+    const meta = this.meta(), out = [];
+    (words||[]).forEach(w => { const t = String((w && w.term) || '').trim();
+      if (t && !/\s/.test(t) && t.length <= 14) out.push(t); });
+    meta.articles = [...new Set(out)];
+    meta.articlesDone = true;
+    ART._k = '';                       // набор пересоберётся при следующем обращении
+  },
+  // профиль, созданный до 4.35, артиклей не получал: догружаем один раз фоном, ожидания не видно
+  ensureArticles(){
+    try {
+      const m = this.meta();
+      if (m.articlesDone || this._artPf || this._failed || !DB || !DB.profile) return;
+      if (!m.closedDone) return;       // на первой сборке артикли идут общим потоком
+      const b = CLOSED_BATCHES.find(x => x.capture === 'articles'); if (!b) return;
+      this._artPf = true;
+      this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:false })
+        .then(w => { this._captureArticles(w); this._add(w, { klass:'closed', layer:'general', cefr:'A1' }); Storage.save(DB); })
+        .catch(()=>{})                 // не помечаем сделанным — попробуем в следующий заход
+        .then(()=>{ this._artPf = false; });
+    } catch(e){}
   },
 
   needsBuild(){
@@ -2330,6 +2366,7 @@ function mainMenu() {
   // 4.26 / 4.30: профиль без Ядра языка или без карты грамматики (новый либо созданный раньше)
   if (Core.needsBuild() || GrammarCore.needsBuild() || GrammarCore.needsRebuild()) return coreBuildScreen(mainMenu);
   Core.maybePrefetch();                                      // следующий уровень — фоном, ожидания не видно
+  Core.ensureArticles();                                     // 4.35: артикли языка старым профилям
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
   const next = DB.nextStage;
@@ -3679,7 +3716,7 @@ function makeGapSentence(sentence, word) {
   const w = String(word).trim();
   candidates.push(w);
   const toks = w.split(/\s+/);
-  if (toks.length>1 && ARTICLES.includes(norm(toks[0]))) candidates.push(toks.slice(1).join(' '));
+  if (toks.length>1 && articleSet().has(norm(toks[0]))) candidates.push(toks.slice(1).join(' '));  // 4.35: артикли из языка
   candidates.push(toks[toks.length-1]);
   // длинная основа существительного (на случай склонения: Mechaniker в einen Mechaniker)
   const noun = toks[toks.length-1];
@@ -3704,8 +3741,38 @@ function wordSkeleton(word, reveal) {
 }
 function markSeen(term){ const v = DB.vocab.find(x=>norm(x.term)===norm(term)); if (v) { v.seen=true; } }
 
-// --- человечная проверка (версия 4.13) ---
-const ARTICLES = ['der','die','das','den','dem','des','ein','eine','einen','einem','einer','eines'];
+// --- человечная проверка (версия 4.13; источник артиклей — Ядро языка, 4.35) ---
+/* Здесь до 4.35 стоял список из двенадцати немецких артиклей, вписанный в код руками. Всё, что
+   на него опиралось, работало ровно для одного языка из 72 — и молча, без ошибки. Теперь набор
+   собирается из языка: закрытый класс Ядра (coreMeta.articles) плюс поле article существительных
+   Ядра и Словаря. Пустой набор = в языке артиклей нет, и каждая проверка артикля выключена. */
+const ART = { _k:'', _s:new Set() };
+function articleSet(){
+  try {
+    const m = (DB && DB.coreMeta) || {};
+    const core = (DB && Array.isArray(DB.core)) ? DB.core : [];
+    const voc  = (DB && Array.isArray(DB.vocab)) ? DB.vocab : [];
+    const key = (Array.isArray(m.articles) ? m.articles.length : -1) + ':' + core.length + ':' + voc.length;
+    if (key === ART._k) return ART._s;
+    const s = new Set();
+    (Array.isArray(m.articles) ? m.articles : []).forEach(a => { const k = norm(a); if (k && !/\s/.test(k)) s.add(k); });
+    // поле article существительных: доступно сразу, до прихода отдельной партии
+    const fromField = w => { const a = String((w && w.article) || '').trim();
+      if (!a || /[\s,;/()]/.test(a)) return;      // только однословное значение — прочее это пояснение
+      const k = norm(a); if (k) s.add(k); };
+    core.forEach(fromField); voc.forEach(fromField);
+    ART._k = key; ART._s = s; return s;
+  } catch(e){ return ART._s; }
+}
+// слово перед существительным, снимающее вопрос об артикле: сам артикль либо местоимение/частица
+// закрытого класса Ядра (mein, dieser, kein…). Список опять же берётся из языка, а не из кода.
+function isDeterminer(tok){
+  if (!tok) return false;
+  if (articleSet().has(tok)) return true;
+  const core = (DB && Array.isArray(DB.core)) ? DB.core : [];
+  const w = core.find(x => norm(x.term) === tok);
+  return !!(w && (w.part_of_speech === 'pron' || w.part_of_speech === 'part'));
+}
 // расстояние Левенштейна (с потолком) — для распознавания опечаток
 function editDistance(a, b) {
   a = String(a); b = String(b);
@@ -3722,11 +3789,22 @@ const tokenize = s => norm(s).replace(/[.,!?;:()«»"]/g,' ').split(/\s+/).filte
 function localVerdict(user, correct) {
   const u = tokenize(user), c = tokenize(correct);
   if (u.join(' ') === c.join(' ')) return { kind:'exact' };
-  // отличие только в артиклях
-  const uNoArt = u.filter(w=>!ARTICLES.includes(w)), cNoArt = c.filter(w=>!ARTICLES.includes(w));
-  if (uNoArt.join(' ') === cNoArt.join(' ') && u.length === c.length) {
-    const wrong = []; for (let i=0;i<c.length;i++) if (u[i]!==c[i] && ARTICLES.includes(c[i])) wrong.push(c[i]);
-    return { kind:'article', detail: wrong[0] };
+  /* Отличие только в артиклях (4.35). Условие «одинаковое число слов» снято: именно оно запирало
+     ученика, который дописал артикль, пропущенный в эталоне («Der Motor startet nicht» против
+     «Motor startet nicht»). Разводим два случая: ученик ДОБАВИЛ артикль, которого в эталоне нет,
+     сохранив все имеющиеся, — это не ошибка и не «почти верно», ответ вернее эталона, засчитываем
+     молча; артикль перепутан или пропущен — прежнее поведение с замечанием. */
+  const A = articleSet();
+  if (A.size) {
+    const uNoArt = u.filter(w=>!A.has(w)), cNoArt = c.filter(w=>!A.has(w));
+    if (uNoArt.join(' ') === cNoArt.join(' ')) {
+      const uArt = u.filter(w=>A.has(w)), cArt = c.filter(w=>A.has(w));
+      if (uArt.join(' ') === cArt.join(' ')) return { kind:'exact' };
+      const kept = cArt.every(a => uArt.includes(a));
+      if (kept && uArt.length > cArt.length) return { kind:'exact', added:true };
+      const wrong = cArt.filter(a => !uArt.includes(a));
+      return { kind:'article', detail: wrong[0] || cArt[0] };
+    }
   }
   // мелкая опечатка: те же слова, общее расстояние ≤2, и одинаковое число слов
   if (u.length === c.length) {
@@ -3735,6 +3813,25 @@ function localVerdict(user, correct) {
     if (dist > 0 && dist <= 2) return { kind:'typo', detail: wrongPair };
   }
   return null; // непонятно локально — спросим Gemini (смысл/синонимы)
+}
+/* Существительные эталона, стоящие без артикля и без определителя (4.35). Слово считается
+   существительным по записи Ядра/Словаря с непустым полем article, поэтому проверка живёт ровно
+   в тех языках, где артикли есть: пустой набор артиклей — пустой ответ и полное молчание. */
+function bareNounHits(text){
+  const A = articleSet(); if (!A.size) return [];
+  const toks = tokenize(text); if (!toks.length) return [];
+  const arts = new Map();
+  const put = w => { if (!w || !w.term) return;
+    const a = String(w.article||'').trim();
+    if (a && !/[\s,;/()]/.test(a)) arts.set(norm(w.term), a + ' ' + String(w.term).trim()); };
+  ((DB && DB.core) || []).forEach(put); ((DB && DB.vocab) || []).forEach(put);
+  const hits = [];
+  toks.forEach((t, i) => {
+    const hit = arts.get(t); if (!hit) return;          // словарная запись: «артикль + слово как в словаре»
+    if (i > 0 && isDeterminer(toks[i-1])) return;
+    hits.push(hit);
+  });
+  return [...new Set(hits)].slice(0, 6);
 }
 // подсветить расхождение: эталон с выделенным отличающимся словом
 function highlightDiff(user, correct) {
@@ -4092,6 +4189,12 @@ async function validateScene(sc, p, cefr) {
     hitMarkers = GrammarCore.hitMarkers(String(sc.expected_target||'') + ' ' + String(sc.scaffold||''), cefr);
     overload = scaffoldOverloaded(sc.scaffold, cefr);
   } catch(_) {}
+  /* 1в) Голое существительное в эталоне (4.35). Запрет жил только текстом критерия (3) и протекал:
+     на SUPER_A1.1.13 эталоном стало «Motor startet nicht», при том что в глоссарии честно лежало
+     «der Motor» — ученик написал верно и был забракован. Код ищет и поднимает флаг; чинит модель,
+     потому что нулевой артикль в языке бывает законным (имена, вещественные, устойчивые обороты). */
+  let bareNouns = [];
+  try { bareNouns = bareNounHits(String(sc.expected_target||'')); } catch(_) {}
   // 2) Семантический валидатор (Gemini)
   let v = null;
   try {
@@ -4100,13 +4203,14 @@ async function validateScene(sc, p, cefr) {
       scene_text: sc.scene_text, prompt_for_user: sc.prompt_for_user,
       expected_target: sc.expected_target, scaffold: String(sc.scaffold||''),
       structural_collision: structuralCollision,
+      bare_nouns: bareNouns,
       banned_markers: GrammarCore.bannedMarkers(cefr),
       hit_markers: hitMarkers, scaffold_overload: overload,
       scaffold_cap: SCAFFOLD_CAP[cefr] || 0,
       rules:'Проверь согласованность задания по ПЯТИ критериям и при нарушении ПОЧИНИ. '
         + '(1) СМЫСЛ: expected_target обязан быть прямым ответом на prompt_for_user — на том же уровне вопроса. Если вопрос «кто делает: сам или коллега?» — ответ про того, кто делает (ich … selbst / ich rufe den Kollegen), а НЕ про режим работы. Если вопрос «что выбираешь: аэропорт или кафе?» — ответ называет аэропорт или кафе. Если эталон отвечает не на тот вопрос — приведи prompt_for_user и expected_target в соответствие, сохранив смысл сцены (обычно проще поправить вопрос под эталон). '
         + '(2) КОЛЛИЗИЯ: конструкция каркаса не должна быть уже показана в scene_text достроенной ДРУГИМ словом (если structural_collision=true — это уже обнаружено кодом, обязательно почини). Почини так, чтобы expected_target был выводим из контекста, а сцена не праймила неверное завершение. '
-        + '(3) УЗУАЛЬНОСТЬ И КОРРЕКТНОСТЬ СЛОВ: expected_target обязан быть живой, употребимой фразой носителя БЕЗ битых/несуществующих слов и без калек. Проверь каждое слово эталона: существует ли оно в такой форме (например «weiterlauf» НЕ существует — есть глагол «weiterlaufen» или существительное «das Weiterlaufen»; «das Programm weiterlaufend» — не по-немецки). Если в эталоне битое слово или неидиоматичная конструкция — перепиши задание под ПРОСТУЮ употребимую фразу строго уровня CEFR '+cefr+' (лучше упростить, чем сохранить кривую конструкцию). ОТДЕЛЬНО ПРОВЕРЬ АРТИКЛИ (4.31, критично): голое существительное там, где артикль обязателен, — ошибка эталона («Ich kaufe Buch» ❌ → «Ich kaufe das Buch» ✅). Эталон, который учит неверной фразе, хуже отсутствия задания: ученик пишет правильно и получает в ответ кривой образец. '
+        + '(3) УЗУАЛЬНОСТЬ И КОРРЕКТНОСТЬ СЛОВ: expected_target обязан быть живой, употребимой фразой носителя БЕЗ битых/несуществующих слов и без калек. Проверь каждое слово эталона: существует ли оно в такой форме (например «weiterlauf» НЕ существует — есть глагол «weiterlaufen» или существительное «das Weiterlaufen»; «das Programm weiterlaufend» — не по-немецки). Если в эталоне битое слово или неидиоматичная конструкция — перепиши задание под ПРОСТУЮ употребимую фразу строго уровня CEFR '+cefr+' (лучше упростить, чем сохранить кривую конструкцию). ОТДЕЛЬНО ПРОВЕРЬ АРТИКЛИ (4.31, критично): голое существительное там, где артикль обязателен, — ошибка эталона («Ich kaufe Buch» ❌ → «Ich kaufe das Buch» ✅). Если bare_nouns непусто — код уже нашёл в эталоне существительные без артикля и определителя и передал их вместе со словарным артиклем; по каждому реши, законен ли нулевой артикль в этой позиции (имя собственное, вещественное, устойчивый оборот, множественное неопределённое), и если нет — поставь артикль в нужном падеже и приведи scaffold с глоссарием в соответствие. Эталон, который учит неверной фразе, хуже отсутствия задания: ученик пишет правильно и получает в ответ кривой образец. '
         + '(4) СОГЛАСОВАННОСТЬ ГЛОССАРИЯ: слова в answer_glossary и форма, которую требует expected_target, обязаны совпадать — что показано ученику, то и в ответе (нельзя дать в глоссарии «weiterlauf», а в эталоне ждать «weiterlaufend»). ЗАПРЕТ ОТКРЫТОГО ВЫБОРА (4.31, критично): задание обязано иметь РОВНО ОДИН верный ответ, выводимый из scene_text. Если prompt_for_user предлагает выбрать одно из двух («работа или пауза?»), а сцена не говорит, что герой выбрал, — ученик даст верный ответ и будет забракован эталоном. Чини ТОЛЬКО переформулировкой: убери выбор из prompt_for_user и спроси о том, что в сцене уже определено. ЗАПРЕЩЕНО «починить» это добавлением второго варианта в answer_glossary — глоссарий не делает второй ответ допустимым, эталон всё равно один. Выбор живёт только в сюжетной развилке (choices), а не в языковом задании. '
         + '(5) УРОВЕНЬ И ПЛОТНОСТЬ ЗАДАНИЯ (4.30, критично): в expected_target и scaffold не должно быть НИ ОДНОГО слова или формы из banned_markers — это маркеры тем, которых ученик ещё не проходил. Если hit_markers непусто, значит запрещённое уже найдено кодом — обязательно перепиши задание так, чтобы обойтись без него (сменить конструкцию, а не подставить синоним той же непройденной темы). В scene_text эти слова допустимы и трогать сцену НЕ нужно. '
         + 'Если scaffold_overload=true — прочерков в каркасе больше потолка (scaffold_cap): перестрой задание под потолок, раскрыв лишние прочерки видимыми словами или упростив эталон до одного смыслового шага. Каркас — опора, а не пустая строка. '
@@ -4225,13 +4329,17 @@ async function runQuest(cfg) {
     $('#check').onclick = async () => {
       const a = $('#ans').value.trim(); if (!a) return;
       if (mustRetype) {
-        if (norm(a) === norm(correctForm)) return pass();
+        /* 4.35: сверка была строкой в строку, и повтор запирался намертво, если эталон беднее
+           верного ответа (артикль). Теперь тот же человечный вердикт, что и в уроке. */
+        const vr = localVerdict(a, correctForm);
+        if (norm(a) === norm(correctForm) || (vr && (vr.kind==='exact'||vr.kind==='typo'||vr.kind==='article'))) return pass();
         $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
       }
       if (correctForm && norm(a) === norm(correctForm)) return pass();
       // локальная человечная проверка: опечатка / только артикль — засчитываем
       if (correctForm) {
         const v = localVerdict(a, correctForm);
+        if (v && v.kind==='exact') return pass(a);            // 4.35: дописанный артикль — верно, без замечания
         if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
         if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
       }
@@ -5030,13 +5138,17 @@ async function runSuperquestAct(cfg) {
     $('#check').onclick = async () => {
       const a = $('#ans').value.trim(); if (!a) return;
       if (mustRetype) {
-        if (norm(a) === norm(correctForm)) return pass();
+        /* 4.35: сверка была строкой в строку, и повтор запирался намертво, если эталон беднее
+           верного ответа (артикль). Теперь тот же человечный вердикт, что и в уроке. */
+        const vr = localVerdict(a, correctForm);
+        if (norm(a) === norm(correctForm) || (vr && (vr.kind==='exact'||vr.kind==='typo'||vr.kind==='article'))) return pass();
         $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
       }
       if (correctForm && norm(a) === norm(correctForm)) return pass();
       // локальная человечная проверка: опечатка / только артикль — засчитываем
       if (correctForm) {
         const v = localVerdict(a, correctForm);
+        if (v && v.kind==='exact') return pass(a);            // 4.35: дописанный артикль — верно, без замечания
         if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
         if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
       }
