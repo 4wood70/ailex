@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v81';
+const APP_VERSION = 'v82';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -369,8 +369,10 @@ const I18N = {
       'Нет. У Gemini есть бесплатная квота, и её хватает на ежедневные занятия. Карта не нужна. Если занятия вдруг приостановятся — подождите минуту и продолжайте.':'No. Gemini has a free quota and it is enough for daily study. No card is needed. If lessons pause, wait a minute and carry on.',
       'Здравствуйте! Я — AILEX.':'Hello! I am AILEX.',
       'Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.':'A language teacher working to the CEFR standard. A few questions and we begin: your profile, a short level check, your first lesson.',
-      'Прогресс сохраняется автоматически в базу':'Progress saves itself to the database',
-      '— вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.':'— you just do the exercises. In Settings the database can be exported to a file and moved to another device.',
+      /* 4.38 (v81): служебное имя хранилища убрано с экрана приветствия. Приложение для людей,
+         а не для программистов: «AILEX_StatusDB» ничего не объясняет и только настораживает. */
+      'Прогресс сохраняется сам':'Your progress saves itself',
+      '— вы просто занимаетесь. В настройках занятия можно выгрузить файлом и перенести на другое устройство.':'— you just study. In Settings your progress can be saved to a file and moved to another device.',
       'Анкета':'Profile',
       'Как вас зовут?':'What is your name?',
       'Ваш родной язык?':'Your native language?',
@@ -421,6 +423,30 @@ const I18N = {
       'Сначала освоим чтение и базовую лексику, затем перейдём к A1.':'First we cover reading and basic vocabulary, then we move on to A1.',
       'Сохранено ✓':'Saved ✓',
       'Собираю словарь языка — это один раз…':'Building the language vocabulary — this happens once…',
+      'Собираю основу языка — служебные слова и неправильные глаголы…':'Building the core of the language — function words and irregular verbs…',
+      'Собираю словарь уровня':'Building the vocabulary for level',
+      'Строю карту грамматики языка…':'Building the grammar map of the language…',
+      /* 4.38 (v81): уведомления и заставки ожидания — теперь переводятся через toast()/loader(). */
+      'Тема обновлена ✓':'Topic updated ✓',
+      'Лексика темы обновлена ✓':'Topic vocabulary updated ✓',
+      'Тему доберём позже — урок работает':'We will finish the topic later — the lesson works',
+      'Проверяю связь…':'Checking the connection…',
+      'Ключ не принят':'Key not accepted',
+      'Ключ сохранён':'Key saved',
+      'Суперквест откроется после завершения уровня A0 и первых уроков A1':'The Superquest opens after you finish A0 and the first A1 lessons',
+      'Сначала пройдите хотя бы один урок':'Complete at least one lesson first',
+      'Импортировано ✓':'Imported ✓',
+      'Подсказки будут показаны заново ✓':'Tips will be shown again ✓',
+      'Готовлю урок':'Preparing the lesson',
+      'Память устройства переполнена — прогресс может не сохраниться':'Device storage is full — progress may not be saved',
+      'В этом уроке нет отдельного правила':'This lesson has no separate rule',
+      'Связь барахлит — ответ засчитан':'Connection is patchy — the answer is counted',
+      'Верно, опечатка:':'Correct, a typo:',
+      'Почти верно — артикль:':'Almost — the article:',
+      'Сохраняю и анализирую урок…':'Saving and reviewing the lesson…',
+      'Готовлю историю…':'Preparing the story…',
+      'Слишком мало слов для экзамена':'Not enough words for the exam yet',
+      'Распознавание речи недоступно — пишите текстом':'Speech recognition is unavailable — type instead',
       'Словарь языка соберём позже — урок будет работать':'We will build the vocabulary later — the lesson still works',
       'Обновляю карту грамматики — это один раз…':'Updating the grammar map — this happens once…',
       'Карту грамматики обновим позже — занятия работают':'We will update the grammar map later — lessons still work'
@@ -512,6 +538,8 @@ const I18N = {
     'Не знаю язык совсем, даже буквы → начать с основ A0','Готовлю вопросы теста…',
     'Не удалось получить тест — начнём с A1','Тест уровня · вопрос','лексика','грамматика','Не знаю',
     'Сохранено ✓','Собираю словарь языка — это один раз…',
+    'Собираю основу языка — служебные слова и неправильные глаголы…','Собираю словарь уровня',
+    'Строю карту грамматики языка…',
     'Словарь языка соберём позже — урок будет работать',
     'Обновляю карту грамматики — это один раз…','Карту грамматики обновим позже — занятия работают',
     'Ключ доступа к Gemini','Проверяю ключ…','Ключ работает ✓','Ключ не принят сервером Google',
@@ -1112,7 +1140,7 @@ const Screen = {
     window.scrollTo(0,0);
   },
   loader(msg) {
-    this.show(`<div class="loader"><div class="spin"></div><div>${esc(msg||'Запрос к Gemini…')}</div></div>`);
+    this.show(`<div class="loader"><div class="spin"></div><div>${esc(I18N.t(msg||'Запрос к Gemini…'))}</div></div>`);
   }
 };
 /* Шапка приложения: код текущего занятия рядом с номером билда (v68).
@@ -1396,7 +1424,9 @@ const Core = {
     if (!meta.closedDone){
       for (let i=0; i<CLOSED_BATCHES.length; i++){
         const b = CLOSED_BATCHES[i];
-        onStep && onStep(`Собираю основу языка — служебные слова и неправильные глаголы… ${i+1}/${total}`);
+        // 4.38 (v81): счётчик вынесен из переводимой строки — узел со вставленным «1/9»
+        // не совпал бы ни с одним ключом и остался бы русским на любом языке.
+        onStep && onStep(t('Собираю основу языка — служебные слова и неправильные глаголы…') + ' ' + (i+1) + '/' + total);
         const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:b.exact });
         if (b.capture === 'articles') this._captureArticles(w);
         this._add(w, { klass:'closed', layer:'general', cefr:'A1' });
@@ -1418,7 +1448,7 @@ const Core = {
     for (let left=nInt; left>0; left-=CORE_BATCH) plan.push({ layer:'interests', count: Math.min(CORE_BATCH,left) });
     for (let i=0; i<plan.length; i++){
       const b = plan[i];
-      onStep && onStep(`Собираю словарь уровня ${lvl}… ${(done||0)+i+1}/${total || plan.length}`);
+      onStep && onStep(t('Собираю словарь уровня') + ' ' + lvl + '… ' + ((done||0)+i+1) + '/' + (total || plan.length));
       const w = await this._batch({ class:'open', layer:b.layer, cefr:lvl, count:b.count,
         topic: b.layer==='interests' ? (p.interests || 'повседневная жизнь') : SURVIVAL_TOPICS });
       this._add(w, { klass:'open', layer:b.layer, cefr:lvl });
@@ -1607,7 +1637,7 @@ const GrammarCore = {
 
   async build(onStep){
     const p = DB.profile;
-    onStep && onStep('Строю карту грамматики языка…');
+    onStep && onStep(t('Строю карту грамматики языка…'));
     const r = await Gemini.call({
       task:'generate_grammar_core', target_lang:p.targetLang, native_lang:p.nativeLang,
       levels: GCORE_LEVELS, rules: GCORE_RULES
@@ -1836,7 +1866,7 @@ function scaffoldOverloaded(sc, lvl){
 
 // экран сборки Ядра: один раз при создании профиля и разово при миграции старого профиля
 async function coreBuildScreen(next){
-  Screen.loader('Собираю словарь языка — это один раз…');
+  Screen.loader(t('Собираю словарь языка — это один раз…'));
   try { await Core.build(msg => Screen.loader(msg)); }
   catch(e){
     Core._failed = true;                                  // не зацикливаемся: урок пойдёт резервным путём
@@ -2275,7 +2305,7 @@ function onboardingIntro() {
     <h1>${t('Здравствуйте! Я — AILEX.')}</h1>
     <p class="sub">${t('Учитель иностранных языков по стандарту CEFR. Несколько вопросов — и начнём: ваш профиль, короткий тест уровня, первый урок.')}</p>
     <div class="card glow">
-      <p style="font-size:14.5px;color:var(--dim);line-height:1.6">${t('Прогресс сохраняется автоматически в базу')} <b style="color:var(--ink)">AILEX_StatusDB</b> ${t('— вы просто выполняете задания. В настройках базу можно выгрузить файлом и перенести на другое устройство.')}</p>
+      <p style="font-size:14.5px;color:var(--dim);line-height:1.6">${t('Прогресс сохраняется сам')} ${t('— вы просто занимаетесь. В настройках занятия можно выгрузить файлом и перенести на другое устройство.')}</p>
     </div>
     <button class="btn btn-primary" id="go">${t('Начать')}</button>`);
   $('#go').onclick = () => askProfile(0, {});
@@ -2581,7 +2611,7 @@ async function finishOnboarding(profile, cefr) {
   toast('Сохранено ✓');
   // 4.26: интересы уже известны — здесь и только здесь собирается Ядро языка (раздел 4.4)
   if (Core.needsBuild()) {
-    Screen.loader('Собираю словарь языка — это один раз…');
+    Screen.loader(t('Собираю словарь языка — это один раз…'));
     try { await Core.build(msg => Screen.loader(msg)); }
     catch(e){ Core._failed = true; toast('Словарь языка соберём позже — урок будет работать', true); }
   }
@@ -2994,7 +3024,7 @@ async function startA0Lesson(code) {
   // Первые два phonics-урока — алфавитный режим; остальные — стандартный
   const isAlpha = blk.block === 'phonics';
 
-  Screen.loader('Готовлю урок A0.' + String(lessonN).padStart(2,'0') + '…');
+  Screen.loader(I18N.t('Готовлю урок') + ' A0.' + String(lessonN).padStart(2,'0') + '…');
 
   let lesson;
   const schemaHint = `{"lesson_title":"заголовок на native_lang","mode":"${isAlpha?'alphabet':'standard'}","items":[{"pattern":"буква/сочетание/тема","ipa_approx":"звук native_lang буквами","native_hint":"подсказка","examples":[{"word":"слово на target_lang","translit":"[транскрипция]","translation":"перевод","emoji":"эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на native_lang","options":[{"word":"вариант","correct":true}]}]${blk.hasMiniScene?`,"mini_scene":{"situation_native":"ситуация на native_lang — 1 предложение","exchanges":[{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_native":"что сказать:","task_options":[{"word":"правильная фраза","translit":"[транскр]","correct":true},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false}]},{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_target":"фраза","translit":"[транскр]","text_native":"скажите:","task_type":"tap_to_say"}]}`:''}}`;
@@ -3344,7 +3374,7 @@ async function startLesson(code) {
   }
   LessonCache.clearLesson(code);   // 4.29: этот урок начинается заново — прочие эпизоды не трогаем
   const p = DB.profile, lvl = parseCode(code).lvl;
-  Screen.loader('Готовлю урок ' + code + '…');
+  Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…');
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);
@@ -4675,8 +4705,8 @@ async function runQuest(cfg) {
       if (correctForm) {
         const v = localVerdict(a, correctForm);
         if (v && v.kind==='exact') return pass(a);            // 4.35: дописанный артикль — верно, без замечания
-        if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
-        if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
+        if (v && v.kind==='typo') { toast(I18N.t('Верно, опечатка:')+' '+v.detail.exp, false); return pass(); }
+        if (v && v.kind==='article') { toast(I18N.t('Почти верно — артикль:')+' '+v.detail, false); return pass(); }
       }
       $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
       let res = null;
@@ -5485,8 +5515,8 @@ async function runSuperquestAct(cfg) {
       if (correctForm) {
         const v = localVerdict(a, correctForm);
         if (v && v.kind==='exact') return pass(a);            // 4.35: дописанный артикль — верно, без замечания
-        if (v && v.kind==='typo') { toast('Верно, опечатка: '+v.detail.exp, false); return pass(); }
-        if (v && v.kind==='article') { toast('Почти верно — артикль: '+v.detail, false); return pass(); }
+        if (v && v.kind==='typo') { toast(I18N.t('Верно, опечатка:')+' '+v.detail.exp, false); return pass(); }
+        if (v && v.kind==='article') { toast(I18N.t('Почти верно — артикль:')+' '+v.detail, false); return pass(); }
       }
       $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
       let res = null;
