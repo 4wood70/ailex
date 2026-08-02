@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v80';
+const APP_VERSION = 'v81';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -277,6 +277,13 @@ const LEGACY_CACHE_KEYS = ['AILEX_lesson_cache_v46','AILEX_lesson_cache_v45'];
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
+/* 4.38 (поправка, v81): ключ доступа живёт в Storage, а проверки перед переводом интерфейса
+   спрашивали несуществующее свойство `Gemini.key`. Условие было истинным всегда, поэтому
+   ensure() выходил на первой строке, и ни один перевод интерфейса не запрашивался НИ РАЗУ —
+   ни для одного языка. Английский был виден только потому, что его таблица захардкожена.
+   Все механизмы, построенные поверх (пачки, приоритет видимого экрана, прицельная загрузка
+   анкеты), были исправны и упирались в эту одну строку. */
+function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.getKey && Storage.getKey()); } catch(_) { return false; } }
 /* Что означает каждый термин интерфейса — для идиоматичного, а не дословного перевода. */
 const UI_CTX = {
         'Повторение':'блок повторения лексики из прошлых уроков',
@@ -391,6 +398,7 @@ const I18N = {
       'Выберите профиль или создайте новый — для другого языка или другого человека.':'Pick a profile or create a new one — for another language or another person.',
       'Выберите профиль для занятий.':'Pick a profile to study with.',
       'Создать профиль / добавить язык':'Create a profile / add a language',
+      'или':'or',
       'Сменить профиль':'Switch profile',
       'выбрать другой профиль':'choose another profile',
       'Готовлю интерфейс…':'Preparing the interface…',
@@ -398,7 +406,14 @@ const I18N = {
       'Ключ работает ✓':'The key works ✓',
       'Ключ не принят сервером Google':'Google did not accept the key',
       'Похоже, это не ключ — проверьте':'This does not look like a key — please check',
-      'Не удалось перевести интерфейс — продолжим на английском':'Could not translate the interface — we will continue in English',
+      'Связь медленная — подождите ещё немного…':'Slow connection — hold on a little longer…',
+      'Язык интерфейса':'Interface language',
+      'Не удалось загрузить перевод':'Could not load the translation',
+      'Google не принял ключ доступа.':'Google did not accept the access key.',
+      'Нет связи с сервером перевода.':'No connection to the translation server.',
+      'Проверьте интернет и попробуйте снова — или продолжайте на английском, язык профиля от этого не изменится.':'Check your connection and try again — or continue in English; this does not change the profile language.',
+      'Повторить':'Try again',
+      'Продолжить на английском':'Continue in English',
       /* 4.38: фраза «профиль создан» была склеена из кусков вокруг подстановок, поэтому не
          совпадала ни с одним ключом и оставалась русской при любом языке. Разбита на целые
          строки: подстановки вынесены в отдельный абзац. */
@@ -500,7 +515,9 @@ const I18N = {
     'Словарь языка соберём позже — урок будет работать',
     'Обновляю карту грамматики — это один раз…','Карту грамматики обновим позже — занятия работают',
     'Ключ доступа к Gemini','Проверяю ключ…','Ключ работает ✓','Ключ не принят сервером Google',
-    'Похоже, это не ключ — проверьте'
+    'Похоже, это не ключ — проверьте',
+    'Связь медленная — подождите ещё немного…','Язык интерфейса','Не удалось загрузить перевод',
+    'Повторить','Продолжить на английском'
   ],
   async preloadOnboarding() {
     if (this.lang === 'ru') return true;
@@ -515,7 +532,7 @@ const I18N = {
     if (this._busy) return;
     const d = this.dict[this.lang] || (this.dict[this.lang] = {});
     let missing = [...this.registry].filter(s => d[s] == null);
-    if (!missing.length || typeof Gemini === 'undefined' || !Gemini.key) return;
+    if (!missing.length || !hasKey()) return;
     const head = [...new Set(visibleStrings().filter(s => d[s] == null))];
     missing = [...head, ...missing.filter(s => !head.includes(s))];
     this._busy = true;
@@ -528,8 +545,9 @@ const I18N = {
      бы весь список и записал чужие переводы), кэш пишется после каждой удавшейся пачки, неудачная
      пачка не топит остальные. Возвращает true, если переведено всё запрошенное. */
   async _translate(list) {
+    this._lastError = '';
     const d = this.dict[this.lang] || (this.dict[this.lang] = {});
-    if (typeof Gemini === 'undefined' || !Gemini.key) return false;
+    if (!hasKey()) { this._lastError = 'NO_KEY'; return false; }
     const CHUNK = 30;
     for (let i = 0; i < list.length; i += CHUNK) {
       const batch = list.slice(i, i + CHUNK);
@@ -541,8 +559,8 @@ const I18N = {
           rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
         }, '{"translations":["перевод 1","перевод 2"]}');
         tr = (res && res.translations) || [];
-      } catch(_) { continue; }
-      if (tr.length !== batch.length) continue;
+      } catch(e) { this._lastError = String(e && e.message||'').startsWith('KEY:') ? 'KEY' : 'NET'; continue; }
+      if (tr.length !== batch.length) { this._lastError = 'BAD'; continue; }
       batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
       try {
         localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
@@ -1164,7 +1182,7 @@ async function localizeBlocks(blockEl, key, sourceHtml) {
   const lang = I18N.lang, cache = _blockCache();
   const hit = cache[lang] && cache[lang][key];
   if (hit) { blockEl.innerHTML = hit; return; }            // из кэша — мгновенно, офлайн
-  if (typeof Gemini === 'undefined' || !Gemini.key) return; // нет ключа — остаётся русский
+  if (!hasKey()) return;                                   // нет ключа — остаётся русский
   try {
     const res = await Gemini.call({
       task:'translate_block', target_ui_lang: lang, html: sourceHtml,
@@ -1858,32 +1876,104 @@ function boot() {
 }
 
 /* ---------- Экран выбора профиля (раздел 2.8 / 3.2) ---------- */
-/* 4.38: `create:false` — вход из главного меню («Сменить профиль»): только выбор, без создания.
-   Создавать профиль изнутри чужого профиля незачем, это второй путь к тому же экрану. */
+/* ---------- Экран выбора профиля (раздел 2.8 / 3.2; оформление 4.38, v81) ----------
+   Первое, что человек видит после заставки, и единственное место, где язык принадлежит
+   устройству. Оформление продолжает язык заставки: та же нейросеть на canvas, но тише —
+   узлов меньше, движение медленнее, линии слабее; экран для выбора, а не для разглядывания.
+   Опознавательный знак: каждый профиль несёт постоянный оттенок, выведенный из пары языков,
+   — свой профиль в списке узнаётся раньше, чем прочитано имя. Кнопка создания намеренно
+   тише карточек: сперва «кто я», и только потом «завести нового».
+   `create:false` — вход из главного меню «Сменить профиль»: только выбор, без создания. */
+function profileHue(p){
+  const src = String((p&&p.nativeLang)||'') + '>' + String((p&&p.targetLang)||'');
+  let h = 0; for (let i=0;i<src.length;i++) h = (h*31 + src.charCodeAt(i)) % 360;
+  return h;
+}
+function ambientNet(cv){
+  if (!cv || !cv.getContext) return;
+  const slow = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ctx = cv.getContext('2d'), DPR = Math.min(window.devicePixelRatio||1, 2);
+  let W=0, H=0, nodes=[];
+  function measure(){
+    W = cv.clientWidth || window.innerWidth || 360;
+    H = cv.clientHeight || window.innerHeight || 640;
+    cv.width = W*DPR; cv.height = H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  function seed(){
+    const N = Math.max(14, Math.min(26, Math.round(W*H/34000)));   // вдвое реже, чем на заставке
+    nodes = [];
+    for (let i=0;i<N;i++) nodes.push({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: (Math.random()-.5)*0.10, vy: (Math.random()-.5)*0.10,   // и заметно медленнее
+      r: 1 + Math.random()*1.4, ph: Math.random()*Math.PI*2
+    });
+  }
+  function frame(now){
+    if (!cv.isConnected) return;                                  // экран сменился — цикл гаснет
+    ctx.clearRect(0,0,W,H);
+    const t = now/1000;
+    nodes.forEach(n => {
+      if (!slow) { n.x += n.vx; n.y += n.vy; }
+      if (n.x < 0 || n.x > W) n.vx *= -1;
+      if (n.y < 0 || n.y > H) n.vy *= -1;
+    });
+    for (let i=0;i<nodes.length;i++) for (let j=i+1;j<nodes.length;j++){
+      const a=nodes[i], b=nodes[j], dx=a.x-b.x, dy=a.y-b.y, d=Math.hypot(dx,dy);
+      if (d > 150) continue;
+      ctx.strokeStyle = 'rgba(65,184,255,' + (0.055*(1-d/150)).toFixed(3) + ')';
+      ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    }
+    nodes.forEach(n => {
+      const pulse = 0.35 + 0.25*Math.sin(t*0.7 + n.ph);
+      ctx.fillStyle = 'rgba(138,92,255,' + (0.20*pulse).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill();
+    });
+    requestAnimationFrame(frame);
+  }
+  measure(); seed(); requestAnimationFrame(frame);
+  window.addEventListener('resize', () => { measure(); seed(); }, { once:true });
+}
 function profileSelect(opts) {
   const allowCreate = !opts || opts.create !== false;
   I18N.useDeviceLang();                    // 4.36: профиль ещё не выбран — язык принадлежит устройству
   const profs = Storage.listProfiles();
   Screen.show(`
-    <div class="eyebrow">Профили</div>
-    <h1>Кто занимается?</h1>
-    <p class="sub">${allowCreate ? 'Выберите профиль или создайте новый — для другого языка или другого человека.' : 'Выберите профиль для занятий.'}</p>
-    <div class="menu-list">
-      ${profs.map(p=>`
-        <button class="menu-item" data-id="${esc(p.id)}">
-          <span class="ic">${esc((p.name||'?').slice(0,1).toUpperCase())}</span>
-          <span class="t"><b>${esc(p.name)}</b><small>${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))} · ${esc(p.cefr||'')}</small></span>
-          <span class="chev">›</span>
-        </button>`).join('')}
-    </div>
-    ${allowCreate ? `<div style="display:flex;align-items:center;gap:10px;margin:18px 2px 12px">
-        <div style="flex:1;height:1px;background:var(--border)"></div>
-        <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">или</div>
-        <div style="flex:1;height:1px;background:var(--border)"></div>
+    <canvas id="netBg" style="position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none"></canvas>
+    <div style="position:relative;z-index:1">
+      <div class="eyebrow">Профили</div>
+      <h1>Кто занимается?</h1>
+      <p class="sub">${allowCreate ? 'Выберите профиль или создайте новый — для другого языка или другого человека.' : 'Выберите профиль для занятий.'}</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+        ${profs.map(p=>{
+          const h = profileHue(p);
+          return `
+          <button data-id="${esc(p.id)}" class="prof-card" style="
+            position:relative;display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+            padding:14px 16px;border-radius:16px;cursor:pointer;
+            background:linear-gradient(135deg, hsla(${h},70%,55%,.10), rgba(11,16,32,.72) 62%);
+            border:1px solid hsla(${h},60%,60%,.28);
+            box-shadow:0 10px 30px rgba(0,0,0,.35);backdrop-filter:blur(6px)">
+            <span style="flex:0 0 46px;height:46px;border-radius:14px;display:grid;place-items:center;
+              background:#0B1020;border:1px solid hsla(${h},70%,60%,.55);
+              box-shadow:0 0 18px hsla(${h},80%,55%,.25);
+              font-family:'Chakra Petch';font-weight:700;font-size:20px;color:hsl(${h},80%,72%)">${esc((p.name||'?').slice(0,1).toUpperCase())}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-family:'Chakra Petch';font-weight:600;font-size:17px;color:var(--ink)">${esc(p.name)}</span>
+              <span style="display:block;font-size:13px;color:var(--dim);margin-top:2px">${esc(langName(p.nativeLang))} → ${esc(langName(p.targetLang))}</span>
+            </span>
+            ${p.cefr?`<span style="flex:0 0 auto;font-family:'Chakra Petch';font-size:11px;letter-spacing:.1em;
+              padding:4px 9px;border-radius:999px;color:hsl(${h},80%,75%);
+              background:hsla(${h},70%,55%,.14);border:1px solid hsla(${h},60%,60%,.3)">${esc(p.cefr)}</span>`:''}
+            <span style="flex:0 0 auto;color:var(--dim);font-size:20px;margin-left:2px">›</span>
+          </button>`;}).join('')}
       </div>
-      <button class="btn btn-ghost" id="newProf">＋ Создать профиль / добавить язык</button>` : ''}`,
+      ${allowCreate ? `<button class="btn btn-ghost" id="newProf" style="margin-top:18px;
+          background:rgba(11,16,32,.5);border:1px dashed var(--border);backdrop-filter:blur(6px)">
+          <span>＋</span> <span>Создать профиль / добавить язык</span></button>` : ''}
+    </div>`,
     { back: allowCreate ? null : mainMenu });
-  document.querySelectorAll('.menu-item[data-id]').forEach(b => b.onclick = () => {
+  ambientNet(document.getElementById('netBg'));
+  document.querySelectorAll('.prof-card[data-id]').forEach(b => b.onclick = () => {
     Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); mainMenu();
   });
   if (allowCreate) $('#newProf').onclick = () => onboardingIntro();
@@ -2291,17 +2381,40 @@ function askProfile(i, acc) {
        очередь не гарантирует, что следующий экран успеет стать родным, а анкету надо заполнять. */
     if (q.k === 'nativeLang' && v) {
       acc[q.k] = v;
-      Screen.loader(t('Готовлю интерфейс…'));
       I18N.applyProfileLang({ nativeLang: v });
-      I18N.preloadOnboarding().then(ok => {
-        if (!ok) toast(t('Не удалось перевести интерфейс — продолжим на английском'), true);
-        askProfile(i+1, acc);
-      });
-      return;
+      return prepareUiLang(() => askProfile(i+1, acc));
     }
     acc[q.k] = q.type==='number' ? +v : v;
     askProfile(i+1, acc);
   };
+}
+
+/* Загрузка интерфейса на выбранный родной язык (4.38, v81). Перевод — живой запрос к Gemini,
+   поэтому он занимает секунды и может не удаться. Экран честно показывает, что происходит:
+   через шесть секунд — что связь медленная, при неудаче — что именно случилось и что делать.
+   Молчаливого перехода на английский больше нет: человек либо ждёт, либо решает сам. */
+function prepareUiLang(done) {
+  if (I18N.lang === 'ru') return done();
+  Screen.loader(t('Готовлю интерфейс…'));
+  const slow = setTimeout(() => {
+    const el = document.querySelector('#screen .loader div:last-child');
+    if (el) el.textContent = t('Связь медленная — подождите ещё немного…');
+  }, 6000);
+  I18N.preloadOnboarding().then(ok => {
+    clearTimeout(slow);
+    if (ok) return done();
+    const why = I18N._lastError === 'KEY'
+      ? t('Google не принял ключ доступа.')
+      : t('Нет связи с сервером перевода.');
+    Screen.show(`
+      <div class="eyebrow">${t('Язык интерфейса')}</div>
+      <h1>${t('Не удалось загрузить перевод')}</h1>
+      <p class="sub">${why} ${t('Проверьте интернет и попробуйте снова — или продолжайте на английском, язык профиля от этого не изменится.')}</p>
+      <button class="btn btn-primary" id="again">${t('Повторить')}</button>
+      <button class="btn btn-ghost" id="skip">${t('Продолжить на английском')}</button>`);
+    $('#again').onclick = () => prepareUiLang(done);
+    $('#skip').onclick  = done;
+  });
 }
 
 /* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
