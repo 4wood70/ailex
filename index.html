@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v79';
+const APP_VERSION = 'v80';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -277,6 +277,34 @@ const LEGACY_CACHE_KEYS = ['AILEX_lesson_cache_v46','AILEX_lesson_cache_v45'];
 /* ---------- Локализация интерфейса (i18n, версия 4.13, пункт 13) ----------
    Русский — исходный язык строк. Для другого языка интерфейса строки берутся из
    встроенного словаря (en) или автопереводятся через Gemini и кэшируются на устройстве. */
+/* Что означает каждый термин интерфейса — для идиоматичного, а не дословного перевода. */
+const UI_CTX = {
+        'Повторение':'блок повторения лексики из прошлых уроков',
+        'Повторение в контексте':'упражнение: повторить слово в контексте предложения',
+        'Слово в контексте':'упражнение: отработать слово в контексте предложения',
+        'Закрепление правила':'упражнение: закрепить грамматическое правило после ошибки',
+        'Суперквест':'большой квест-погружение на повторение всего пройденного (30-50 предложений)',
+        'Свод правил':'личная коллекция грамматических правил пользователя',
+        'Новые слова':'список новых слов этого урока перед упражнениями',
+        'Слова задания':'слова, которые понадобятся в следующем упражнении',
+        'Чекпойнт':'контрольный экзамен после половины уровня',
+        'Понадобятся':'слова, которые нужно запомнить перед следующим заданием',
+        // --- 4.25: расширение охвата (реестр, Приложение А спеки) ---
+        'Поговорить':'режим свободного голосового диалога с приложением на изучаемом языке',
+        'Аналитика':'экран прогресса и точности обучения',
+        'Свод правил ':'личная коллекция грамматических правил пользователя',
+        'Отправить':'кнопка: отправить ответ или реплику на проверку',
+        'Проверить':'кнопка: отправить ответ на проверку',
+        'Подсказка':'подсказка по заданию (лампочка), раскрывает часть ответа',
+        'Правило':'показать грамматическое правило текущего задания',
+        'Опорные слова':'слова, нужные для составления ответа',
+        'Работа над ошибками':'режим повторной проработки слов, в которых были ошибки',
+        'Определение уровня':'вступительный тест для определения уровня владения языком',
+        'Как пользоваться':'справка: краткий свод жестов и возможностей приложения',
+        'Показать подсказки заново':'сбросить показанные подсказки, чтобы они появились снова',
+        'Экзамен':'контрольный экзамен в конце подуровня',
+        'Чекпойнт':'контрольный экзамен после половины уровня'
+      };
 const I18N = {
   lang: 'ru',
   registry: new Set(),
@@ -355,7 +383,32 @@ const I18N = {
       'Готовлю вопросы теста…':'Preparing the test…',
       'Не удалось получить тест — начнём с A1':'Could not load the test — we will start at A1',
       'Тест уровня · вопрос':'Level test · question',
-      'лексика':'vocabulary','грамматика':'grammar','Не знаю':'I do not know'
+      'лексика':'vocabulary','грамматика':'grammar','Не знаю':'I do not know',
+      /* --- 4.38: аудит экранов, доступных без профиля. localizeDOM переводит только строки
+         этой таблицы: белый список нужен, иначе под перевод попали бы имя профиля, слова
+         словаря и текст на изучаемом языке. Чего здесь нет — остаётся русским навсегда,
+         и ни английский запасной, ни родной перевод к такой строке не применяются. --- */
+      'Выберите профиль или создайте новый — для другого языка или другого человека.':'Pick a profile or create a new one — for another language or another person.',
+      'Выберите профиль для занятий.':'Pick a profile to study with.',
+      'Создать профиль / добавить язык':'Create a profile / add a language',
+      'Сменить профиль':'Switch profile',
+      'выбрать другой профиль':'choose another profile',
+      'Готовлю интерфейс…':'Preparing the interface…',
+      'Проверяю ключ…':'Checking the key…',
+      'Ключ работает ✓':'The key works ✓',
+      'Ключ не принят сервером Google':'Google did not accept the key',
+      'Похоже, это не ключ — проверьте':'This does not look like a key — please check',
+      'Не удалось перевести интерфейс — продолжим на английском':'Could not translate the interface — we will continue in English',
+      /* 4.38: фраза «профиль создан» была склеена из кусков вокруг подстановок, поэтому не
+         совпадала ни с одним ключом и оставалась русской при любом языке. Разбита на целые
+         строки: подстановки вынесены в отдельный абзац. */
+      'Первый урок:':'First lesson:',
+      'Сначала освоим чтение и базовую лексику, затем перейдём к A1.':'First we cover reading and basic vocabulary, then we move on to A1.',
+      'Сохранено ✓':'Saved ✓',
+      'Собираю словарь языка — это один раз…':'Building the language vocabulary — this happens once…',
+      'Словарь языка соберём позже — урок будет работать':'We will build the vocabulary later — the lesson still works',
+      'Обновляю карту грамматики — это один раз…':'Updating the grammar map — this happens once…',
+      'Карту грамматики обновим позже — занятия работают':'We will update the grammar map later — lessons still work'
     }
   },
   init() {
@@ -428,67 +481,76 @@ const I18N = {
      по 30 строк, результат принимается только при совпадении числа строк, кэш пишется после
      каждой пачки, и строки видимого экрана идут первыми — человек видит свой язык на текущем
      вопросе, а не через два экрана. */
+  /* 4.38: строки, без которых нельзя вести анкету. Переводятся ПРИЦЕЛЬНО в момент выбора
+     родного языка, с видимым ожиданием — а не фоном в общей очереди. До 4.38 человек выбирал
+     родной язык и продолжал анкету по-английски: перевод шёл фоном и мог не успеть или молча
+     не дойти. Требование простое — язык выбран, дальше всё на нём; иначе человеку, плохо
+     знающему язык устройства, нечем заполнить собственную анкету. */
+  ONBOARDING_UI: [
+    'Анкета','Как вас зовут?','Имя','Ваш родной язык?','Какой язык будем изучать?',
+    'Сколько вам лет?','Возраст','Ваши интересы и сфера деятельности?',
+    'Например: наладка станков с ЧПУ, столярное дело, рыбалка…',
+    'Самое важное поле: на нём строятся все квесты и рассказы.',
+    'Поиск языка…','Далее','Заполните поле','Целевой язык должен отличаться от родного',
+    'Шаг 2','Определение уровня','Как лучше начать изучение','Пройти короткий тест (рекомендуется)',
+    '— или выберите старт вручную —','Я новичок, но буквы читаю → начать с A1',
+    'Не знаю язык совсем, даже буквы → начать с основ A0','Готовлю вопросы теста…',
+    'Не удалось получить тест — начнём с A1','Тест уровня · вопрос','лексика','грамматика','Не знаю',
+    'Сохранено ✓','Собираю словарь языка — это один раз…',
+    'Словарь языка соберём позже — урок будет работать',
+    'Обновляю карту грамматики — это один раз…','Карту грамматики обновим позже — занятия работают',
+    'Ключ доступа к Gemini','Проверяю ключ…','Ключ работает ✓','Ключ не принят сервером Google',
+    'Похоже, это не ключ — проверьте'
+  ],
+  async preloadOnboarding() {
+    if (this.lang === 'ru') return true;
+    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
+    this.ONBOARDING_UI.forEach(x => this.registry.add(x));
+    const need = this.ONBOARDING_UI.filter(x => d[x] == null);
+    if (!need.length) return true;
+    try { return await this._translate(need); } catch(_) { return false; }
+  },
   async ensure() {
     if (this.lang === 'ru') return;
     if (this._busy) return;
     const d = this.dict[this.lang] || (this.dict[this.lang] = {});
     let missing = [...this.registry].filter(s => d[s] == null);
     if (!missing.length || typeof Gemini === 'undefined' || !Gemini.key) return;
-    const vis = visibleStrings().filter(s => d[s] == null);
-    const head = [...new Set(vis)];
+    const head = [...new Set(visibleStrings().filter(s => d[s] == null))];
     missing = [...head, ...missing.filter(s => !head.includes(s))];
     this._busy = true;
-    try {
-      // Таблица контекстов: что означает каждый термин интерфейса (для идиоматичного перевода)
-      const UI_CTX = {
-        'Повторение':'блок повторения лексики из прошлых уроков',
-        'Повторение в контексте':'упражнение: повторить слово в контексте предложения',
-        'Слово в контексте':'упражнение: отработать слово в контексте предложения',
-        'Закрепление правила':'упражнение: закрепить грамматическое правило после ошибки',
-        'Суперквест':'большой квест-погружение на повторение всего пройденного (30-50 предложений)',
-        'Свод правил':'личная коллекция грамматических правил пользователя',
-        'Новые слова':'список новых слов этого урока перед упражнениями',
-        'Слова задания':'слова, которые понадобятся в следующем упражнении',
-        'Чекпойнт':'контрольный экзамен после половины уровня',
-        'Понадобятся':'слова, которые нужно запомнить перед следующим заданием',
-        // --- 4.25: расширение охвата (реестр, Приложение А спеки) ---
-        'Поговорить':'режим свободного голосового диалога с приложением на изучаемом языке',
-        'Аналитика':'экран прогресса и точности обучения',
-        'Свод правил ':'личная коллекция грамматических правил пользователя',
-        'Отправить':'кнопка: отправить ответ или реплику на проверку',
-        'Проверить':'кнопка: отправить ответ на проверку',
-        'Подсказка':'подсказка по заданию (лампочка), раскрывает часть ответа',
-        'Правило':'показать грамматическое правило текущего задания',
-        'Опорные слова':'слова, нужные для составления ответа',
-        'Работа над ошибками':'режим повторной проработки слов, в которых были ошибки',
-        'Определение уровня':'вступительный тест для определения уровня владения языком',
-        'Как пользоваться':'справка: краткий свод жестов и возможностей приложения',
-        'Показать подсказки заново':'сбросить показанные подсказки, чтобы они появились снова',
-        'Экзамен':'контрольный экзамен в конце подуровня',
-        'Чекпойнт':'контрольный экзамен после половины уровня'
-      };
-      const CHUNK = 30;
-      for (let i = 0; i < missing.length; i += CHUNK) {
-        const batch = missing.slice(i, i + CHUNK);
-        const annotated = batch.map(s => UI_CTX[s] ? s + ' [' + UI_CTX[s] + ']' : s);
-        let tr = [];
-        try {
-          const res = await Gemini.call({
-            task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
-            rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
-          }, '{"translations":["перевод 1","перевод 2"]}');
-          tr = (res && res.translations) || [];
-        } catch(_) { continue; }              // пачка не удалась — остальные не теряем
-        if (tr.length !== batch.length) continue;   // сдвиг ответа: принять нельзя, записали бы чужое
-        batch.forEach((s,k) => { if (tr[k]) d[s] = tr[k]; });
-        try {
-          localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
-            Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
-        } catch(_) {}
-        try { localizeDOM(document.getElementById('screen')); } catch(_) {}  // первая пачка видна сразу
-      }
-    } catch(_) { /* не вышло — останемся на исходных строках */ }
+    try { await this._translate(missing); }
+    catch(_) { /* не вышло — останемся на исходных строках */ }
     finally { this._busy = false; }
+  },
+  /* 4.38: перевод списка строк пачками, общий для фоновой очереди и прицельной загрузки анкеты.
+     Пачка принимается только при точном совпадении числа строк (ответ на строку короче сдвинул
+     бы весь список и записал чужие переводы), кэш пишется после каждой удавшейся пачки, неудачная
+     пачка не топит остальные. Возвращает true, если переведено всё запрошенное. */
+  async _translate(list) {
+    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
+    if (typeof Gemini === 'undefined' || !Gemini.key) return false;
+    const CHUNK = 30;
+    for (let i = 0; i < list.length; i += CHUNK) {
+      const batch = list.slice(i, i + CHUNK);
+      const annotated = batch.map(x => UI_CTX[x] ? x + ' [' + UI_CTX[x] + ']' : x);
+      let tr = [];
+      try {
+        const res = await Gemini.call({
+          task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
+          rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
+        }, '{"translations":["перевод 1","перевод 2"]}');
+        tr = (res && res.translations) || [];
+      } catch(_) { continue; }
+      if (tr.length !== batch.length) continue;
+      batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
+      try {
+        localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
+          Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
+      } catch(_) {}
+      try { localizeDOM(document.getElementById('screen')); } catch(_) {}
+    }
+    return list.every(x => d[x] != null);
   }
 };
 const t = s => I18N.t(s);
@@ -1788,18 +1850,24 @@ function boot() {
   if (!Storage.getKey()) return keyWizard();
   const profs = Storage.listProfiles();
   if (profs.length === 0) return onboardingIntro();    // новый пользователь
-  if (profs.length === 1) { DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); return mainMenu(); }
-  return profileSelect();                              // несколько профилей — выбор
+  /* 4.38: экран выбора показывается ВСЕГДА, в том числе при единственном профиле. Одно
+     устройство на нескольких человек — обычное дело, и заход сразу в чужой профиль означал бы
+     чужой язык интерфейса ещё до того, как человек скажет, кто он. Этот экран — единственное
+     место, где язык принадлежит устройству, и единственный вход к созданию профиля. */
+  return profileSelect();
 }
 
 /* ---------- Экран выбора профиля (раздел 2.8 / 3.2) ---------- */
-function profileSelect() {
+/* 4.38: `create:false` — вход из главного меню («Сменить профиль»): только выбор, без создания.
+   Создавать профиль изнутри чужого профиля незачем, это второй путь к тому же экрану. */
+function profileSelect(opts) {
+  const allowCreate = !opts || opts.create !== false;
   I18N.useDeviceLang();                    // 4.36: профиль ещё не выбран — язык принадлежит устройству
   const profs = Storage.listProfiles();
   Screen.show(`
     <div class="eyebrow">Профили</div>
     <h1>Кто занимается?</h1>
-    <p class="sub">Выберите профиль или создайте новый — для другого языка или другого человека.</p>
+    <p class="sub">${allowCreate ? 'Выберите профиль или создайте новый — для другого языка или другого человека.' : 'Выберите профиль для занятий.'}</p>
     <div class="menu-list">
       ${profs.map(p=>`
         <button class="menu-item" data-id="${esc(p.id)}">
@@ -1808,11 +1876,17 @@ function profileSelect() {
           <span class="chev">›</span>
         </button>`).join('')}
     </div>
-    <button class="btn btn-ghost" id="newProf" style="margin-top:14px">＋ Создать профиль / добавить язык</button>`);
+    ${allowCreate ? `<div style="display:flex;align-items:center;gap:10px;margin:18px 2px 12px">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">или</div>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+      <button class="btn btn-ghost" id="newProf">＋ Создать профиль / добавить язык</button>` : ''}`,
+    { back: allowCreate ? null : mainMenu });
   document.querySelectorAll('.menu-item[data-id]').forEach(b => b.onclick = () => {
     Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); mainMenu();
   });
-  $('#newProf').onclick = () => onboardingIntro();
+  if (allowCreate) $('#newProf').onclick = () => onboardingIntro();
 }
 
 /* ---------- Заставка при запуске (Splash): логотип + нейросеть ----------
@@ -2117,10 +2191,13 @@ function onboardingIntro() {
   $('#go').onclick = () => askProfile(0, {});
 }
 
+/* 4.38: родной язык — ПЕРВЫЙ вопрос. Раньше он стоял вторым, и человек успевал ответить на
+   вопрос об имени на языке устройства. Теперь язык устройства нужен ровно на двух экранах:
+   выбор профиля и этот первый вопрос; всё остальное идёт уже на родном. */
 const PROFILE_Q = [
-  { k:'name',       q:'Как вас зовут?',                  type:'text',   ph:'Имя' },
   { k:'nativeLang', q:'Ваш родной язык?',                type:'lang' },
   { k:'targetLang', q:'Какой язык будем изучать?',       type:'lang' },
+  { k:'name',       q:'Как вас зовут?',                  type:'text',   ph:'Имя' },
   { k:'age',        q:'Сколько вам лет?',                type:'number', ph:'Возраст' },
   { k:'interests',  q:'Ваши интересы и сфера деятельности?', type:'area',
     ph:'Например: наладка станков с ЧПУ, столярное дело, рыбалка…',
@@ -2199,7 +2276,9 @@ function askProfile(i, acc) {
     { back: i>0 ? ()=>askProfile(i-1, acc) : null });
   if (q.type==='lang') {
     // дефолтное значение
-    const defVal = (q.k==='targetLang') ? (acc.nativeLang==='en' ? 'de' : 'en') : 'ru';
+    // 4.38: подставляем язык устройства, если он есть в списке — человеку чаще всего нужен именно он
+    const dev = LANGS.some(l => l.c === I18N.deviceLang()) ? I18N.deviceLang() : 'en';
+    const defVal = (q.k==='targetLang') ? (acc.nativeLang==='en' ? 'de' : 'en') : dev;
     const initVal = acc[q.k] || defVal;
     _initLangPicker(initVal);
   }
@@ -2207,10 +2286,19 @@ function askProfile(i, acc) {
     const v = $('#val').value.trim();
     if (!v) return toast(t('Заполните поле'), true);
     if (q.k==='targetLang' && v===acc.nativeLang) return toast(t('Целевой язык должен отличаться от родного'), true);
-    /* 4.36: единственная точка переключения языка интерфейса в анкете. До неё — язык устройства,
-       после — выбранный родной: остаток анкеты, тест уровня и мастер ключа идут уже на нём.
-       Промежуточных состояний нет. */
-    if (q.k==='nativeLang' && v) I18N.applyProfileLang({ nativeLang: v });
+    /* 4.36/4.38: единственная точка переключения языка интерфейса в анкете. До неё — язык
+       устройства, после — выбранный родной. Ждём перевода строк анкеты здесь и сейчас: фоновая
+       очередь не гарантирует, что следующий экран успеет стать родным, а анкету надо заполнять. */
+    if (q.k === 'nativeLang' && v) {
+      acc[q.k] = v;
+      Screen.loader(t('Готовлю интерфейс…'));
+      I18N.applyProfileLang({ nativeLang: v });
+      I18N.preloadOnboarding().then(ok => {
+        if (!ok) toast(t('Не удалось перевести интерфейс — продолжим на английском'), true);
+        askProfile(i+1, acc);
+      });
+      return;
+    }
     acc[q.k] = q.type==='number' ? +v : v;
     askProfile(i+1, acc);
   };
@@ -2393,7 +2481,8 @@ async function finishOnboarding(profile, cefr) {
   Screen.show(`
     <div class="eyebrow">Профиль создан</div>
     <h1>${isA0 ? '🔤 Начинаем с основ!' : 'Ваш уровень: '+esc(cefr)}</h1>
-    <p class="sub">Профиль «${esc(profile.name)}» (${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}) создан.${isA0 ? ` Сначала освоим чтение и базовую лексику (${DB.profile.a0Total} уроков A0), затем перейдём к A1.` : ` Первый урок: <b style="color:var(--ink)">${esc(DB.nextStage)}</b>.`}</p>
+    <p class="sub">${esc(profile.name)} · ${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}</p>
+    <p class="sub">${isA0 ? t('Сначала освоим чтение и базовую лексику, затем перейдём к A1.') : t('Первый урок:')} <b style="color:var(--ink)">${esc(isA0 ? (DB.profile.a0Total + ' × A0') : DB.nextStage)}</b></p>
     <button class="btn btn-primary" id="go">К главному меню</button>`);
   $('#go').onclick = mainMenu;
 }
@@ -2500,7 +2589,7 @@ function mainMenu() {
       ${IS_APPLE ? '' : `<button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>`}
       <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
-      <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Профили</b><small>сменить или создать профиль / язык</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Сменить профиль</b><small>выбрать другой профиль</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
   if (orphanA0 && document.getElementById('mResumeA0')) {
@@ -2523,7 +2612,7 @@ function mainMenu() {
   if ($('#mTalk')) $('#mTalk').onclick = () => DB.vocab.length >= 3 ? startDialogue() : toast('Сначала пройдите хотя бы один урок', true);
   $('#mDict').onclick   = showDictionary;
   $('#mRules').onclick  = showRules;
-  $('#mProf').onclick   = profileSelect;
+  $('#mProf').onclick   = () => profileSelect({ create:false });   // 4.38: создание живёт только на экране запуска
   $('#mSet').onclick    = showSettings;
   Hints.show('analytics', HintTexts.analytics);
 }
