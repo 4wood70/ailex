@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v78';
+const APP_VERSION = 'v79';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -422,11 +422,22 @@ const I18N = {
     }, 1200);
   },
   // автоперевод накопленных строк интерфейса на текущий язык через Gemini + кэш
+  /* 4.37: перевод идёт пачками. До этого весь реестр уходил одним запросом и принимался
+     по позициям: любой сбой — и терялось всё сразу (catch пуст, следующая попытка шлёт ту же
+     пачку и падает так же), а ответ на одну строку короче сдвигал весь список. Теперь пачка
+     по 30 строк, результат принимается только при совпадении числа строк, кэш пишется после
+     каждой пачки, и строки видимого экрана идут первыми — человек видит свой язык на текущем
+     вопросе, а не через два экрана. */
   async ensure() {
     if (this.lang === 'ru') return;
+    if (this._busy) return;
     const d = this.dict[this.lang] || (this.dict[this.lang] = {});
-    const missing = [...this.registry].filter(s => d[s] == null);
+    let missing = [...this.registry].filter(s => d[s] == null);
     if (!missing.length || typeof Gemini === 'undefined' || !Gemini.key) return;
+    const vis = visibleStrings().filter(s => d[s] == null);
+    const head = [...new Set(vis)];
+    missing = [...head, ...missing.filter(s => !head.includes(s))];
+    this._busy = true;
     try {
       // Таблица контекстов: что означает каждый термин интерфейса (для идиоматичного перевода)
       const UI_CTX = {
@@ -456,16 +467,28 @@ const I18N = {
         'Экзамен':'контрольный экзамен в конце подуровня',
         'Чекпойнт':'контрольный экзамен после половины уровня'
       };
-      const annotated = missing.map(s => UI_CTX[s] ? s + ' [' + UI_CTX[s] + ']' : s);
-      const res = await Gemini.call({
-        task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
-        rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
-      }, '{"translations":["перевод 1","перевод 2"]}');
-      const tr = (res && res.translations) || [];
-      missing.forEach((s,i) => { if (tr[i]) d[s] = tr[i]; });
-      localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
-        Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
+      const CHUNK = 30;
+      for (let i = 0; i < missing.length; i += CHUNK) {
+        const batch = missing.slice(i, i + CHUNK);
+        const annotated = batch.map(s => UI_CTX[s] ? s + ' [' + UI_CTX[s] + ']' : s);
+        let tr = [];
+        try {
+          const res = await Gemini.call({
+            task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
+            rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
+          }, '{"translations":["перевод 1","перевод 2"]}');
+          tr = (res && res.translations) || [];
+        } catch(_) { continue; }              // пачка не удалась — остальные не теряем
+        if (tr.length !== batch.length) continue;   // сдвиг ответа: принять нельзя, записали бы чужое
+        batch.forEach((s,k) => { if (tr[k]) d[s] = tr[k]; });
+        try {
+          localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
+            Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
+        } catch(_) {}
+        try { localizeDOM(document.getElementById('screen')); } catch(_) {}  // первая пачка видна сразу
+      }
     } catch(_) { /* не вышло — останемся на исходных строках */ }
+    finally { this._busy = false; }
   }
 };
 const t = s => I18N.t(s);
@@ -1027,6 +1050,12 @@ function syncSysStatus(){
 }
 // Переводит интерфейс: заменяет ТОЛЬКО текстовые узлы, целиком совпадающие со служебной строкой
 // из словаря (кнопки/заголовки). Учебный контент так не затрагивается. Для ru — ничего не делает.
+/* 4.37: исходная строка каждого переведённого узла. До этого перевод шёл «на месте»: русский
+   текст заменялся английским по цепочке 4.34, и ключ исчезал — следующий проход узел уже не
+   узнавал, а словарные ключи русские. Английский оказывался не запасным вариантом, а конечным:
+   пришедший позже родной перевод применять было не к чему. Теперь исходник живёт в WeakMap
+   (у текстового узла нет атрибутов), и перевод всегда считается от него. */
+const I18N_SRC = new WeakMap();
 function localizeDOM(root) {
   if (!root || I18N.lang === 'ru') return;
   const d = I18N.dict[I18N.lang], known = I18N.dict.en || {};
@@ -1034,12 +1063,30 @@ function localizeDOM(root) {
   const nodes = []; let n;
   while ((n = walker.nextNode())) nodes.push(n);
   nodes.forEach(node => {
-    const raw = node.nodeValue, key = raw.trim();
+    const src = I18N_SRC.has(node) ? I18N_SRC.get(node) : node.nodeValue;
+    const key = String(src||'').trim();
     if (!key || known[key] === undefined) return;   // переводим только известные служебные строки
     I18N.registry.add(key);
-    const val = (d && d[key] != null) ? d[key] : known[key];   // 4.34: нет родного — ставим английский
-    if (val != null) node.nodeValue = raw.replace(key, val);
+    const val = (d && d[key] != null) ? d[key] : known[key];   // 4.34: нет родного — пока английский
+    if (val == null) return;
+    I18N_SRC.set(node, src);                        // запомнить исходник до первой подмены
+    node.nodeValue = String(src).replace(key, val);
   });
+}
+// строки, которые человек видит прямо сейчас — они переводятся первыми (4.37)
+function visibleStrings() {
+  const out = [];
+  try {
+    const root = document.getElementById('screen'); if (!root) return out;
+    const known = I18N.dict.en || {};
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    let n; while ((n = w.nextNode())) {
+      const src = I18N_SRC.has(n) ? I18N_SRC.get(n) : n.nodeValue;
+      const k = String(src||'').trim();
+      if (k && known[k] !== undefined) out.push(k);
+    }
+  } catch(_) {}
+  return out;
 }
 
 /* 4.25: второй путь перевода — целые HTML-абзацы (подсказки, справка «Как пользоваться»).
