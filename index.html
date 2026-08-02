@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v83';
+const APP_VERSION = 'v84';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,19 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    'Говорить',
+    'Закрыть',
+    'Объяснить почему так',
+    'Озвучить',
+    'Озвучить пример',
+    'Повторить озвучку',
+    'Показать ответ',
+    'Почему так?',
+    'Произнести',
+    'Произнести ответ',
+    'Напишите предложение целиком',
+    'Ваш ответ…',
+    'Ваша фраза…',
     'уровень',
     'следующий этап:',
     '· прогресс сохранён',
@@ -464,7 +477,7 @@ const UI_EXTRA = [
     '🤝 Я подскажу как напарник:',
     '🧠 Введите верный вариант вручную, чтобы продолжить.',
     '🧠 Запомните и введите верный вариант, чтобы продолжить.',
-    '🧠 Запомните и напишите предложение целиком.',
+    '<span>🧠 Запомните и напишите предложение целиком.</span>',
     '🧠 Слово → эмодзи-якорь → транскрипция → перевод. Нажмите 🔊, чтобы услышать живое звучание.',
     '🧩 Соберите фразу из слов',
     '🧩 слово в контексте',
@@ -1379,6 +1392,22 @@ function localizeDOM(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   const nodes = []; let n;
   while ((n = walker.nextNode())) nodes.push(n);
+  /* 4.39: подсказка внутри поля ввода (placeholder) и всплывающие title — не текстовые узлы,
+     обход дерева их не видел, и они оставались русскими при любом языке. */
+  root.querySelectorAll && root.querySelectorAll('[placeholder],[title],[aria-label]').forEach(el => {
+    ['placeholder','title','aria-label'].forEach(attr => {
+      const cur = el.getAttribute(attr); if (!cur) return;
+      const memo = 'data-i18n-' + attr;
+      const srcv = el.getAttribute(memo) || cur;
+      const k = String(srcv).trim();
+      if (!k || !known.has(k)) return;
+      I18N.registry.add(k);
+      const v = (d && d[k] != null) ? d[k] : (I18N.dict.en ? I18N.dict.en[k] : null);
+      if (v == null) return;
+      el.setAttribute(memo, srcv);
+      el.setAttribute(attr, String(srcv).replace(k, v));
+    });
+  });
   nodes.forEach(node => {
     const src = I18N_SRC.has(node) ? I18N_SRC.get(node) : node.nodeValue;
     const key = String(src||'').trim();
@@ -2875,7 +2904,7 @@ function ringSVG(pct, lvl) {
       <circle cx="105" cy="105" r="${R}" fill="none" stroke="url(#g1)" stroke-width="10"
         stroke-linecap="round" stroke-dasharray="${on} ${C}" style="filter:drop-shadow(0 0 8px rgba(65,184,255,.5))"/>
     </svg>
-    <div class="core"><div><div class="lbl">Уровень ${esc(lvl||'')}</div><div class="pct">${pct}%</div></div></div>
+    <div class="core"><div><div class="lbl"><span>Уровень</span> ${esc(lvl||'')}</div><div class="pct">${pct}%</div></div></div>
   </div>`;
 }
 /* QUEUE-65: возврат в сохранённый урок. Вынесено из обработчика карточки — теперь точек входа две
@@ -2957,7 +2986,7 @@ function mainMenu() {
         : resumeA0 ? 'Шаг '+esc(String(resumeA0.stepIdx+1))+' из '+esc(String((resumeA0.steps||[]).length))+' · прогресс сохранён'
         : isExam ? '50 вопросов · порог 85%'
         : isA0 ? 'Чтение, произношение, базовая лексика'
-        : '21 задание + рассказ-квест'}</small></span><span class="chev">›</span></button>
+        : '<span>21 задание + рассказ-квест</span>'}</small></span><span class="chev">›</span></button>
       ${(()=>{
         /* 4.39: у режима больше нет служебного имени на экране. Есть история — на кнопке её
            собственное название и зацепка из арки, обе приходят на родном языке вместе с аркой,
@@ -2973,8 +3002,8 @@ function mainMenu() {
         return `<button class="menu-item" id="mSuper"${cachedSuper?' style="border:1px solid var(--accent)"':''}><span class="ic">${cachedSuper?'▶️':'🔁'}</span><span class="t"><b>${head}</b><small>${sub}</small></span><span class="chev">›</span></button>`;
       })()}
       ${IS_APPLE ? '' : `<button class="menu-item" id="mTalk"><span class="ic">🎙️</span><span class="t"><b>Поговорить</b><small>Голосовой диалог по вашим темам</small></span><span class="chev">›</span></button>`}
-      <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} слов · трудные и мнемоники</small></span><span class="chev">›</span></button>
-      <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} правил · грамматика с примерами</small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mDict"><span class="ic">📒</span><span class="t"><b>Словарь</b><small>${words} <span>слов · трудные и мнемоники</span></small></span><span class="chev">›</span></button>
+      <button class="menu-item" id="mRules"><span class="ic">📐</span><span class="t"><b>Свод правил</b><small>${(DB.rules||[]).length} <span>правил · грамматика с примерами</span></small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Сменить профиль</b><small>выбрать другой профиль</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`);
@@ -4461,7 +4490,7 @@ function drillReviewContext(s, rd) {
     <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Повторение')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🔁 повторение в контексте</span></div>
-      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${w.translation?` — «${esc(w.translation)}»`:''}.</p>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${w.translation?` — «${esc(w.translation)}»`:''}.</p>
       <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
       <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
@@ -4507,7 +4536,7 @@ function drillReviewContext(s, rd) {
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br>🧠 Запомните и напишите предложение целиком.`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
@@ -4599,7 +4628,7 @@ function drillContext(s) {
       $('#fb').className='feedback bad';
       // QUEUE-04: при ошибке формы — показываем пояснение если есть
       const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 В этом предложении: <b>${esc(answer)}</b> — форма слова «${esc(dictWord)}»</span>` : '';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br>🧠 Запомните и напишите предложение целиком.`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
