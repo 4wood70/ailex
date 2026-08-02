@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v84';
+const APP_VERSION = 'v85';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -781,29 +781,45 @@ const I18N = {
      пачка не топит остальные. Возвращает true, если переведено всё запрошенное. */
   async _translate(list) {
     this._lastError = '';
-    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
     if (!hasKey()) { this._lastError = 'NO_KEY'; return false; }
-    const CHUNK = 30;
-    for (let i = 0; i < list.length; i += CHUNK) {
-      const batch = list.slice(i, i + CHUNK);
-      const annotated = batch.map(x => UI_CTX[x] ? x + ' [' + UI_CTX[x] + ']' : x);
-      let tr = [];
-      try {
-        const res = await Gemini.call({
-          task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
-          rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве — только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
-        }, '{"translations":["перевод 1","перевод 2"]}');
-        tr = (res && res.translations) || [];
-      } catch(e) { this._lastError = String(e && e.message||'').startsWith('KEY:') ? 'KEY' : 'NET'; continue; }
-      if (tr.length !== batch.length) { this._lastError = 'BAD'; continue; }
-      batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
-      try {
-        localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
-          Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
-      } catch(_) {}
-      try { localizeDOM(document.getElementById('screen')); } catch(_) {}
-    }
+    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
+    for (let i = 0; i < list.length; i += 30) await this._chunk(list.slice(i, i + 30));
     return list.every(x => d[x] != null);
+  },
+  /* 4.40: пачка, на которую модель ответила другим числом строк, раньше просто пропускалась —
+     и пропускалась снова при каждом запуске, потому что её строки так и оставались непереведёнными.
+     Сходимости не было: одни и те же тридцать строк падали одинаково раз за разом. Теперь такая
+     пачка делится пополам и повторяется: на коротких списках модель почти не сбивается со счёта,
+     а неисправимая строка отсеивается по одной, не унося с собой остальные двадцать девять. */
+  async _chunk(batch) {
+    if (!batch.length) return;
+    const d = this.dict[this.lang] || (this.dict[this.lang] = {});
+    const annotated = batch.map(x => UI_CTX[x] ? x + ' [' + UI_CTX[x] + ']' : x);
+    let tr = [];
+    try {
+      const res = await Gemini.call({
+        task:'translate_ui', target_ui_lang:this.lang, strings: annotated,
+        rules:'Переведи строки интерфейса языкового приложения на язык target_ui_lang. Каждая строка может содержать пояснение в скобках [...] — используй его для подбора ИДИОМАТИЧНОГО слова, понятного носителю языка (не дословный перевод, а то слово, которое реально употребляется). Верни переводы СТРОГО в том же порядке и количестве: сколько строк прислано, столько и верни — ни одной лишней, ни одной пропущенной. Только текст кнопки/заголовка без пояснений. Эмодзи и спецсимволы сохраняй.'
+      }, '{"translations":["перевод 1","перевод 2"]}');
+      tr = (res && res.translations) || [];
+    } catch(e) {
+      this._lastError = String(e && e.message||'').startsWith('KEY:') ? 'KEY' : 'NET';
+      return;                                     // сеть или ключ — делить смысла нет
+    }
+    if (tr.length !== batch.length) {
+      this._lastError = 'BAD';
+      if (batch.length === 1) return;             // одна строка и всё равно мимо — оставляем как есть
+      const half = Math.ceil(batch.length / 2);
+      await this._chunk(batch.slice(0, half));
+      await this._chunk(batch.slice(half));
+      return;
+    }
+    batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
+    try {
+      localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
+        Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
+    } catch(_) {}
+    try { localizeDOM(document.getElementById('screen')); } catch(_) {}
   }
 };
 const t = s => I18N.t(s);
