@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v85';
+const APP_VERSION = 'v87';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,31 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    'напишите сами',
+    'Напишите ответ',
+    'Ответить',
+    // 4.40: строки, разделённые уже после первой сборки списка — их не было в наборе вовсе
+    'Задание',
+    'Продолжить урок',
+    'Продолжить Суперквест',
+    'Уровень',
+    'Ваш уровень:',
+    'Шаг',
+    'Урок A0:',
+    'Голосовой диалог по вашим темам',
+    '21 задание + рассказ-квест',
+    '· точность',
+    'Каркас:',
+    'Примеры:',
+    'Артикли',
+    'Суперквест (повторение)',
+    '🎙️ Поговорить',
+    '🧠 Верный ответ:',
+    '(тап — перевод)',
+    '(категория и транскрипция необязательны).',
+    'Пока пусто. Правила появятся после уроков, где есть новая грамматика.',
+    'Пока пусто. Слова появятся после первого урока.',
+    'Не то. Попробуйте ещё раз — верный вариант на экране.',
     'Говорить',
     'Закрыть',
     'Объяснить почему так',
@@ -754,13 +779,34 @@ const I18N = {
     'Связь медленная — подождите ещё немного…','Язык интерфейса','Не удалось загрузить перевод',
     'Повторить','Продолжить на английском'
   ],
-  async preloadOnboarding() {
+  /* 4.40: интерфейс переводится ЦЕЛИКОМ в момент выбора родного языка, а не по частям потом.
+     Прежняя схема грузила заранее только строки анкеты (37 из 393), а остальное подтягивала
+     фоном по ходу занятий — человек создавал профиль, заходил в урок и видел там свой язык
+     вперемешку с русским, причём набор русских островков менялся от запуска к запуску.
+     Ждать один раз при создании профиля честнее: там человек и так ждёт, а дальше язык
+     не меняется никогда. Порядок сохранён: строки анкеты идут первыми, чтобы следующий
+     экран был готов раньше остальных. */
+  async preloadOnboarding(onStep) {
     if (this.lang === 'ru') return true;
     const d = this.dict[this.lang] || (this.dict[this.lang] = {});
-    this.ONBOARDING_UI.forEach(x => this.registry.add(x));
-    const need = this.ONBOARDING_UI.filter(x => d[x] == null);
+    const all = [...this.known()];
+    all.forEach(x => this.registry.add(x));
+    const head = this.ONBOARDING_UI.filter(x => d[x] == null);
+    const rest = all.filter(x => d[x] == null && !head.includes(x));
+    const need = [...head, ...rest];
     if (!need.length) return true;
-    try { return await this._translate(need); } catch(_) { return false; }
+    this._total = need.length; this._done = 0; this._onStep = onStep || null;
+    try { return await this._translate(need); }
+    catch(_) { return false; }
+    finally { this._onStep = null; }
+  },
+  // сколько известных строк ещё не переведено на текущий язык (4.40)
+  uiIncomplete() {
+    if (this.lang === 'ru' || !hasKey()) return false;
+    const d = this.dict[this.lang] || {};
+    let n = 0;
+    this.known().forEach(x => { if (d[x] == null) n++; });
+    return n > 5;                       // единичные пропуски доберёт фоновая очередь
   },
   async ensure() {
     if (this.lang === 'ru') return;
@@ -815,6 +861,7 @@ const I18N = {
       return;
     }
     batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
+    if (this._onStep) { this._done = (this._done||0) + batch.length; try { this._onStep(this._done, this._total); } catch(_){} }
     try {
       localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
         Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
@@ -1855,7 +1902,7 @@ const Core = {
    не ограничивается сознательно: вход выше уровня — это развитие (раздел 5.0).
    ===================================================================== */
 const GCORE_LEVELS = ['A1','A2','B1','B2'];
-const GCORE_MAX_BANNED = 40;    // потолок списка маркеров в запрос — чтобы не раздувать промпт
+const GCORE_MAX_BANNED = 60;    // потолок списка маркеров в запрос (4.40: было 40 — не хватало на старшие уровни)
 const SCAFFOLD_CAP = { A1:2, A2:3 };   // потолок прочерков в каркасе (раздел 5.0)
 const GCORE_SCHEMA = '{"themes":[{"order":1,"title":"служебное название темы на родном","gist":"одна фраза сути на родном","cefr":"A1|A2|B1|B2","requires":[],"foundation":true,"markers":["слово или форма целевого языка"]}]}';
 const GCORE_RULES = 'Верни карту грамматических тем для пары target_lang→native_lang по уровням levels, В МЕТОДИЧЕСКОМ ПОРЯДКЕ изучения. '
@@ -2020,16 +2067,25 @@ const GrammarCore = {
       if (t.status === 'пройдена' || t.foundation)
         (t.markers||[]).forEach(m => { const n = norm(m); if (n) safe.add(n); });
     });
+    /* 4.40. Прежде список собирался «все маркеры ближних тем, затем дальних» и обрезался общим
+       потолком. Одна тема могла занять двадцать мест из сорока, и темы старших уровней вылетали
+       целиком — так в задание A1 попал möchte, маркер модальных глаголов уровня A2: модель про
+       запрет попросту не слышала. Теперь от каждой темы берём не больше трёх маркеров, а ближние
+       и дальние чередуем: ширина охвата важнее глубины по одной теме. */
+    const PER_THEME = 3;
     const near = [], far = [];
     all.forEach(t => {
       if (t.status === 'пройдена' || t.foundation) return;
       const ti = GCORE_LEVELS.indexOf(t.cefr);
-      (t.markers||[]).forEach(m => {
-        if (safe.has(norm(m))) return;                  // слово уже разрешено пройденной темой
-        (ti <= ci ? near : far).push(m);
-      });
+      const mk = (t.markers||[]).filter(m => !safe.has(norm(m))).slice(0, PER_THEME);
+      (ti <= ci ? near : far).push(mk);
     });
-    return [...new Set([...near, ...far])].slice(0, GCORE_MAX_BANNED);
+    const out = [];
+    for (let i = 0; i < PER_THEME; i++) {
+      near.forEach(mk => { if (mk[i]) out.push(mk[i]); });
+      far.forEach(mk  => { if (mk[i]) out.push(mk[i]); });
+    }
+    return [...new Set(out)].slice(0, GCORE_MAX_BANNED);
   },
   // названия разрешённого — пройденное плюс фундамент (для формулировки запроса)
   allowedTitles(lvl){
@@ -2278,7 +2334,12 @@ function profileSelect(opts) {
     { back: allowCreate ? null : mainMenu });
   ambientNet(document.getElementById('netBg'));
   document.querySelectorAll('.prof-card[data-id]').forEach(b => b.onclick = () => {
-    Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB); I18N.applyProfileLang(DB.profile); mainMenu();
+    Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB);
+    I18N.applyProfileLang(DB.profile);
+    /* 4.40: профили, созданные до этой версии, переведены частично — их интерфейс догружался
+       фоном и никогда не доходил до конца. Доводим здесь, один раз, с видимым ожиданием. */
+    if (I18N.uiIncomplete()) return prepareUiLang(mainMenu);
+    mainMenu();
   });
   if (allowCreate) $('#newProf').onclick = () => onboardingIntro();
 }
@@ -2700,11 +2761,15 @@ function askProfile(i, acc) {
 function prepareUiLang(done) {
   if (I18N.lang === 'ru') return done();
   Screen.loader(t('Готовлю интерфейс…'));
+  const line = () => document.querySelector('#screen .loader div:last-child');
   const slow = setTimeout(() => {
-    const el = document.querySelector('#screen .loader div:last-child');
-    if (el) el.textContent = t('Связь медленная — подождите ещё немного…');
-  }, 6000);
-  I18N.preloadOnboarding().then(ok => {
+    const el = line();
+    if (el && !/\d/.test(el.textContent)) el.textContent = t('Связь медленная — подождите ещё немного…');
+  }, 8000);
+  I18N.preloadOnboarding((n, total) => {           // 4.40: ход виден — загрузка занимает секунды
+    const el = line();
+    if (el) el.textContent = t('Готовлю интерфейс…') + ' ' + Math.min(n, total) + '/' + total;
+  }).then(ok => {
     clearTimeout(slow);
     if (ok) return done();
     const why = I18N._lastError === 'KEY'
@@ -2751,32 +2816,66 @@ function placementIntro(profile) {
    но его ошибка срабатывала на следующем грамматическом вопросе); уровень без
    вопросов не считается «проваленным» на пустом множестве.
    ===================================================================== */
-const PLACEMENT_LEVELS    = ['A1','A2','B1','B2','C1'];
-const PLACEMENT_PER_LEVEL = 3;
-const PLACEMENT_PASS      = 2;    // большинство из трёх
+const PLACEMENT_LEVELS    = ['A0','A1','A2','B1','B2','C1'];   // 4.40: лестница начинается с A0
+const PLACEMENT_PER_LEVEL = 4;    // 2 грамматики + 1 лексика + 1 с печатью ответа (4.40)
+/* 4.40: уровень засчитан, только если верны ОБА грамматических вопроса И вопрос с печатью
+   ответа. Лексика на повышение не влияет вовсе: на родственной паре (румынский→итальянский)
+   слова узнаются даром, и вопрос на узнавание не доказывает владения языком. Прежний порог
+   «два из трёх при четырёх вариантах» проходился случайным угадыванием примерно в шестнадцати
+   случаях из ста на уровень, а на родственной паре — заметно чаще. */
+const PLACEMENT_NEED_GRAM = 2;    // оба грамматических
+const PLACEMENT_PASS      = 2;    // (историческое имя, оставлено для совместимости)
 const PLACEMENT_SCHEMA =
   `{"questions":[
-      {"level":"A1","skill":"grammar","question":"вопрос на целевом языке: ТОЛЬКО структура/порядок слов/спряжение — используй лексику уровня НИЖЕ A1 (самые базовые слова)","options":["в1","в2","в3","в4"],"correct_index":0},
-      {"level":"A1","skill":"grammar","question":"ещё один структурный вопрос A1 с базовой лексикой","options":["в1","в2","в3","в4"],"correct_index":1},
-      {"level":"A1","skill":"vocab","question":"вопрос на узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":2}
-    ]} — РОВНО ПО 3 вопроса на КАЖДЫЙ запрошенный уровень (2 grammar + 1 vocab), по возрастанию сложности. Меньше трёх на уровень — брак ответа. Grammar-вопросы: лексика строго из уровня НИЖЕ тестируемого. Vocab-вопросы: узнавание слова на целевом языке → перевод (или наоборот). Варианты на целевом языке (кроме vocab-вопросов с переводом). correct_index — реальная позиция верного варианта, НЕ всегда 0: раскладывай верный ответ по разным позициям.`;
+      {"level":"A0","skill":"grammar","question":"вопрос на чтение: какой звук даёт буква / как читается короткое слово","options":["в1","в2","в3","в4"],"correct_index":0},
+      {"level":"A0","skill":"produce","question":"условие на родном: напишите на целевом одно короткое слово","answer":"эталон одним словом","accept":["допустимый вариант"]},
+      {"level":"A1","skill":"grammar","question":"вопрос на целевом: ТОЛЬКО структура/порядок слов/спряжение, лексика уровня НИЖЕ A1","options":["в1","в2","в3","в4"],"correct_index":1},
+      {"level":"A1","skill":"vocab","question":"узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":2},
+      {"level":"A1","skill":"produce","question":"условие на родном: напишите фразу на целевом (1-4 слова)","answer":"эталонная фраза","accept":["равноценный вариант"]}
+    ]} — РОВНО ПО 4 вопроса на КАЖДЫЙ запрошенный уровень: 2 grammar + 1 vocab + 1 produce. Меньше четырёх на уровень — брак ответа.
+    A0 — проверка ЧТЕНИЯ, а не грамматики: узнать звук буквы, прочитать короткое слово, понять простейшее слово. Никакой грамматики на A0 быть не должно.
+    grammar: варианты на целевом языке, лексика строго из уровня НИЖЕ тестируемого — проверяется структура, а не словарный запас.
+    vocab: узнавание слова целевого языка → перевод (или наоборот).
+    produce (критично, 4.40): вопрос БЕЗ вариантов — человек печатает ответ сам. question — условие СТРОГО на native_lang, без единого слова target_lang и без самой целевой фразы. answer — короткий эталон на целевом (1-4 слова, на A0 — одно слово). accept — 1-3 равноценных варианта ответа (другой порядок слов, синоним), БЕЗ форм с ошибками. Ответ проверяется сравнением строк на устройстве, поэтому эталон обязан быть однозначным: не задавай вопросов, где верных ответов много.
+    Сложность produce растёт с уровнем: A0 — одно слово, A1 — короткая фраза настоящего времени, A2 и выше — конструкция уровня.
+    correct_index — индекс верного варианта для grammar и vocab. Вопросы по возрастанию сложности.`;
 
-// Разбор ответа модели: только валидные вопросы, разложенные по уровням. Брак молча отбрасывается.
+/* 4.40: вопрос с печатью ответа (produce) приходит без вариантов, поэтому нормализация
+   разделена по типам. Пустой accept — законное значение: эталон один. */
 function placementNormalize(list) {
   const by = {}; PLACEMENT_LEVELS.forEach(L => by[L] = []);
   (Array.isArray(list) ? list : []).forEach(q => {
-    if (!q || !q.question || !Array.isArray(q.options) || q.options.length < 2) return;
+    if (!q || !q.question) return;
     const L = String(q.level||'').toUpperCase().trim();
     if (!by[L]) return;                                    // уровень вне лестницы
-    const ci = +q.correct_index;
-    if (!(ci >= 0 && ci < q.options.length)) return;        // без верного ответа вопрос бесполезен
     const text = String(q.question).trim();
     if (by[L].some(x => norm(x.question) === norm(text))) return;   // модель повторилась
-    by[L].push({ level:L, skill: (q.skill === 'vocab' ? 'vocab' : 'grammar'),
-                 question:text, options:q.options.map(o => String(o)), correct_index:ci });
+    const skill = (q.skill === 'vocab') ? 'vocab' : (q.skill === 'produce') ? 'produce' : 'grammar';
+    if (skill === 'produce') {
+      const ans = String(q.answer||'').trim();
+      if (!ans) return;                                    // без эталона вопрос бесполезен
+      const accept = (Array.isArray(q.accept) ? q.accept : []).map(x => String(x||'').trim()).filter(Boolean).slice(0,3);
+      by[L].push({ level:L, skill, question:text, answer:ans, accept });
+      return;
+    }
+    if (!Array.isArray(q.options) || q.options.length < 2) return;
+    const ci = +q.correct_index;
+    if (!(ci >= 0 && ci < q.options.length)) return;        // без верного ответа вопрос бесполезен
+    by[L].push({ level:L, skill, question:text, options:q.options.map(o => String(o)), correct_index:ci });
   });
   return by;
 }
+
+/* Проверка печатного ответа — на устройстве, без обращения к модели: ответ короткий и эталон
+   однозначный, поэтому сравнения строк достаточно, а лишний сетевой запрос только добавил бы
+   задержку иновый источник сбоев. Допуск: регистр, лишние пробелы, знаки препинания и одна опечатка. */
+function placementAnswerOk(input, q) {
+  const a = norm(String(input||'').replace(/[.,!?;:]/g,' '));
+  if (!a) return false;
+  const variants = [q.answer, ...(q.accept||[])].map(x => norm(String(x||'').replace(/[.,!?;:]/g,' '))).filter(Boolean);
+  return variants.some(v => a === v || editDistance(a, v) <= 1);
+}
+
 
 async function runPlacement(profile) {
   Screen.loader(t('Готовлю вопросы теста…'));
@@ -2803,64 +2902,78 @@ async function runPlacement(profile) {
     } catch(_) { /* добор не вышел — работаем тем, что есть, порог считается ниже по факту */ }
   }
 
-  // Лестница: только уровни, где есть хотя бы два вопроса, в фиксированном порядке A1→C1.
-  const ladder = PLACEMENT_LEVELS.filter(L => by[L].length >= 2);
-  if (!ladder.length || ladder[0] !== 'A1') { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
-  const count = {}, need = {};
+  /* 4.40. Лестница A0→C1. Уровень засчитан, только если верны ОБА грамматических вопроса И
+     вопрос с печатью ответа; лексика на повышение не влияет (на родственной паре слова
+     узнаются даром). Лестница обрывается на первом непройденном уровне — дальше спрашивать
+     нечего, и человек не тратит время на заведомо чужие вопросы. */
+  // уровень попадает в лестницу, только если его есть чем проверить: иначе он «пройден» даром
+  const testable = L => by[L].some(q => q.skill === 'grammar' || q.skill === 'produce');
+  const ladder = PLACEMENT_LEVELS.filter(L => by[L].length >= 2 && testable(L));
+  if (!ladder.length || ladder[0] !== 'A0') { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
+  const need = {};
   ladder.forEach(L => {
     by[L] = by[L].slice(0, PLACEMENT_PER_LEVEL);
-    count[L] = by[L].length;
-    // Полный набор — большинство из трёх. Неполный (добор не удался) — большинство от фактического
-    // числа с округлением ВНИЗ: требовать 2 из 2 значило бы вернуть ровно тот баг, который чиним.
-    need[L] = count[L] >= PLACEMENT_PER_LEVEL ? PLACEMENT_PASS : Math.max(1, count[L] - 1);
+    const g = by[L].filter(q => q.skill === 'grammar').length;
+    const p = by[L].filter(q => q.skill === 'produce').length;
+    need[L] = { gram: Math.min(PLACEMENT_NEED_GRAM, g), produce: p > 0 };   // требуем всё, что пришло
   });
   const qs = ladder.flatMap(L => by[L]);          // порядок задаёт приложение, а не ответ модели
 
-  let idx = 0, wrongChoice = {}, dontKnow = {}, passed = {}, stopped = false;
+  let idx = 0, okGram = {}, okProd = {}, stopped = false, lastLevel = null;
 
-  const shouldStop = (level) => {
-    if (!count[level]) return false;                       // уровень не тестировался — не «провален»
-    const wc = wrongChoice[level]||0, dk = dontKnow[level]||0;
-    return wc >= 2 || (wc + dk) >= count[level];
-  };
+  // уровень провален, как только добрать нужное число верных уже невозможно
+  const levelDone = (L) => by[L].every(q => qs.indexOf(q) < idx);
+  const levelPassed = (L) => (okGram[L]||0) >= need[L].gram && (!need[L].produce || okProd[L]);
 
   const step = () => {
     if (stopped || idx >= qs.length) return done();
     const q = qs[idx];
-    const isVocab = q.skill === 'vocab';
-    const opts = q.options.map((o,i)=>({o,i}));
-    Screen.show(`
+    if (lastLevel && q.level !== lastLevel && !levelPassed(lastLevel)) { stopped = true; return done(); }
+    lastLevel = q.level;
+    const kind = q.skill === 'vocab' ? t('лексика') : q.skill === 'produce' ? t('напишите сами') : t('грамматика');
+    const head = `
       <div class="eyebrow">${t('Тест уровня · вопрос')} ${idx+1} / ${qs.length}</div>
       <div class="card">
         <div class="drill-head">
           <span class="n">${esc(q.level)}</span>
-          <span style="font-size:11px;color:var(--dim);margin-left:8px">${isVocab?t('лексика'):t('грамматика')}</span>
+          <span style="font-size:11px;color:var(--dim);margin-left:8px">${kind}</span>
         </div>
-        <div class="task-text">${esc(q.question)}</div>
+        <div class="task-text">${esc(q.question)}</div>`;
+    if (q.skill === 'produce') {
+      Screen.show(head + `
+        <textarea id="pans" rows="2" placeholder="${t('Напишите ответ')}"></textarea>
+        <button class="btn btn-primary" id="pgo">${t('Ответить')}</button>
+        <button class="opt" id="pskip" style="color:var(--dim)">${t('Не знаю')}</button>
+      </div>`);
+      const send = (val) => {
+        if (placementAnswerOk(val, q)) okProd[q.level] = true;
+        idx++; step();
+      };
+      $('#pgo').onclick   = () => send($('#pans').value);
+      $('#pskip').onclick = () => send('');
+      setTimeout(()=>{ try { $('#pans').focus(); } catch(_){} }, 60);
+      return;
+    }
+    const opts = q.options.map((o,i)=>({o,i}));
+    Screen.show(head + `
         ${shuffle(opts).map(x=>`<button class="opt" data-i="${x.i}">${esc(x.o)}</button>`).join('')}
         <button class="opt" data-i="-1" style="color:var(--dim)">${t('Не знаю')}</button>
       </div>`);
     document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
       const chosen = +b.dataset.i;
-      if (chosen === -1) {
-        if (!isVocab) dontKnow[q.level] = (dontKnow[q.level]||0)+1;      // vocab в остановке не участвует
-      } else if (chosen === q.correct_index) {
-        passed[q.level] = (passed[q.level]||0)+1;
-      } else if (!isVocab) {
-        wrongChoice[q.level] = (wrongChoice[q.level]||0)+1;              // ошибка в лексике тоже не копится
-      }
-      if (!isVocab && shouldStop(q.level)) stopped = true;
+      if (chosen === q.correct_index && q.skill === 'grammar') okGram[q.level] = (okGram[q.level]||0)+1;
       idx++; step();
     });
   };
 
   const done = () => {
-    let level = 'A1';
+    /* Уровнем считается последняя ПОЛНОСТЬЮ пройденная ступень. При сомнении ставим ниже:
+       начать слишком низко — несколько лёгких дней, начать слишком высоко — человек читает
+       фразу и не понимает, о чём речь, и бросает. */
+    let level = 'A0';
     for (const L of ladder) {
-      if ((passed[L]||0) >= need[L] && !shouldStop(L)) level = L;
-      else break;
+      if (levelPassed(L)) level = L; else break;
     }
-    if ((passed['A1']||0) === 0) level = 'A0';   // ни одного верного на A1 → путь с основ
     finishOnboarding(profile, level);
   };
   step();
@@ -3819,14 +3932,14 @@ function fetchLessonChunk2() {
       const rg = await Gemini.call(Object.assign({
         task:'grammar_rule', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:lvl,
         lesson_words: words.map(w=>w.term), known_rules: knownRules, covered_categories: coveredCats,
-        rules: themeRule + ' ЯЗЫК ОБЪЯСНЕНИЯ: summary — без лингвистических терминов, объясняй через примеры как живому человеку (не "наречная группа" а "можно добавить уточнение — как быстро, где — это всё равно считается одной частью"). ГЛУБИНА ПО УРОВНЮ: на A1–A2 — одна чёткая строка + 2–3 простых примера без оговорок и исключений; на B1+ — основное правило + примечание о расширениях и исключениях. ПОЛНОТА: правило показывает КОНТРАСТ — как форма выглядит в словаре/инфинитиве И как меняется в предложении (пример А → пример Б). ПРИМЕРЫ в examples: на A1–A2 только простые случаи без усложнений — никаких наречий-расширителей в W-Fragen, никаких отделяемых приставок в примерах спряжения. ПАРАДИГМА ЦЕЛИКОМ (критично, QUEUE-64): в table — ВЕСЬ набор форм темы, а не его часть. Если тема про артикль или склонение — в таблице все роды и все падежи уровня; если про спряжение — все лица. '
+        rules: themeRule + ' ЯЗЫК ОБЪЯСНЕНИЯ: summary — без лингвистических терминов, объясняй через примеры как живому человеку (не "наречная группа" а "можно добавить уточнение — как быстро, где — это всё равно считается одной частью"). ГЛУБИНА ПО УРОВНЮ: summary держи коротким на всех уровнях — 1–2 фразы на A1–A2, чуть больше на B1+. ИСКЛЮЧЕНИЕ НАЗЫВАЙ ПРЯМО (критично, 4.40): если форма из таблицы не подчиняется общему правилу — особая форма, совпадение форм разных лиц, чередование основы — напиши это одной фразой в поле note. Молча обойти особенность ЗАПРЕЩЕНО: ученик встретит форму в задании и не поймёт, откуда она. Краткость относится к объёму объяснения, а не к полноте: коротко, но без умолчаний. ПОЛНОТА: правило показывает КОНТРАСТ — как форма выглядит в словаре/инфинитиве И как меняется в предложении (пример А → пример Б). ПРИМЕРЫ в examples: на A1–A2 только простые случаи без усложнений — никаких наречий-расширителей в W-Fragen, никаких отделяемых приставок в примерах спряжения. ПАРАДИГМА ЦЕЛИКОМ (критично, QUEUE-64): в table — ВЕСЬ набор форм темы, а не его часть. Если тема про артикль или склонение — в таблице все роды и все падежи уровня; если про спряжение — все лица. '
         + 'Обрезать таблицу до одного рода, одного лица или одного падежа ЗАПРЕЩЕНО: формы понятны только в сопоставлении, а урезанная таблица учит ложному правилу (в немецком ein одинаков для мужского и среднего рода — таблица только с мужским дезинформирует). '
-        + 'Порядок строк такой, чтобы совпадения и различия форм читались с одного взгляда. Показ парадигмы целиком НЕ означает, что всё это потребуют в задании: задание остаётся в пределах пройденного, таблица — опора для узнавания. '
+        + 'ПОДПИСЬ ФОРМЫ (критично, 4.40): у каждой строки таблицы заполни label — чьё это лицо, число, род или падеж, на native_lang («я», «он, она, оно», «Dativ — кому/чему»). Если форма одинакова для нескольких лиц — объедини их в одной строке одной подписью («я / он, она, оно»), чтобы совпадение было видно, а не выводилось сравнением строк. Порядок строк такой, чтобы совпадения и различия форм читались с одного взгляда. Показ парадигмы целиком НЕ означает, что всё это потребуют в задании: задание остаётся в пределах пройденного, таблица — опора для узнавания. '
         + 'ТЕРМИНЫ С РАСШИФРОВКОЙ (QUEUE-64): грамматический термин, реально принятый для ЦЕЛЕВОГО языка (нем. Dativ, Akkusativ, Nominativ; рус. творительный падеж), в таблице УМЕСТЕН и полезен — но НИКОГДА не голым. Всегда с пояснением на native_lang рядом: «Dativ — кому/чему», «Akkusativ — вижу кого/что». '
         + 'Если в целевом языке такой категории нет (в английском нет падежей) — термин не выдумывай. В summary термины по-прежнему не нужны: там объясняем живым языком. '
         + 'Пояснения и название — на native_lang. Транскрипция — родными буквами.'
       }, themeReq),
-      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"table":[{"form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
+      '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"note":"особенность или исключение одной фразой на родном, пусто если нет","table":[{"label":"подпись формы на родном: я / он, она, оно / Dativ — кому/чему","form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) {
         if (theme) rg._theme = theme.order;      // 4.30: отметим тему пройденной, когда правило реально показано
         L.grammar = rg;
@@ -4121,9 +4234,13 @@ function drillPresent() {
 /* ---------- Grammar Card: правило урока (раздел 5, 2.3-П) ---------- */
 function grammarCardHTML(g) {
   const lang = (DB.profile && DB.profile.targetLang) || 'de';
+  /* 4.40: подпись формы (label). Без неё таблица показывает набор форм без указания, где какое
+     лицо или падеж, и совпадения увидеть нельзя: «ich möchte» и «er möchte» выглядят просто
+     двумя строками. Требование «расположи строки так, чтобы совпадения читались с одного
+     взгляда» было невыполнимо в структуре, где подписи не существует. */
   const table = (g.table||[]).map(r=>`
     <div class="vocab-row">
-      <span class="w"><b>${esc(r.form)}</b> <span class="tr">${esc(r.translit||'')}</span>
+      <span class="w">${r.label?`<span style="color:var(--dim);font-size:12px;display:block">${esc(r.label)}</span>`:''}<b>${esc(r.form)}</b> <span class="tr">${esc(r.translit||'')}</span>
         <small>${esc(r.translation||'')}</small></span>
       <button class="tts" data-t="${esc(r.form)}" aria-label="Озвучить" ${hasTTS(lang)?'':'style="display:none"'}>🔊</button>
     </div>`).join('');
@@ -4135,6 +4252,7 @@ function grammarCardHTML(g) {
     </div>`).join('');
   return `
     <div style="font-size:15px;line-height:1.55;margin-bottom:10px">${esc(g.summary||'')}</div>
+    ${g.note?`<div style="font-size:14px;line-height:1.5;margin:-4px 0 12px;color:var(--warn,#F2B84B)">⚠️ ${esc(g.note)}</div>`:''}
     ${table?`<div class="card" style="margin:0 0 10px">${table}</div>`:''}
     ${ex?`<div style="font-size:12px;color:var(--dim);margin:4px 0">Примеры:</div><div class="card" style="margin:0">${ex}</div>`:''}`;
 }
@@ -4235,7 +4353,7 @@ function drillGrammar() {
   $('#go').onclick = () => {
     // сохраняем правило в Свод правил (раздел 2.3-П)
     if (!DB.rules.some(r=>norm(r.title)===norm(g.title))) {
-      DB.rules.push({ title:g.title, summary:g.summary||'', table:g.table||[], examples:g.examples||[],
+      DB.rules.push({ title:g.title, summary:g.summary||'', note:g.note||'', table:g.table||[], examples:g.examples||[],
         categories: Array.isArray(g.categories) ? g.categories : [],
         cefr:g.cefr||parseCode(L.code)?.lvl||'', lesson:L.code, status:'изучено',
         errors:0, date_added: today() });
