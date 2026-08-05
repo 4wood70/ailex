@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v91';
+const APP_VERSION = 'v92';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,12 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    'A0',
+    'урок',
+    'шаг',
+    'задание',
+    'Завершить сцену ✓',
+    '❌ Не совсем — правильный ответ выделен зелёным.',
     'Используйте:',
     '📒 Значения:',
     'Текущий урок',
@@ -1222,6 +1228,11 @@ function dictForm(term) {
     });
     if (!rec || !rec.article) return t;
     const a = String(rec.article).trim();
+    /* 4.44 (QUEUE-109): само слово может БЫТЬ артиклем — итальянское «il», немецкое «der».
+       Тогда приклеивать к нему артикль нельзя: на экране появлялось «il il», и этот же вид
+       попадал в варианты ответа и в подтверждение. */
+    if (norm(a) === norm(t)) return t;
+    if (typeof articleSet === 'function' && articleSet().has(norm(t))) return t;
     if (t.toLowerCase().indexOf(a.toLowerCase()+' ')===0) return t;
     return a + ' ' + t;
   } catch(_) { return t; }
@@ -1322,7 +1333,7 @@ const Gemini = {
         fix = await this.call({ task:'fix_glossary', target_lang:tgt, native_lang:nat, terms:need,
           rules:'Для КАЖДОГО элемента terms верни транскрипцию ТОЛЬКО буквами языка native_lang в квадратных скобках. '
               + 'IPA СТРОГО ЗАПРЕЩЁН: ни знаков ударения ˈ ˌ, ни долготы ː, ни символов вида ʁ ʏ ɪ ʊ ʃ ʒ ɐ. '
-              + 'Пример принципа: для native_lang=ru верно [арбайт], для native_lang=ro верно [ha-ben]; IPA вида [ˈaʁbaɪt] неверен всегда. Письменность берётся у native_lang, а НЕ у языка этой инструкции. '
+              + 'Пример принципа: для native_lang=ru верно [арбайт], для native_lang=ro верно [ha-ben]; IPA вида [ˈaʁbaɪt] неверен всегда. Письменность берётся у native_lang, а НЕ у языка этой инструкции. КАК ЗВУЧИТ, А НЕ КАК ПИШЕТСЯ (4.44): транскрипция передаёт звучание средствами ОРФОГРАФИИ родного языка, а не переносит буквы целевого. Для румына немецкое «ich bin» это [ih bin] по буквам, но румын прочитает так неверно — нужно [ih bin] записать так, как румынская орфография передаёт этот звук. Опирайся на то, КАК носитель native_lang прочитает написанное вслух. '
               + 'dict_form — словарная форма слова: существительному целевого языка добавь артикль рода (нем.: das Buch), остальным частям речи — слово как есть.' },
           '{"items":[{"term":"как в terms","dict_form":"словарная форма","translit":"[транскрипция буквами native_lang]"}]}');
       } catch(_) {}
@@ -1440,6 +1451,7 @@ const Screen = {
     const s = $('#screen');
     s.innerHTML = html;
     localizeDOM(s);
+    setTimeout(() => i18nAudit(s), 1500);        // 4.44: перечень непереведённых надписей — в консоль
     I18N.pump();               // 4.34: новые надписи экрана уходят в очередь на перевод
     const b = $('#btnBack');
     b.style.display = back ? '' : 'none';
@@ -1519,6 +1531,39 @@ function localizeDOM(root) {
     I18N_SRC.set(node, src);                        // запомнить исходник до первой подмены
     node.nodeValue = String(src).replace(key, val);
   });
+}
+/* 4.44: встроенная проверка полноты перевода. Три билда подряд дыры в наборе находились
+   по скриншотам — приём медленный и заведомо неполный: видно только то, куда человек зашёл.
+   Теперь приложение само сообщает, какие надписи на экране остались непереведёнными, и список
+   получается за один прогон. Работает только когда язык интерфейса не русский (иначе переводить
+   нечего) и только в консоль — на экране ничего не меняется. */
+function i18nAudit(root) {
+  try {
+    if (!root || I18N.lang === 'ru') return [];
+    const known = I18N.known(), miss = new Set();
+    const cyr = /[А-ЯЁа-яё]/;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    let n; while ((n = w.nextNode())) {
+      const src = I18N_SRC.has(n) ? I18N_SRC.get(n) : n.nodeValue;
+      const k = String(src || '').trim();
+      if (!k || k.length < 3 || !cyr.test(k)) continue;
+      if (known.has(k) && (I18N.dict[I18N.lang] || {})[k] != null) continue;
+      if (known.has(I18N_BODY(k)) && (I18N.dict[I18N.lang] || {})[I18N_BODY(k)] != null) continue;
+      miss.add(k + (known.has(k) || known.has(I18N_BODY(k)) ? '   [в наборе есть, перевод не пришёл]' : '   [НЕТ В НАБОРЕ]'));
+    }
+    root.querySelectorAll && root.querySelectorAll('[placeholder],[title],[aria-label]').forEach(el => {
+      ['placeholder','title','aria-label'].forEach(a => {
+        const v = el.getAttribute('data-i18n-'+a) || el.getAttribute(a);
+        const k = String(v||'').trim();
+        if (!k || !cyr.test(k)) return;
+        if (known.has(k) && (I18N.dict[I18N.lang]||{})[k] != null) return;
+        miss.add(k + '   [атрибут ' + a + ']');
+      });
+    });
+    const list = [...miss];
+    if (list.length) console.log('[AILEX] непереведённых надписей на экране: ' + list.length + '\n  • ' + list.join('\n  • '));
+    return list;
+  } catch(_) { return []; }
 }
 // строки, которые человек видит прямо сейчас — они переводятся первыми (4.37)
 function visibleStrings() {
@@ -2709,6 +2754,35 @@ const PROFILE_Q = [
     note:'Самое важное поле: на нём строятся все квесты и рассказы.' },
 ];
 /* Инициализация виджета выбора языка с поиском */
+/* 4.44 (QUEUE-119): подпись языка в списке. Список показывал только самоназвание (`ქართული`,
+   `മലയാളം`, `বাংলা`), и человеку, не читающему эту письменность, выбрать нужную строку почти
+   невозможно. Два списка решают разные задачи, поэтому устроены по-разному:
+
+   • выбор РОДНОГО — кто перед нами, ещё неизвестно, интерфейс на языке устройства: основным
+     идёт название на языке устройства, самоназвание в скобках («Georgian (ქართული)»);
+   • выбор ИЗУЧАЕМОГО — родной язык уже известен, поэтому список пишется целиком на нём
+     («chineză», «japoneză»), самоназвание там только мешает.
+
+   Названия берутся у браузера (`Intl.DisplayNames`) — без сети, без модели, мгновенно.
+   Скобки показываются, только если написание отличается от самоназвания: «Deutsch (Deutsch)»
+   было бы шумом. */
+function langDisplayName(code, inLang) {
+  try {
+    const dn = new Intl.DisplayNames([inLang], { type:'language' });
+    const v = dn.of(code);
+    return (v && v !== code) ? v : '';
+  } catch(_) { return ''; }
+}
+function langLabel(l, questionKey) {
+  const native = esc(l.n);
+  if (questionKey === 'targetLang') {                     // родной уже выбран — пишем на нём
+    const inNative = langDisplayName(l.c, I18N.lang || I18N.deviceLang());
+    return esc(inNative || l.n);
+  }
+  const inDevice = langDisplayName(l.c, I18N.deviceLang());   // выбор родного — язык устройства
+  if (!inDevice || norm(inDevice) === norm(l.n)) return native;
+  return esc(inDevice) + ' <span style="color:var(--dim)">(' + native + ')</span>';
+}
 function _initLangPicker(defVal) {
   const hidden  = $('#val');
   const search  = $('#langSearch');
@@ -2763,7 +2837,7 @@ function askProfile(i, acc) {
           style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
                  background:var(--card);color:var(--ink);font-size:16px;box-sizing:border-box;margin-bottom:8px">
         <div id="langList" style="max-height:240px;overflow-y:auto;border-radius:10px;border:1px solid var(--border)">
-          ${LANGS.map(l=>`<div class="lang-opt" data-c="${l.c}" style="padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:15px">${esc(l.n)}</div>`).join('')}
+          ${LANGS.map(l=>`<div class="lang-opt" data-c="${l.c}" style="padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:15px">${langLabel(l, q.k)}</div>`).join('')}
         </div>
         <input type="hidden" id="val" value="">
       </div>`;
@@ -3586,7 +3660,7 @@ function showA0AlphaGrid(items, title, lessonN, total, progress, onNext) {
       <div class="a0-ex">${esc(item.examples?.[0]?.word||'')}</div>
     </div>`).join('');
   Screen.show(`
-    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${progress}</div>
+    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
     <div class="card">
       <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
       <p class="note" style="margin:4px 0 8px">👆 Нажмите на букву, чтобы услышать её произношение</p>
@@ -3616,7 +3690,7 @@ function showA0Item(item, title, lessonN, total, progress, onNext) {
       ${sayBtn(ex.word||'')}
     </div>`).join('');
   Screen.show(`
-    <div class="eyebrow">A0 · урок ${lessonN}/${total} · шаг ${progress}</div>
+    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
     <div class="card">
       <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
       <div class="a0-pattern">
@@ -3635,7 +3709,7 @@ function showA0Check(check, lessonN, total, progress, onDone) {
   const opts = shuffle([...(check.options||[])]);
   if (!opts.length) { onDone(true); return; }
   Screen.show(`
-    <div class="eyebrow">A0 · урок ${lessonN}/${total} · задание ${progress}</div>
+    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>задание</span> ${progress}</div>
     <div class="card" id="a0card">
       <div class="task-text">🎯 ${esc(check.prompt_native||'Выберите правильный вариант:')}</div>
       <div style="height:10px"></div>
@@ -3669,7 +3743,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
   let ei = 0;
 
   const header = () =>
-    `<div class="eyebrow">A0 · урок ${lessonN}/${total} · мини-сцена</div>
+    `<div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · мини-сцена</div>
      <p class="note" style="margin:0 0 8px;font-size:13px">📍 ${esc(sit)}</p>`;
 
   const nextBtn = (label, cb) => {
