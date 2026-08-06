@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v93';
+const APP_VERSION = 'v94';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,64 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.46: добор по итогам линтера надписей (tools/i18n_lint.py). Строки, разведённые
+       с данными через lbl(), и запасные тексты в t() обязаны быть здесь: предзагрузка
+       при создании профиля идёт именно по этому набору, иначе человек увидит их
+       на языке исходника до фоновой догрузки. */
+    'Для микрофона и полной надёжности файл можно выложить на бесплатный хостинг (например, GitHub Pages) — тогда адрес будет начинаться с https://.',
+    'пусто',
+    'Очистить список',
+    'Недоработка кода: такую строку не возьмёт никакая загрузка. Пришлите этот список.',
+    'Строка известна, но её перевод не загрузился. Лечится повторным заходом.',
+    'Известные строки без перевода — загрузятся при следующих заходах.',
+    'Показывает надписи, которые остались на языке исходника. Пройдите по экранам, затем откройте отчёт — он копится по мере просмотра.',
+    '…и ещё',
+    'Известных строк:',
+    'переведено:',
+    'Список очищен',
+    'Начинаем с основ!',
+    '50 вопросов · порог 85%',
+    '← Все слова',
+    '⚡ Только неправильные глаголы',
+    'категория',
+    '⚠️ на закреплении',
+    'Выберите правильный вариант:',
+    'Выберите нужную фразу:',
+    'Нажмите, чтобы произнести:',
+    'Вы',
+    'верных',
+    'урок пройден',
+    'Основы пройдены! Добро пожаловать на A1!',
+    'Урок A0 завершён',
+    'Вы освоили чтение и базовую лексику. Теперь начинается настоящее обучение — уровень A1!',
+    'Следующий урок:',
+    'пройдено',
+    'Начать A1',
+    'Следующий урок',
+    'неизвестно',
+    'Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.',
+    'Транскрипция родными буквами — ваша главная опора для чтения и произношения.',
+    'Контекст',
+    '— форма слова',
+    'Напишите слово на',
+    'Ваш ответ на',
+    'Есть ошибка.',
+    'Квест',
+    'Ответьте на целевом языке',
+    'Запомните эту конструкцию — она встретится снова.',
+    'Есть ошибка, попробуйте ещё раз.',
+    'Дошли вместе!',
+    'История пройдена!',
+    'Лексика урока закреплена в живом сюжете.',
+    'Ошибки — часть пути: трудные места вернутся в повторение.',
+    'Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.',
+    'Что дальше?',
+    'Прошли главу вместе!',
+    'пройдена!',
+    'Разбор',
+    '— введите его вручную.',
+    'Перепишите слово',
+    'Теперь по памяти',
     'Проверка перевода',
     'Проверить перевод',
     'Нет в наборе',
@@ -712,10 +770,21 @@ const I18N = {
      шестидесяти пяти мест разметки чиним в одном: наравне с полным ключом в набор кладётся
      его «тело» — та же строка без ведущего значка. Переводится чистый текст, а значок
      приставляется обратно при подстановке. */
+  /* 4.46: ключи, зарегистрированные в момент отрисовки через lbl(). Статический UI_EXTRA
+     остаётся источником правды для предзагрузки при создании профиля, а этот набор —
+     страховка: надпись, разведённая с данными, известна набору сразу, даже если её забыли
+     внести в список руками. */
+  dyn: new Set(),
+  learn(k) {
+    const key = String(k == null ? '' : k).trim();
+    if (!key || this.dyn.has(key)) return;
+    this.dyn.add(key); this._known = null; this.registry.add(key);
+  },
   known() {
     if (this._known) return this._known;
     const set = new Set(Object.keys(this.dict.en || {}));
     UI_EXTRA.forEach(x => set.add(x));
+    this.dyn.forEach(x => set.add(x));
     [...set].forEach(x => { const b = I18N_BODY(x); if (b && b !== x) set.add(b); });
     this._known = set;
     return set;
@@ -908,6 +977,11 @@ const I18N = {
 const t = s => I18N.t(s);
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
+/* 4.46: lbl() — надпись, стоящая в одном ряду с данными. Возвращает <span> с текстом:
+   тег создаёт границу текстового узла, и localizeDOM видит чистый ключ, а не склейку
+   «Результат: 11/12 верных (92%)», которая не совпадёт со словарём никогда. Ключ заодно
+   регистрируется на лету — набор известных строк пополняется без ручной правки UI_EXTRA. */
+function lbl(x){ try { I18N.learn(x); } catch(_){} return '<span>' + esc(x) + '</span>'; }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today = () => { const d = new Date(); return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getFullYear()).slice(2); };
 
@@ -1424,7 +1498,7 @@ function speak(text, langCode) {
 function sayBtn(text) {
   if (!DB || !hasTTS(DB.profile.targetLang)) return '';
   return `<button class="tts" style="width:34px;height:34px;font-size:15px;vertical-align:middle;margin-left:8px" `
-       + `data-say="${esc(text)}" onclick="replaySay(this)" aria-label="Повторить озвучку">🔊</button>`;
+       + `data-say="${esc(text)}" onclick="replaySay(this)" aria-label="${esc(t('Повторить озвучку'))}">🔊</button>`;
 }
 function replaySay(el) {
   speak(el.getAttribute('data-say'), (DB && DB.profile && DB.profile.targetLang) || 'de');
@@ -1497,7 +1571,17 @@ function syncSysStatus(){
 const I18N_SRC = new WeakMap();
 /* 4.45: копилка находок проверки перевода. Кабеля для консоли у тестировщика нет, поэтому
    перечень показывается прямо в приложении — «Настройки → Проверить перевод». */
-const I18N_MISS = new Set();
+/* 4.46: находки живут в localStorage, а не только в памяти. До этого копилка обнулялась
+   при каждом запуске приложения, а в обёртке TWA перезагрузку вызывает системная кнопка
+   «назад» (QUEUE-47) — отчёт показывал только тот экран, на котором человек стоял, и
+   пройденные экраны в него не попадали вовсе. */
+const I18N_MISS_KEY = 'AILEX_I18N_MISS';
+const I18N_MISS = new Set((() => {
+  try { return JSON.parse(localStorage.getItem(I18N_MISS_KEY) || '[]'); } catch(_) { return []; }
+})());
+function i18nMissSave() {
+  try { localStorage.setItem(I18N_MISS_KEY, JSON.stringify([...I18N_MISS].slice(-400))); } catch(_){}
+}
 // «тело» надписи — строка без ведущего значка/символа (4.41)
 const I18N_LEAD = /^[^\p{L}\p{N}]+/u;
 function I18N_BODY(k){ try { return String(k||'').replace(I18N_LEAD, '').trim(); } catch(_) { return k; } }
@@ -1571,7 +1655,7 @@ function i18nAudit(root) {
       });
     });
     const list = [...miss];
-    list.forEach(x => I18N_MISS.add(x));       // 4.45: копим, чтобы показать на экране телефона
+    if (list.length) { list.forEach(x => I18N_MISS.add(x)); i18nMissSave(); }   // 4.46: копилка переживает перезапуск
     if (list.length) console.log('[AILEX] непереведённых надписей на экране: ' + list.length + '\n  • ' + list.join('\n  • '));
     return list;
   } catch(_) { return []; }
@@ -2658,6 +2742,7 @@ const Hints = {
 };
 
 // Конкретные подсказки для каждого экрана
+/* i18n-lint:off — цельные абзацы, переводятся через localizeBlocks (4.25), а не по ключу */
 const HintTexts = {
   newWords: `
     <b>Новые слова</b><br><br>
@@ -2724,6 +2809,7 @@ const HowToText = `
     🎙️ <b>Микрофон</b> в режиме «Поговорить» — можно отвечать голосом, а не только текстом. Тап по слову работает и там: любое слово реплики собеседника можно тронуть и получить перевод.`}
   </div>
   <p class="note" style="margin-top:12px">Не бойтесь ошибаться — разбор ошибки появляется сразу, а прогресс сохраняется автоматически.</p>`;
+/* i18n-lint:on */
 
 function showHowTo() {
   Screen.show(`
@@ -2937,18 +3023,26 @@ function showI18nReport() {
       <h2>${esc(title)} — ${arr.length}</h2>
       <p class="note" style="margin:2px 0 8px">${esc(hint)}</p>
       ${arr.length ? `<div style="font-size:13px;line-height:1.7;word-break:break-word">${arr.slice(0,60).map(x=>'• '+esc(x)).join('<br>')}
-        ${arr.length>60?`<br><span style="color:var(--dim)">…и ещё ${arr.length-60}</span>`:''}</div>`
+        ${arr.length>60?`<br><span style="color:var(--dim)">${lbl('…и ещё')} ${arr.length-60}</span>`:''}</div>`
         : `<div style="color:var(--dim);font-size:13px">пусто</div>`}
     </div>`;
   Screen.show(`
     <div class="eyebrow">Проверка перевода</div>
-    <h1>Язык интерфейса: ${esc(lang)}</h1>
-    <p class="sub">Известных строк: ${I18N.known().size} · переведено: ${I18N.known().size - pending.length}</p>
+    <h1>${lbl('Язык интерфейса:')} ${esc(lang)}</h1>
+    <p class="sub">${lbl('Известных строк:')} ${I18N.known().size} · ${lbl('переведено:')} ${I18N.known().size - pending.length}</p>
     ${block('Нет в наборе', [...new Set(notKnown)], 'Недоработка кода: такую строку не возьмёт никакая загрузка. Пришлите этот список.')}
     ${block('Перевод не пришёл', [...new Set(notLoaded)], 'Строка известна, но её перевод не загрузился. Лечится повторным заходом.')}
     ${block('Ещё не переведено из набора', pending, 'Известные строки без перевода — загрузятся при следующих заходах.')}
-    <button class="btn btn-primary" id="i18nBack">Назад</button>`, { back: showSettings });
+    <button class="btn btn-primary" id="i18nBack">Назад</button>
+    <button class="btn btn-ghost" id="i18nClear">Очистить список</button>`, { back: showSettings });
   $('#i18nBack').onclick = showSettings;
+  /* 4.46: перед новым прогоном список надо обнулять — иначе находки прошлых билдов
+     смешиваются с текущими и непонятно, что уже починено. */
+  $('#i18nClear').onclick = () => {
+    I18N_MISS.clear(); i18nMissSave();
+    toast(t('Список очищен'));
+    showI18nReport();
+  };
 }
 
 /* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
@@ -3183,7 +3277,7 @@ async function finishOnboarding(profile, cefr) {
   const isA0 = cefr === 'A0';
   Screen.show(`
     <div class="eyebrow">Профиль создан</div>
-    <h1>${isA0 ? '🔤 Начинаем с основ!' : '<span>Ваш уровень:</span> '+esc(cefr)}</h1>
+    <h1>${isA0 ? '🔤 '+lbl('Начинаем с основ!') : '<span>Ваш уровень:</span> '+esc(cefr)}</h1>
     <p class="sub">${esc(profile.name)} · ${esc(langName(profile.nativeLang))} → ${esc(langName(profile.targetLang))}</p>
     <p class="sub">${isA0 ? t('Сначала освоим чтение и базовую лексику, затем перейдём к A1.') : t('Первый урок:')} <b style="color:var(--ink)">${esc(isA0 ? (DB.profile.a0Total + ' × A0') : DB.nextStage)}</b></p>
     <button class="btn btn-primary" id="go">К главному меню</button>`);
@@ -3277,7 +3371,7 @@ function mainMenu() {
     <div class="menu-list">
       ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
       ${orphanA0 ? `<button class="menu-item" id="mResumeA0" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedA0.code)}</b><small><span>Шаг</span> ${esc(String(cachedA0.stepIdx+1))} <span>из</span> ${esc(String((cachedA0.steps||[]).length))} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
-      ${false ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>Глава ${esc(String(cachedSuper.actIndex||1))} из ${esc(String(cachedSuper.actsTotal||'?'))} · сцена ${esc(String(cachedSuper.sqScene))} · прогресс сохранён</small></span><span class="chev">›</span></button>` : ''}
+      ${false ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>${lbl('Глава')} ${esc(String(cachedSuper.actIndex||1))} ${lbl('из')} ${esc(String(cachedSuper.actsTotal||'?'))} · ${lbl('сцена')} ${esc(String(cachedSuper.sqScene))} · ${lbl('прогресс сохранён')}</small></span><span class="chev">›</span></button>` : ''}
       <button class="menu-item" id="mLesson"${resumeLesson||resumeA0?' style="border:1px solid var(--accent)"':''}><span class="ic">${resumeLesson||resumeA0?'▶️':(isA0?'🔤':'🎯')}</span><span class="t"><b>${
         resumeLesson ? '<span>Продолжить урок</span> '+esc(next)
         : resumeA0 ? '<span>Продолжить урок</span> '+esc(next)
@@ -3286,7 +3380,7 @@ function mainMenu() {
         : 'Урок '+esc(next)}</b><small>${
         resumeLesson ? '<span>Задание</span> '+cachedStep+' <span>из</span> '+cachedTotal+' <span>· прогресс сохранён</span>'
         : resumeA0 ? 'Шаг '+esc(String(resumeA0.stepIdx+1))+' из '+esc(String((resumeA0.steps||[]).length))+' · прогресс сохранён'
-        : isExam ? '50 вопросов · порог 85%'
+        : isExam ? lbl('50 вопросов · порог 85%')
         : isA0 ? 'Чтение, произношение, базовая лексика'
         : '<span>21 задание + рассказ-квест</span>'}</small></span><span class="chev">›</span></button>
       ${(()=>{
@@ -3351,8 +3445,8 @@ function showDictionary(letter, irrOnly) {
   const irrCount = DB.vocab.filter(isIrregularVerb).length;
   Screen.show(`
     <h1>Словарь</h1>
-    <p class="sub">${all.length} ${irrOnly?'неправильных глаголов':'слов'} · выберите букву, затем слово — раскроется карточка.</p>
-    <button class="btn btn-ghost" id="dictFilter" style="margin-bottom:12px;font-size:13px;padding:8px 14px">${irrOnly?'← Все слова':'⚡ Только неправильные глаголы'+(irrCount?` (${irrCount})`:'')}</button>
+    <p class="sub">${all.length} ${lbl(irrOnly?'неправильных глаголов':'слов')} ${lbl('· выберите букву, затем слово — раскроется карточка.')}</p>
+    <button class="btn btn-ghost" id="dictFilter" style="margin-bottom:12px;font-size:13px;padding:8px 14px">${irrOnly?lbl('← Все слова'):lbl('⚡ Только неправильные глаголы')+(irrCount?` (${irrCount})`:'')}</button>
     <div id="alphaIdx" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
       ${letters.map(L0=>`<button class="alpha ${L0===cur?'on':''}" data-l="${esc(L0)}"
         style="min-width:38px;padding:8px 10px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;
@@ -3414,7 +3508,7 @@ function showRules(cat) {
   const list = curCat ? all.filter(g => ruleCats(g).includes(curCat)) : [];
   Screen.show(`
     <h1>Свод правил</h1>
-    <p class="sub">${all.length} изученных правил${curCat?` · категория «${esc(curCat)}»`:''}. Выберите категорию, затем правило.</p>
+    <p class="sub">${all.length} ${lbl('изученных правил')}${curCat?` · ${lbl('категория')} «${esc(curCat)}»`:''}. ${lbl('Выберите категорию, затем правило.')}</p>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
       ${cats.map(c=>`<button class="rcat" data-c="${esc(c)}"
         style="padding:8px 12px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;
@@ -3429,7 +3523,7 @@ function showRules(cat) {
             font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
             <span style="font-size:17px">📐</span>
             <span style="flex:1"><b style="font-size:15px">${esc(g.title)}</b>
-              <small style="display:block;color:var(--dim);font-size:12px">${esc(g.cefr||'')} · урок ${esc(g.lesson||'')}${g.errors>=2?' · ⚠️ на закреплении':''}</small></span>
+              <small style="display:block;color:var(--dim);font-size:12px">${esc(g.cefr||'')} · ${lbl('урок')} ${esc(g.lesson||'')}${g.errors>=2?' · '+lbl('⚠️ на закреплении'):''}</small></span>
             <span class="chev" style="color:var(--faint)">▾</span>
           </button>
           <div class="rule-body" id="rb${idx}" style="display:none;padding:4px 2px 12px"></div>
@@ -3481,6 +3575,7 @@ function parseImportText(text) {
   return out;
 }
 function showImportWords() {
+  /* i18n-lint:off — в плейсхолдере образец формата импорта: учебный материал, а не надпись */
   Screen.show(`
     <h1>Импорт своих слов</h1>
     <p class="sub">Вставьте список. Формат строки: <b>[Категория] Термин [транскрипция] — перевод</b>. Строки-заголовки и пустые игнорируются.</p>
@@ -3492,11 +3587,12 @@ function showImportWords() {
         <button class="btn btn-primary" id="impAdd">Добавить в словарь</button>
       </div>
     </div>`, { back: showSettings });
+  /* i18n-lint:on */
   const info = $('#impInfo');
   $('#impPreview').onclick = () => {
     const list = parseImportText($('#impText').value);
     info.innerHTML = list.length
-      ? `Распознано слов: <b>${list.length}</b>. Пример: ${esc(list.slice(0,3).map(w=>w.term+' — '+w.translation).join('; '))}…`
+      ? `${lbl('Распознано слов:')} <b>${list.length}</b>. ${lbl('Пример:')} ${esc(list.slice(0,3).map(w=>w.term+' — '+w.translation).join('; '))}…`
       : 'Не удалось распознать ни одной строки. Проверьте формат: «Термин — перевод».';
   };
   $('#impAdd').onclick = () => {
@@ -3514,7 +3610,7 @@ function showImportWords() {
     });
     DB.intensive = true;   // режим интенсива: приоритетные слова в Суперквестах
     Storage.save(DB);
-    info.innerHTML = `Добавлено новых: <b>${added}</b>, всего распознано: ${list.length}. Режим интенсива включён — эти слова будут приоритетными в Суперквестах.`;
+    info.innerHTML = `${lbl('Добавлено новых:')} <b>${added}</b>, ${lbl('всего распознано:')} ${list.length}. ${lbl('Режим интенсива включён — эти слова будут приоритетными в Суперквестах.')}`;
     toast('Импортировано ✓');
   };
 }
@@ -3758,7 +3854,7 @@ function showA0Check(check, lessonN, total, progress, onDone) {
   Screen.show(`
     <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>задание</span> ${progress}</div>
     <div class="card" id="a0card">
-      <div class="task-text">🎯 ${esc(check.prompt_native||'Выберите правильный вариант:')}</div>
+      <div class="task-text">🎯 ${esc(check.prompt_native||t('Выберите правильный вариант:'))}</div>
       <div style="height:10px"></div>
       ${opts.map((o,i)=>`<button class="opt" data-correct="${!!o.correct}" data-idx="${i}">${esc(o.word||String(o))}</button>`).join('')}
     </div>`);
@@ -3791,7 +3887,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
   let ei = 0;
 
   const header = () =>
-    `<div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · мини-сцена</div>
+    `<div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('мини-сцена')}</div>
      <p class="note" style="margin:0 0 8px;font-size:13px">📍 ${esc(sit)}</p>`;
 
   const nextBtn = (label, cb) => {
@@ -3821,7 +3917,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
             ${ex.text_native ? `<div class="a0-scene-native">${esc(ex.text_native)}</div>` : ''}
             ${sayBtn(ex.text_target)}
           </div>` : ''}
-          <div class="task-text">🎯 ${esc(ex.text_native || 'Выберите нужную фразу:')}</div>
+          <div class="task-text">🎯 ${esc(ex.text_native || t('Выберите нужную фразу:'))}</div>
           <div style="height:8px"></div>
           ${opts.map(o => `<button class="opt" data-correct="${!!o.correct}"
               data-word="${esc(o.word||'')}" data-translit="${esc(o.translit||'')}">
@@ -3854,7 +3950,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
     if (ex.task_type === 'tap_to_say') {
       Screen.show(`${header()}
         <div class="card" id="scCard">
-          <div class="task-text">🎯 ${esc(ex.text_native || 'Нажмите, чтобы произнести:')}</div>
+          <div class="task-text">🎯 ${esc(ex.text_native || t('Нажмите, чтобы произнести:'))}</div>
           <div class="a0-scene-say-box">
             ${esc(ex.text_target||'')}
             ${ex.translit ? `<div class="a0-scene-translit" style="font-size:14px;margin-top:6px">${esc(ex.translit)}</div>` : ''}
@@ -3874,7 +3970,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
     Screen.show(`${header()}
       <div class="card">
         <div class="${isYou ? 'a0-scene-you-line' : 'a0-scene-other-line'}">
-          <div class="a0-scene-speaker">${isYou ? '👤 Вы' : '🧑‍💼'}</div>
+          <div class="a0-scene-speaker">${isYou ? '👤 '+lbl('Вы') : '🧑‍💼'}</div>
           <div class="a0-scene-target">${esc(ex.text_target||'')}</div>
           ${ex.translit ? `<span class="a0-scene-translit">${esc(ex.translit)}</span>` : ''}
           ${ex.text_native ? `<div class="a0-scene-native">${esc(ex.text_native)}</div>` : ''}
@@ -3905,12 +4001,12 @@ function finishA0Lesson(code, lessonN, total, correct, totalChecks, t0) {
 
   const pctOk = totalChecks > 0 ? Math.round(correct/totalChecks*100) : 100;
   Screen.show(`
-    <div class="eyebrow">Результат: ${totalChecks>0?`${correct}/${totalChecks} верных (${pctOk}%)`:'урок пройден'}</div>
-    <h1>${isLastA0 ? '🎉 Основы пройдены! Добро пожаловать на A1!' : 'Урок A0 завершён'}</h1>
+    <div class="eyebrow">${lbl('Результат:')} ${totalChecks>0?`${correct}/${totalChecks} ${lbl('верных')} (${pctOk}%)`:lbl('урок пройден')}</div>
+    <h1>${isLastA0 ? '🎉 '+lbl('Основы пройдены! Добро пожаловать на A1!') : lbl('Урок A0 завершён')}</h1>
     <p class="sub">${isLastA0
-      ? 'Вы освоили чтение и базовую лексику. Теперь начинается настоящее обучение — уровень A1!'
-      : `Следующий урок: <b style="color:var(--ink)">${esc(next)}</b> &nbsp;·&nbsp; пройдено ${lessonN} из ${total}`}</p>
-    <button class="btn btn-primary" id="bNext">${isLastA0 ? 'Начать A1 🚀' : 'Следующий урок →'}</button>
+      ? lbl('Вы освоили чтение и базовую лексику. Теперь начинается настоящее обучение — уровень A1!')
+      : `${lbl('Следующий урок:')} <b style="color:var(--ink)">${esc(next)}</b> &nbsp;·&nbsp; ${lbl('пройдено')} ${lessonN} ${lbl('из')} ${total}`}</p>
+    <button class="btn btn-primary" id="bNext">${isLastA0 ? lbl('Начать A1')+' 🚀' : lbl('Следующий урок')+' →'}</button>
     <button class="btn btn-ghost"  id="bExit">В главное меню</button>`);
   $('#bNext').onclick = () => isLastA0 ? startLesson(next) : startA0Lesson(next);
   $('#bExit').onclick = mainMenu;
@@ -4178,7 +4274,7 @@ async function ensureChunk2() {
 function lessonLoadError(retryFn, e) {
   Screen.show(`<h1>Не получилось подготовить урок</h1>
     <p class="sub">Проверьте интернет и попробуйте снова. Обучение не блокируется из-за модели — данные не пострадали.</p>
-    <p class="note" style="opacity:.7">Причина: ${esc(String(e?.message||'неизвестно'))}</p>
+    <p class="note" style="opacity:.7">${lbl('Причина:')} ${esc(String(e?.message||t('неизвестно')))}</p>
     <button class="btn btn-primary" id="r">Повторить</button>
     <button class="btn btn-ghost" id="m">В меню</button>`);
   $('#r').onclick = retryFn; $('#m').onclick = mainMenu;
@@ -4407,7 +4503,7 @@ function drillPhrases() {
   });
   Storage.save(DB);
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Повседневные выражения</div>
+    <div class="eyebrow">${esc(L.code)} · ${lbl('Повседневные выражения')}</div>
     <h1>💬 Фразы на каждый день</h1>
     <p class="sub">Готовые разговорные выражения для живого общения. Нажмите 🔊, чтобы услышать. Они сохранены в словарь.</p>
     <div class="card">
@@ -4442,8 +4538,8 @@ function drillPresent() {
     </div>
     ${L.words.some(w=>w.is_irregular&&(w.forms||w.irregular_forms)) ? `<p class="note">⚠️ Глагол со списком форм — особенный: он не подчиняется общему правилу. Формы даны справочно — просто запомните их вместе со словом. Правило разберём позже, а пока достаточно узнавать эти формы в тексте.</p>` : ''}
     <p class="note">${hasTTS(DB.profile.targetLang)
-      ? 'Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.'
-      : 'Транскрипция родными буквами — ваша главная опора для чтения и произношения.'}</p>
+      ? lbl('Транскрипция родными буквами приблизительна — это опора для чтения, эталон даёт озвучка.')
+      : lbl('Транскрипция родными буквами — ваша главная опора для чтения и произношения.')}</p>
     <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
   Hints.show('newWords', HintTexts.newWords);
@@ -4555,7 +4651,7 @@ function showErrorRule(res) {
 function drillRuleRecap(s) {
   const g = s.rule;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Закрепление правила</div>
+    <div class="eyebrow">${esc(L.code)} · ${lbl('Закрепление правила')}</div>
     <h1>🔁 ${esc(g.title||'Правило')}</h1>
     <p class="sub">Это правило часто вызывает ошибки — перечитайте его перед уроком, чтобы закрепить.</p>
     ${grammarCardHTML(g)}
@@ -4566,7 +4662,7 @@ function drillRuleRecap(s) {
 function drillGrammar() {
   const g = L.grammar;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Грамматика урока</div>
+    <div class="eyebrow">${esc(L.code)} · ${lbl('Грамматика урока')}</div>
     <h1>📐 ${esc(g.title||'Правило')}</h1>
     <p class="sub">Новое правило этого урока. Оно сохранится в «Свод правил» — сможете открыть его в любой момент с главного экрана.</p>
     ${grammarCardHTML(g)}
@@ -4926,10 +5022,10 @@ function drillContext(s) {
   // перевод предложения: берём из prompt_native (поле constructs)
   const sentTranslation = item.prompt_native || '';
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Контекст')}</div>
+    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||t('Контекст'))}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🧩 слово в контексте</span></div>
-      <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 Напишите предложение, подставив пропущенное слово${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
+      <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${sentTranslation ? `<p class="note" style="margin:4px 0 8px;opacity:.75">📝 ${esc(sentTranslation)}</p>` : ''}
       <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
@@ -4994,7 +5090,7 @@ function drillContext(s) {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
       $('#fb').className='feedback bad';
       // QUEUE-04: при ошибке формы — показываем пояснение если есть
-      const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 В этом предложении: <b>${esc(answer)}</b> — форма слова «${esc(dictWord)}»</span>` : '';
+      const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 <span>В этом предложении:</span> <b>${esc(answer)}</b> ${lbl('— форма слова')} «${esc(dictWord)}»</span>` : '';
       $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
@@ -5013,7 +5109,7 @@ function drillWrite(s) {
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">✍️ письмо</span></div>
       <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}${hard?` <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span>`:''}</div>
-      <input type="text" id="ans" placeholder="Напишите слово на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
+      <input type="text" id="ans" placeholder="${esc(t('Напишите слово на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -5085,7 +5181,7 @@ function drillConstruct(s) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>
       <div class="task-text">«${esc(c.prompt_native)}»</div>
       ${bankHTML}
-      <textarea id="ans" class="ans-grow" placeholder="Ваш ответ на ${esc(langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
+      <textarea id="ans" class="ans-grow" placeholder="${esc(t('Ваш ответ на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -5107,7 +5203,7 @@ function drillConstruct(s) {
     if (mustRetype) {
       const v = localVerdict(a, correctForm);
       if (v && (v.kind==='exact'||v.kind==='typo'||v.kind==='article')) { passOK(); }
-      else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`❌ Почти! Сверьте: ${highlightDiff(a, correctForm)}`; }
+      else { $('#fb').className='feedback bad'; $('#fb').innerHTML=`${lbl('❌ Почти! Сверьте:')} ${highlightDiff(a, correctForm)}`; }
       return;
     }
     // 1) локальная человечная проверка (без сети): точное / опечатка / только артикль
@@ -5135,7 +5231,7 @@ function drillConstruct(s) {
     const cTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
     mustRetype = true;
     $('#fb').className='feedback bad';
-    $('#fb').innerHTML = `❌ ${esc(res?.explanation || 'Есть ошибка.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${cTr}` + sayBtn(correctForm) + `<br>🧠 Запомните и введите верный вариант, чтобы продолжить.`;
+    $('#fb').innerHTML = `❌ ${esc(res?.explanation || t('Есть ошибка.'))}<br>${lbl('Сверьте:')} ${highlightDiff(a, correctForm)}${cTr}` + sayBtn(correctForm) + `<br>🧠 Запомните и введите верный вариант, чтобы продолжить.`;
     speak(correctForm, DB.profile.targetLang);
     showErrorRule(res);
     $('#ans').value=''; $('#ans').focus();
@@ -5276,9 +5372,9 @@ async function runQuest(cfg) {
       if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return; }
       saveQuestPos();
       Screen.show(`
-        <div class="eyebrow">${esc(cfg.title||'Квест')}</div>
+        <div class="eyebrow">${esc(cfg.title||t('Квест'))}</div>
         <h1>Связь прервалась</h1>
-        <p class="sub">Сцену ${Q.scene} не удалось загрузить. Прогресс урока сохранён — повторите сейчас или вернитесь позже через «Продолжить урок».</p>
+        <p class="sub">${lbl('Сцену')} ${Q.scene} ${lbl('не удалось загрузить. Прогресс урока сохранён — повторите сейчас или вернитесь позже через «Продолжить урок».')}</p>
         <button class="btn btn-primary" id="bRetryQ">Повторить сцену</button>
         <button class="btn btn-ghost" id="bMenuQ">Выход в меню</button>`);
       $('#bRetryQ').onclick = () => nextScene();
@@ -5300,14 +5396,14 @@ async function runQuest(cfg) {
     const isFinal = Q.scene >= cfg.maxScenes; // QUEUE-28: строго по числу сцен, ранний is_final игнорируем
     let mustRetype = false, correctForm = sc.expected_target || '';
     Screen.show(`
-      <div class="eyebrow">${esc(cfg.title||'Квест')}</div>
+      <div class="eyebrow">${esc(cfg.title||t('Квест'))}</div>
       <div class="segbar">${Array.from({length:cfg.maxScenes},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.maxScenes-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
         <div class="target" id="questSceneText">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="card">
-        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||t('Ответьте на целевом языке'))}</div>
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
@@ -5321,7 +5417,7 @@ async function runQuest(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Значения: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -5370,7 +5466,7 @@ async function runQuest(cfg) {
       const qTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
       if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой
         $('#fb').className='feedback ok';
-        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
+        $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
         speak(res?.correct_form||correctForm, p.targetLang);
         showErrorRule(res);
         $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
@@ -5379,7 +5475,7 @@ async function runQuest(cfg) {
       }
       mustRetype = true; correctForm = res?.correct_form || correctForm || a;
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
+      $('#fb').innerHTML = `❌ ${esc(res?.explanation||t('Есть ошибка, попробуйте ещё раз.'))}<br>${lbl('Сверьте:')} ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
       speak(correctForm, p.targetLang);
       showErrorRule(res);   // точное правило под ошибку — сразу
       $('#ans').value=''; $('#ans').focus();
@@ -5419,8 +5515,8 @@ async function runQuest(cfg) {
       if (L) { delete L.qResume; LessonCache.save(); }   // QUEUE-46: квест пройден — позицию не храним
       Screen.show(`
         <div class="eyebrow">Квест завершён</div>
-        <h1>${Q.errors>=2?'🤝 Дошли вместе!':'🏆 История пройдена!'}</h1>
-        <p class="sub">${Q.errors>=2?'Ошибки — часть пути: трудные места вернутся в повторение.':'Лексика урока закреплена в живом сюжете.'}</p>
+        <h1>${Q.errors>=2?'🤝 '+lbl('Дошли вместе!'):'🏆 '+lbl('История пройдена!')}</h1>
+        <p class="sub">${Q.errors>=2?lbl('Ошибки — часть пути: трудные места вернутся в повторение.'):lbl('Лексика урока закреплена в живом сюжете.')}</p>
         <button class="btn btn-primary" id="go">Продолжить</button>`);
       $('#go').onclick = cfg.onDone;
     } else {
@@ -5519,12 +5615,12 @@ async function finishLesson() {
   // --- завершающий экран (5.1): простая фраза, крупные кнопки ---
   const code = L.code, hintsUsed = L.hints; L = null;
   Screen.show(`
-    <div class="eyebrow">Точность: ${Math.round(acc*100)}% · подсказок: ${hintsUsed}</div>
-    <h1>Урок ${esc(code)} завершён, прогресс сохранён.</h1>
-    <p class="sub">${diag?.note_native ? '💡 '+esc(diag.note_native) : (note==='REVIEW' ? 'Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.' : 'Что дальше?')}</p>
+    <div class="eyebrow">${lbl('Точность:')} ${Math.round(acc*100)}% · ${lbl('подсказок:')} ${hintsUsed}</div>
+    <h1>${lbl('Урок')} ${esc(code)} ${lbl('завершён, прогресс сохранён.')}</h1>
+    <p class="sub">${diag?.note_native ? '💡 '+esc(diag.note_native) : (note==='REVIEW' ? lbl('Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.') : lbl('Что дальше?'))}</p>
     ${hard.length?`<div class="chiplist">${hard.map(h=>`<span class="chip warn">⚠️ ${esc(h)}</span>`).join('')}</div><p class="note">Эти слова вернутся в Повторение и Суперквест.</p>`:''}
     <div style="height:8px"></div>
-    <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?'Экзамен '+esc(next.replace('EXAM_','')):'Следующий урок '+esc(next)}</button>
+    <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?lbl('Экзамен')+' '+esc(next.replace('EXAM_','')):lbl('Следующий урок')+' '+esc(next)}</button>
     <button class="btn btn-ghost" id="bSuper">Суперквест (повторение)</button>
     ${IS_APPLE ? '' : `<button class="btn btn-ghost" id="bTalk">🎙️ Поговорить</button>`}
     <button class="btn btn-ghost" id="bExit">Выход в меню</button>`);
@@ -6043,7 +6139,7 @@ async function runSuperquestAct(cfg) {
 
   async function nextScene() {
     saveSuperPos();
-    Screen.loader(`Акт ${cfg.actIndex}/${cfg.actsTotal} · сцена ${Q.scene} из ${cfg.scenesInAct}…`);
+    Screen.loader(`${t('Акт')} ${cfg.actIndex}/${cfg.actsTotal} · ${t('сцена')} ${Q.scene} ${t('из')} ${cfg.scenesInAct}…`);
     let sc;
     // СЮЖЕТНЫЙ ДВИЖОК: бит текущей сцены из арки (глобальный индекс сквозь акты)
     const _arc = L.superStory.arc;
@@ -6085,7 +6181,7 @@ async function runSuperquestAct(cfg) {
       // finishSuper() здесь было бы слишком агрессивно: пользователь теряет весь прогресс из-за одного сбоя.
       Screen.show(`
         <h1>Связь прервалась</h1>
-        <p class="sub">Акт ${cfg.actIndex}, сцена ${Q.scene}. Прогресс сохранён — можно продолжить.</p>
+        <p class="sub">${lbl('Акт')} ${cfg.actIndex}, ${lbl('сцена')} ${Q.scene}. ${lbl('Прогресс сохранён — можно продолжить.')}</p>
         <button class="btn btn-primary" id="bRetryScene">Повторить сцену</button>
         <button class="btn btn-ghost" id="bFinishAnyway">Завершить Суперквест</button>`);
       $('#bRetryScene').onclick = () => nextScene();
@@ -6119,14 +6215,14 @@ async function runSuperquestAct(cfg) {
     });
 
     Screen.show(`
-      <div class="eyebrow">Суперквест · Акт ${cfg.actIndex}/${cfg.actsTotal}</div>
+      <div class="eyebrow">${lbl('Суперквест · Акт')} ${cfg.actIndex}/${cfg.actsTotal}</div>
       <div class="segbar">${Array.from({length:cfg.scenesInAct},(_,i)=>`<i class="${i<Q.scene?'on':''} ${i===cfg.scenesInAct-1&&i<Q.scene?'hot':''}"></i>`).join('')}</div>
       <div class="scene">
         <div class="target">${tapAllWordsHTML(sc.scene_text)} ${hasTTS(DB.profile.targetLang)?`<button class="tts" style="vertical-align:middle" id="sayScene">🔊</button>`:''}</div>
         <div class="hint">${esc(sc.native_hint||'')}</div>
       </div>
       <div class="card">
-        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||'Ответьте на целевом языке')}</div>
+        <div class="task-text" style="font-size:16px">🎯 ${esc(sc.prompt_for_user||t('Ответьте на целевом языке'))}</div>
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
@@ -6140,7 +6236,7 @@ async function runSuperquestAct(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">📒 Значения: ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -6190,7 +6286,7 @@ async function runSuperquestAct(cfg) {
       if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой (счётчик свой на каждый акт)
         firstTry(stepKey, false);
         $('#fb').className='feedback ok';
-        $('#fb').innerHTML = `🤝 Я подскажу как напарник: <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||'Запомните эту конструкцию — она встретится снова.')}`;
+        $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
         speak(res?.correct_form||correctForm, p.targetLang);
         showErrorRule(res);
         $('#check').textContent = isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше');
@@ -6199,7 +6295,7 @@ async function runSuperquestAct(cfg) {
       }
       mustRetype = true; correctForm = res?.correct_form || correctForm || a;
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ ${esc(res?.explanation||'Есть ошибка, попробуйте ещё раз.')}<br>Сверьте: ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
+      $('#fb').innerHTML = `❌ ${esc(res?.explanation||t('Есть ошибка, попробуйте ещё раз.'))}<br>${lbl('Сверьте:')} ${highlightDiff(a, correctForm)}${qTr}` + sayBtn(correctForm) + ` — запомните и введите вручную.`;
       speak(correctForm, p.targetLang);
       showErrorRule(res);
       $('#ans').value=''; $('#ans').focus();
@@ -6234,7 +6330,7 @@ async function runSuperquestAct(cfg) {
       const learned = Q.newWordsInAct.size;
       Screen.show(`
         <div class="eyebrow">Суперквест</div>
-        <h1>${Q.errors>=2?'🤝 Прошли главу вместе!':'📖 Глава '+cfg.actIndex+' пройдена!'}</h1>
+        <h1>${Q.errors>=2?'🤝 '+lbl('Прошли главу вместе!'):'📖 '+lbl('Глава')+' '+cfg.actIndex+' '+lbl('пройдена!')}</h1>
         <div class="chapter-card">
           <p class="sub" style="margin:0">Слов закреплено: <b style="color:var(--ink)">${learned}</b></p>
         </div>
@@ -6269,8 +6365,8 @@ async function finishSuper() {
   const code = L.code; L = null;
   Screen.show(`
     <h1>Суперквест завершён, прогресс сохранён.</h1>
-    <p class="sub">Точность: ${Math.round(acc*100)}%. Повторение — половина успеха. Что дальше?</p>
-    <button class="btn btn-primary" id="bN">Следующий этап: ${esc(DB.nextStage)}</button>
+    <p class="sub">${lbl('Точность:')} ${Math.round(acc*100)}%. ${lbl('Повторение — половина успеха. Что дальше?')}</p>
+    <button class="btn btn-primary" id="bN">${lbl('Следующий этап:')} ${esc(DB.nextStage)}</button>
     <button class="btn btn-ghost" id="bE">Выход в меню</button>`);
   $('#bN').onclick = () => DB.nextStage.startsWith('EXAM_') ? startExam(DB.nextStage) : startLesson(DB.nextStage);
   $('#bE').onclick = mainMenu;
@@ -6301,7 +6397,7 @@ function startExam(examCode) {
   const E = { code:examCode, qs, i:0, ok:0, wrong:[] };
   Screen.show(`
     <div class="eyebrow">Экзамен</div>
-    <h1>${esc(examCode.replace('EXAM_',''))} · ${qs.length} вопросов</h1>
+    <h1>${esc(examCode.replace('EXAM_',''))} · ${qs.length} ${lbl('вопросов')}</h1>
     <p class="sub">По одному вопросу на экран, без подсказок. Порог сдачи — 85%. Результат объявлю после последнего ответа.</p>
     <button class="btn btn-accent" id="go">Начать экзамен</button>
     <button class="btn btn-ghost" id="back">Позже</button>`, { back: mainMenu });
@@ -6311,7 +6407,7 @@ function startExam(examCode) {
 function examStep(E) {
   if (E.i >= E.qs.length) return examResult(E);
   const q = E.qs[E.i], w = q.w;
-  const head = `<div class="eyebrow">Экзамен · ${E.i+1} / ${E.qs.length}</div>`;
+  const head = `<div class="eyebrow">${lbl('Экзамен')} · ${E.i+1} / ${E.qs.length}</div>`;
   if (q.kind==='mcq') {
     Screen.show(`${head}<div class="card">
       <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}</div>
@@ -6322,7 +6418,7 @@ function examStep(E) {
     });
   } else {
     Screen.show(`${head}<div class="card">
-      <div class="task-text">Напишите: ${esc(w.emoji||'')} ${esc(w.translation)}</div>
+      <div class="task-text">${lbl('Напишите:')} ${esc(w.emoji||'')} ${esc(w.translation)}</div>
       <input type="text" id="ans" autocomplete="off" autocapitalize="off">
       <button class="btn btn-primary" id="ok" style="margin-top:12px">Ответить</button></div>`);
     $('#ok').onclick = () => {
@@ -6341,7 +6437,7 @@ function examResult(E) {
     DB.progress.push({ code:E.code+'_PASS', date:today(), words:'', next, note:`${E.ok}/${E.qs.length}` });
     DB.nextStage = next; DB.profile.cefr = parseCode(next).lvl;
     Storage.save(DB); toast('Сохранено ✓');
-    Screen.show(`<h1>🏆 Экзамен сдан: ${E.ok}/${E.qs.length}</h1>
+    Screen.show(`<h1>🏆 ${lbl('Экзамен сдан:')} ${E.ok}/${E.qs.length}</h1>
       <p class="sub">Переход на новый уровень. Следующий урок: <b style="color:var(--ink)">${esc(next)}</b>.</p>
       <button class="btn btn-primary" id="go">Дальше</button>`);
     $('#go').onclick = mainMenu;
@@ -6352,7 +6448,7 @@ function examResult(E) {
   if (attempt === 1) {
     DB.progress.push({ code:E.code+'_FAIL-1', date:today(), words:'', next:E.code, note:`${E.ok}/${E.qs.length}` });
     Storage.save(DB); toast('Сохранено ✓');
-    Screen.show(`<h1>Результат: ${E.ok}/${E.qs.length}</h1>
+    Screen.show(`<h1>${lbl('Результат:')} ${E.ok}/${E.qs.length}</h1>
       <p class="sub">До порога 85% не хватило. Это первая попытка — экзамен можно пересдать сразу или после повторения.</p>
       <button class="btn btn-primary" id="re">Пересдать экзамен</button>
       <button class="btn btn-ghost" id="sup">Суперквест перед пересдачей</button>
@@ -6376,11 +6472,11 @@ function startRemedial(E) {
     const {w, pass} = items[i];
     if (DB.reviewQueue.indexOf(w.term)<0) DB.reviewQueue.push(w.term);
     ensureMnemonic(DB.vocab.find(v=>v.term===w.term)||w);
-    Screen.show(`<div class="eyebrow">Разбор · ${i+1} / ${items.length}</div>
+    Screen.show(`<div class="eyebrow">${lbl('Разбор')} · ${i+1} / ${items.length}</div>
       <div class="card">
         <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)} <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span></div>
-        ${pass===1?`<div class="feedback ok" style="display:block;margin-bottom:10px">🧠 Верный ответ: <b>${esc(w.term)}</b>${w.mnemonic?'<br>'+esc(w.mnemonic):''} — введите его вручную.</div>`:''}
-        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="${pass===1?'Перепишите слово':'Теперь по памяти'}">
+        ${pass===1?`<div class="feedback ok" style="display:block;margin-bottom:10px">🧠 Верный ответ: <b>${esc(w.term)}</b>${w.mnemonic?'<br>'+esc(w.mnemonic):''} ${lbl('— введите его вручную.')}</div>`:''}
+        <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="${esc(pass===1?t('Перепишите слово'):t('Теперь по памяти'))}">
         <div class="feedback" id="fb"></div>
         <button class="btn btn-primary" id="ok" style="margin-top:12px">Проверить</button>
       </div>`);
@@ -6414,7 +6510,7 @@ function startDialogue() {
   const history = [];
   let turns = 0;
   Screen.show(`
-    <div class="eyebrow">Поговорить · тема: ${esc(String(p.interests).split(/[,;]/)[0]||'')}</div>
+    <div class="eyebrow">${lbl('Поговорить · тема:')} ${esc(String(p.interests).split(/[,;]/)[0]||'')}</div>
     <div class="chat" id="chat"></div>
     <div class="chat-input">
       <button class="mic" id="mic" aria-label="Говорить">🎙️</button>
