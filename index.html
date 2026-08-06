@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v92';
+const APP_VERSION = 'v93';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,13 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    'Проверка перевода',
+    'Проверить перевод',
+    'Нет в наборе',
+    'Перевод не пришёл',
+    'Ещё не переведено из набора',
+    'Язык интерфейса:',
+    'Назад',
     'A0',
     'урок',
     'шаг',
@@ -1488,6 +1495,9 @@ function syncSysStatus(){
    пришедший позже родной перевод применять было не к чему. Теперь исходник живёт в WeakMap
    (у текстового узла нет атрибутов), и перевод всегда считается от него. */
 const I18N_SRC = new WeakMap();
+/* 4.45: копилка находок проверки перевода. Кабеля для консоли у тестировщика нет, поэтому
+   перечень показывается прямо в приложении — «Настройки → Проверить перевод». */
+const I18N_MISS = new Set();
 // «тело» надписи — строка без ведущего значка/символа (4.41)
 const I18N_LEAD = /^[^\p{L}\p{N}]+/u;
 function I18N_BODY(k){ try { return String(k||'').replace(I18N_LEAD, '').trim(); } catch(_) { return k; } }
@@ -1561,6 +1571,7 @@ function i18nAudit(root) {
       });
     });
     const list = [...miss];
+    list.forEach(x => I18N_MISS.add(x));       // 4.45: копим, чтобы показать на экране телефона
     if (list.length) console.log('[AILEX] непереведённых надписей на экране: ' + list.length + '\n  • ' + list.join('\n  • '));
     return list;
   } catch(_) { return []; }
@@ -2910,6 +2921,36 @@ function prepareUiLang(done) {
   });
 }
 
+/* 4.45: отчёт о полноте перевода — на экране телефона, без консоли и кабеля.
+   Две части, потому что это разные болезни: строки, которых нет в наборе переводимых
+   (недоработка кода — их не возьмёт никакая загрузка), и строки, которые в наборе есть,
+   но перевод не пришёл (сбой загрузки — лечится повтором). */
+function showI18nReport() {
+  const lang = I18N.lang;
+  const d = I18N.dict[lang] || {};
+  const notKnown = [], notLoaded = [];
+  I18N_MISS.forEach(x => (x.includes('[НЕТ В НАБОРЕ]') ? notKnown : notLoaded).push(x.split('   [')[0]));
+  const pending = [];
+  if (lang !== 'ru') I18N.known().forEach(k => { if (d[k] == null) pending.push(k); });
+  const block = (title, arr, hint) => `
+    <div class="card">
+      <h2>${esc(title)} — ${arr.length}</h2>
+      <p class="note" style="margin:2px 0 8px">${esc(hint)}</p>
+      ${arr.length ? `<div style="font-size:13px;line-height:1.7;word-break:break-word">${arr.slice(0,60).map(x=>'• '+esc(x)).join('<br>')}
+        ${arr.length>60?`<br><span style="color:var(--dim)">…и ещё ${arr.length-60}</span>`:''}</div>`
+        : `<div style="color:var(--dim);font-size:13px">пусто</div>`}
+    </div>`;
+  Screen.show(`
+    <div class="eyebrow">Проверка перевода</div>
+    <h1>Язык интерфейса: ${esc(lang)}</h1>
+    <p class="sub">Известных строк: ${I18N.known().size} · переведено: ${I18N.known().size - pending.length}</p>
+    ${block('Нет в наборе', [...new Set(notKnown)], 'Недоработка кода: такую строку не возьмёт никакая загрузка. Пришлите этот список.')}
+    ${block('Перевод не пришёл', [...new Set(notLoaded)], 'Строка известна, но её перевод не загрузился. Лечится повторным заходом.')}
+    ${block('Ещё не переведено из набора', pending, 'Известные строки без перевода — загрузятся при следующих заходах.')}
+    <button class="btn btn-primary" id="i18nBack">Назад</button>`, { back: showSettings });
+  $('#i18nBack').onclick = showSettings;
+}
+
 /* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
 function placementIntro(profile) {
   Screen.show(`
@@ -3487,6 +3528,11 @@ function showSettings() {
       <button class="btn btn-ghost btn-mini" id="sSave">Сохранить профиль</button>
     </div>
     <div class="card">
+      <h2>Проверка перевода</h2>
+      <p class="note" style="margin:4px 0 12px">Показывает надписи, которые остались на языке исходника. Пройдите по экранам, затем откройте отчёт — он копится по мере просмотра.</p>
+      <button class="btn btn-ghost" id="sI18n">Проверить перевод</button>
+    </div>
+    <div class="card">
       <h2>Текущий урок</h2>
       <p class="note" style="margin:4px 0 12px">Сбросить незавершённый урок и собрать его заново. Прогресс уровня и словарь не пострадают — заново соберутся только задания этого урока.</p>
       <button class="btn btn-ghost" id="sReset">Начать урок заново</button>
@@ -3538,6 +3584,7 @@ function showSettings() {
     toast(I18N.t('Урок сброшен — соберём заново'));
     mainMenu();
   };
+  $('#sI18n').onclick = () => showI18nReport();
   $('#sExp').onclick = () => Storage.exportFile();
   $('#sImp').onclick = () => $('#sFile').click();
   $('#sFile').onchange = e => { if (e.target.files[0]) Storage.importFile(e.target.files[0], ok => { toast(ok?'База загружена ✓':'Файл не похож на AILEX_StatusDB', !ok); if (ok) boot(); }); };
@@ -3724,12 +3771,13 @@ function showA0Check(check, lessonN, total, progress, onDone) {
     });
     const fb = document.createElement('div');
     fb.className = ok ? 'feedback ok' : 'feedback bad';
-    fb.innerHTML = ok ? '✅ Верно!' : '❌ Не совсем — правильный ответ выделен зелёным.';
+    // 4.45: текст ставится напрямую в узел, минуя обход экрана, — переводим в точке вывода
+    fb.innerHTML = I18N.t(ok ? '✅ Верно!' : '❌ Не совсем — правильный ответ выделен зелёным.');
     document.getElementById('a0card').appendChild(fb);
     if (ok && b.textContent) speak(b.textContent.trim(), DB.profile.targetLang);
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
-    btn.textContent = 'Дальше →'; btn.onclick = () => onDone(ok);
+    btn.textContent = I18N.t('Дальше →'); btn.onclick = () => onDone(ok);
     document.getElementById('a0card').after(btn);
   });
 }
