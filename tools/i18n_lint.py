@@ -20,7 +20,10 @@ AILEX — линтер надписей интерфейса (спека 4.46).
   3. ЗНАЧОК В ХВОСТЕ — «Следующий урок →». Приём 4.41 снимает только ВЕДУЩИЙ
                        значок; хвостовой оставляет строку неузнанной.
   4. АТРИБУТ         — placeholder / title / aria-label вне набора.
-  5. t() ВНЕ НАБОРА  — строка обёрнута в t() и потому переведётся, но её нет в UI_EXTRA,
+  5. БЕЗ t() ПРИ ВСТАВКЕ — строка кладётся в DOM уже после прохода локализации (присваивание
+                       textContent/innerHTML, toast, Screen.loader). Наличие ключа в наборе тут
+                       не спасает: переводить надо в момент вставки, обёрткой t().
+  6. t() ВНЕ НАБОРА  — строка обёрнута в t() и потому переведётся, но её нет в UI_EXTRA,
                        а предзагрузка при создании профиля идёт именно по набору: человек
                        увидит её на языке исходника, пока не сработает фоновая догрузка.
 
@@ -47,6 +50,21 @@ RE_START = re.compile(r'(^|[=(,:;!&|?{}\[\]+\-*%~^<>]|\breturn|\btypeof|\bcase)\
 # кавычка после этого — сравнение или ключ данных, а не надпись
 CMP_TAIL = re.compile(r'(===|!==|==|!=|\.includes\(|\.startsWith\(|\.endsWith\('
                       r'|\.indexOf\(|\.split\(|\bcase\s|\[)\s*$')
+# строка, приклеенная к выражению через +: на экране это ОДИН текстовый узел, поэтому ключ
+# не совпадёт, даже если каждый кусок по отдельности лежит в наборе
+CONCAT   = re.compile(r"\+\s*$")
+CONCAT_R = re.compile(r"^\s*\+")
+# контексты, где строка — это промпт к модели, а не надпись на экране
+PROMPT_CTX = re.compile(r"(rules\s*:|schemaHint|task\s*:|Gemini\.call|hint\s*:\s*$)")
+# вне разметки строка попадает на экран только через эти пути — остальное служебные значения,
+# описания режимов для промптов, названия языков и прочее, что переводить не нужно
+# сырая вставка: строка попадает в узел уже после прохода локализации, нужна обёртка t()
+RAW_CTX = re.compile(r"(\.textContent\s*=|\.innerText\s*=|\.innerHTML\s*=|\.placeholder\s*=|"
+                     r"(?<![-\w])\w*(?:[Ll]abel|[Cc]aption|[Bb]tnText)\w*\s*=)\s*[^=]{0,80}$")
+# эти пути переводят сами (toast — с 4.48, Screen.loader и Screen.show — раньше):
+# обёртка не нужна, но ключ обязан быть в наборе
+SELF_CTX = re.compile(r"(\btoast\(|Screen\.loader\(|Screen\.show\()\s*[^=]{0,80}$")
+DOM_CTX = re.compile(RAW_CTX.pattern + "|" + SELF_CTX.pattern)
 # строка внутри вызова t(…) / lbl(…) переводится сама — реестр пополняется в рантайме
 IN_T = re.compile(r"\b(I18N\.)?(t|lbl)\(\s*[^)]*$")
 # те же вызовы, но взятые из исходника целиком — для проверки № 5
@@ -56,6 +74,8 @@ CALL = re.compile(r"\b(?:I18N\.)?(?:t|lbl)\(\s*'((?:[^'\\]|\\.)*)'")
 class Chunk:
     def __init__(self, kind, text, line, ctx=''):
         self.kind, self.text, self.line, self.ctx = kind, text, line, ctx
+        self.tail = ''
+        self.inexpr = True      # внутри ${…}, то есть заведомо в разметке
 
 
 def off_lines(src):
@@ -128,8 +148,11 @@ def scan(src):
                         break
                     buf.append(src[j]); j += 1
                 text = ''.join(buf)
-                if top() == 'expr' and CYR.search(text):
-                    chunks.append(Chunk('str', text, line, src[max(0, i - 60):i]))
+                if CYR.search(text):
+                    ch = Chunk('str', text, line, src[max(0, i - 60):i])
+                    ch.tail = src[j + 1:j + 40]
+                    ch.inexpr = (top() == 'expr')
+                    chunks.append(ch)
                 i = j + 1
                 prev = "''"
                 continue
@@ -137,9 +160,11 @@ def scan(src):
         if c == '`':
             if top() == 'tpl':
                 st = stack.pop()
-                chunks.append(Chunk('tpl', ''.join(st[1]), st[2], st[3]))
+                ch = Chunk('tpl', ''.join(st[1]), st[2], st[3])
+                ch.inexpr = st[4]
+                chunks.append(ch)
             else:
-                stack.append(['tpl', [], line, src[max(0, i - 60):i]])
+                stack.append(['tpl', [], line, src[max(0, i - 60):i], top() == 'expr'])
             i += 1
             prev = '`'
             continue
@@ -236,12 +261,15 @@ def lint(path):
     src = open(path, encoding='utf-8').read()
     keys, skip = known_set(src), off_lines(src)
     found = {'НЕТ В НАБОРЕ': [], 'СКЛЕЙКА С ДАННЫМИ': [],
-             'ЗНАЧОК В ХВОСТЕ': [], 'АТРИБУТ ВНЕ НАБОРА': [], 't() ВНЕ НАБОРА': []}
+             'ЗНАЧОК В ХВОСТЕ': [], 'АТРИБУТ ВНЕ НАБОРА': [], 't() ВНЕ НАБОРА': [],
+             'БЕЗ t() ПРИ ВСТАВКЕ': []}
 
     def judge(key, line, glued=False, attr=False):
         key = key.strip()
         if not key or not CYR.search(key):
             return
+        if '":' in key.replace('\\', ''):
+            return                            # схема контракта к модели, а не надпись
         if glued:
             found['СКЛЕЙКА С ДАННЫМИ'].append((line, key)); return
         if covered(key, keys):
@@ -257,14 +285,32 @@ def lint(path):
             ctx = ch.ctx.rstrip()
             if IN_T.search(ctx) or CMP_TAIL.search(ctx):
                 continue
+            flat = ch.text.replace('\\', '')
+            if flat.lstrip()[:2] in ('{"', ',"') or '":' in flat:
+                continue                      # схема контракта, а не надпись
+            if PROMPT_CTX.search(ctx) or len(ch.text) > 170:
+                continue                      # промпт к модели, а не надпись интерфейса
+            if not ch.inexpr and not DOM_CTX.search(ctx):
+                continue                      # на экран не идёт: служебное значение или данные
+            if not ch.inexpr and RAW_CTX.search(ctx):
+                found['БЕЗ t() ПРИ ВСТАВКЕ'].append((ch.line, ch.text.strip()))
+                continue
         if '<' in ch.text:
             nodes, attrs = split_html(ch.text)
             for x in nodes:
                 judge(x, ch.line, PH in x)
             for x in attrs:
                 judge(x, ch.line, PH in x, attr=True)
-        elif ch.kind == 'str':
-            judge(ch.text, ch.line, PH in ch.text)
+        else:
+            if ch.kind == 'tpl' and not ch.inexpr:
+                if not DOM_CTX.search(ch.ctx.rstrip()):
+                    continue
+                if CYR.search(ch.text) and RAW_CTX.search(ch.ctx.rstrip()):
+                    found['БЕЗ t() ПРИ ВСТАВКЕ'].append((ch.line, ' '.join(ch.text.split())))
+                    continue
+            # шаблон или строка без единого тега: в DOM это один текстовый узел целиком
+            glued = PH in ch.text or CONCAT.search(ch.ctx.rstrip()) or CONCAT_R.match(ch.tail.lstrip())
+            judge(ch.text, ch.line, bool(glued))
 
     # 5: строки, отданные в t()/lbl(), обязаны быть и в статическом наборе — иначе
     # предзагрузка при создании профиля их не увидит
@@ -293,7 +339,7 @@ def lint(path):
     print('AILEX i18n lint — %s' % path)
     print('известных ключей: %d, строк под маркером off: %d' % (len(keys), len(skip)))
     for name in ('НЕТ В НАБОРЕ', 'СКЛЕЙКА С ДАННЫМИ', 'ЗНАЧОК В ХВОСТЕ',
-                 'АТРИБУТ ВНЕ НАБОРА', 't() ВНЕ НАБОРА'):
+                 'АТРИБУТ ВНЕ НАБОРА', 't() ВНЕ НАБОРА', 'БЕЗ t() ПРИ ВСТАВКЕ'):
         rows, seen = found[name], set()
         print('\n%s — %d' % (name, len(rows)))
         for ln, s in sorted(rows):

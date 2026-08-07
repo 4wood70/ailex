@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v95';
+const APP_VERSION = 'v96';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,17 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.48: служебный счётчик отбраковки и задание, собранное кодом. */
+    'Заданий отбраковано:',
+    'Служебный счётчик: мини-проверки, которые не удалось разобрать. Задания при этом не терялись — недостача восполнена из лексики урока.',
+    'Как будет:',
+    /* 4.48: надписи, вставляемые в DOM после прохода локализации. */
+    'База загружена ✓',
+    'Файл не похож на AILEX_StatusDB',
+    'Подбираю лексику новой темы…',
+    'Нечего добавлять — проверьте формат.',
+    '✅ Сказано!',
+    '💡 Ответ:',
     /* 4.47: надписи диктанта на слух (QUEUE-117). */
     'диктант',
     'Прослушайте и запишите слово',
@@ -1035,8 +1046,10 @@ function autoGrow(el){ if (!el) return; el.style.height='auto'; el.style.height=
 function bindAutoGrow(id){ const el=document.getElementById(id); if(!el) return; el.addEventListener('input',()=>autoGrow(el)); autoGrow(el); }
 
 let toastTimer = null;
+/* 4.48: уведомления переводились только если ключ случайно совпадал — текст клался в узел
+   уже после прохода локализации. Перевод в момент вставки: одно место вместо тридцати. */
 function toast(msg, neutral) {
-  const t = $('#toast'); t.textContent = msg;
+  const t = $('#toast'); t.textContent = I18N.t(msg);
   t.className = neutral ? 'neutral show' : 'show';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
@@ -2032,7 +2045,7 @@ const Core = {
     const lvl = this.lvlFor(DB.profile);
     try {
       for (let i=0; i<2; i++){
-        Screen.loader(`Подбираю лексику новой темы… ${i+1}/2`);
+        Screen.loader(`${I18N.t('Подбираю лексику новой темы…')} ${i+1}/2`);
         const w = await this._batch({ class:'open', layer:'interests', cefr:lvl, count:100, topic: DB.profile.interests||'' });
         this._add(w, { klass:'open', layer:'interests', cefr:lvl });
         Storage.save(DB);
@@ -3047,6 +3060,8 @@ function showI18nReport() {
     ${block('Нет в наборе', [...new Set(notKnown)], 'Недоработка кода: такую строку не возьмёт никакая загрузка. Пришлите этот список.')}
     ${block('Перевод не пришёл', [...new Set(notLoaded)], 'Строка известна, но её перевод не загрузился. Лечится повторным заходом.')}
     ${block('Ещё не переведено из набора', pending, 'Известные строки без перевода — загрузятся при следующих заходах.')}
+    ${A0_SKIPPED.length ? `<div class="card"><b>${lbl('Заданий отбраковано:')} ${A0_SKIPPED.length}</b>
+      <p class="note">${esc(t('Служебный счётчик: мини-проверки, которые не удалось разобрать. Задания при этом не терялись — недостача восполнена из лексики урока.'))}</p></div>` : ''}
     <button class="btn btn-primary" id="i18nBack">Назад</button>
     <button class="btn btn-ghost" id="i18nClear">Очистить список</button>`, { back: showSettings });
   $('#i18nBack').onclick = showSettings;
@@ -3391,9 +3406,9 @@ function mainMenu() {
         : resumeA0 ? '<span>Продолжить урок</span> '+esc(next)
         : isExam ? '<span>Экзамен</span> '+esc(next.replace('EXAM_',''))
         : isA0 ? '<span>Урок</span> '+esc(next)
-        : 'Урок '+esc(next)}</b><small>${
+        : lbl('Урок')+' '+esc(next)}</b><small>${
         resumeLesson ? '<span>Задание</span> '+cachedStep+' <span>из</span> '+cachedTotal+' <span>· прогресс сохранён</span>'
-        : resumeA0 ? 'Шаг '+esc(String(resumeA0.stepIdx+1))+' из '+esc(String((resumeA0.steps||[]).length))+' · прогресс сохранён'
+        : resumeA0 ? lbl('Шаг')+' '+esc(String(resumeA0.stepIdx+1))+' '+lbl('из')+' '+esc(String((resumeA0.steps||[]).length))+' '+lbl('· прогресс сохранён')
         : isExam ? lbl('50 вопросов · порог 85%')
         : isA0 ? 'Чтение, произношение, базовая лексика'
         : '<span>21 задание + рассказ-квест</span>'}</small></span><span class="chev">›</span></button>
@@ -3611,7 +3626,7 @@ function showImportWords() {
   };
   $('#impAdd').onclick = () => {
     const list = parseImportText($('#impText').value);
-    if (!list.length) { info.textContent = 'Нечего добавлять — проверьте формат.'; return; }
+    if (!list.length) { info.textContent = I18N.t('Нечего добавлять — проверьте формат.'); return; }
     let added = 0;
     list.forEach(w => {
       const ex = DB.vocab.find(v => norm(v.term)===norm(w.term));
@@ -3779,7 +3794,11 @@ mini_check: РОВНО 12 упражнений — узнавание слов, 
     if (ex.word) a0Pool.push(String(ex.word));
     if (ex.translation) a0Pool.push(String(ex.translation));
   }));
-  (lesson.mini_check||[]).forEach((check,i) => steps.push({ type:'check', check, idx:i, pool:a0Pool }));
+  /* Количество заданий держит приложение: годные оставляем, недостачу восполняем
+     собранными из лексики урока. Двенадцать заданий должно быть двенадцать. */
+  const wantChecks = 12;
+  const checks = a0EnsureChecks(lesson.mini_check, wantChecks, lesson.items, a0Pool);
+  checks.forEach((check,i) => steps.push({ type:'check', check, idx:i, pool:a0Pool }));
   /* Диктант слова — только в тематических блоках: в алфавитных «звук → буква» мини-проверки
      уже делают ровно это. Слово берём первое из урока, пул для выбора написания — остальные. */
   if (!isAlpha && hasTTS(DB.profile.targetLang)) {
@@ -3887,28 +3906,91 @@ function showA0Item(item, title, lessonN, total, progress, onNext) {
   $('#a0next').onclick = onNext;
 }
 
-/* 4.47: мини-проверка приходила с ОДНИМ вариантом ответа — выбирать было не из чего, и задание
-   засчитывалось само собой. Пустой список вариантов был ещё хуже: задание молча уходило в плюс
-   и накручивало точность урока. Дистракторы добираются из лексики ЭТОГО же урока: слова человек
-   только что видел, поэтому путать предлагается с ними, а не со случайным набором. */
+/* 4.48: разбор мини-проверки стал терпимым, а недостача — восполняемой.
+
+   В 4.47 негодное задание переставало засчитываться верным — это было правильно, но
+   пропуск оказался ТИХИМ: при малейшем расхождении формата (варианты пришли списком строк,
+   правильный помечен другим полем) отбраковывались все двенадцать заданий разом, и урок
+   молча сворачивался до четырёх экранов. Снаружи это выглядело как «уроки на A0 короткие».
+
+   Правило: количество заданий принадлежит приложению и не зависит от того, в каком виде
+   ответила модель. Три ступени, по убыванию предпочтительности:
+     1) понять присланное — пометка correct, отдельное поле с ответом, ответ первым в списке;
+     2) не вышло — перезапросить недостающие задания у модели;
+     3) не вышло и это — собрать задание кодом из лексики урока: слово, перевод, дистракторы.
+        Проще сгенерированного, но оно БУДЕТ, и счёт заданий не поедет.
+   Выбрасывание остаётся только на совсем безнадёжный случай и уходит в служебный отчёт,
+   а не на экран: человек пришёл учить язык, а не считать сбои генерации. */
+
 const A0_OPTS_MIN = 4;
-function a0FillOptions(check, pool) {
-  const raw = (check.options || []).filter(o => (o && (o.word || typeof o === 'string')));
+const A0_SKIPPED = [];                        // для служебного отчёта, не для интерфейса
+
+/* Достаём варианты из чего угодно похожего на список. Правильным считаем: помеченный
+   correct/is_correct/right; иначе совпавший с answer/correct_word/correct_option;
+   иначе — первый в списке (модели ставят верный первым до перемешивания). */
+function a0ReadOptions(check) {
+  const raw = check && (check.options || check.choices || check.variants || check.answers);
+  const list = Array.isArray(raw) ? raw : [];
+  const answer = String(check && (check.answer || check.correct_word || check.correct_option
+                                  || check.correct_answer) || '').trim();
   const seen = new Set(), opts = [];
-  raw.forEach(o => {
-    const w = String(o.word || o).trim();
-    const k = w.toLowerCase();
-    if (!w || seen.has(k)) return;            // дубликаты вариантов — тоже отсутствие выбора
-    seen.add(k); opts.push({ word: w, correct: !!o.correct });
+  list.forEach(o => {
+    const word = String(o && typeof o === 'object' ? (o.word || o.text || o.term || o.value) : o || '').trim();
+    const k = word.toLowerCase();
+    if (!word || seen.has(k)) return;         // дубликаты вариантов — то же отсутствие выбора
+    seen.add(k);
+    const flag = o && typeof o === 'object' && (o.correct || o.is_correct || o.right);
+    opts.push({ word, correct: !!flag || (!!answer && norm(word) === norm(answer)) });
   });
-  if (!opts.some(o => o.correct)) return null;   // верного ответа нет — задание негодное
+  if (opts.length && !opts.some(o => o.correct)) opts[0].correct = true;
+  return opts;
+}
+
+/* Добор дистракторов из лексики этого же урока: путать предлагается со словами, которые
+   человек только что видел. */
+function a0FillOptions(check, pool) {
+  const opts = a0ReadOptions(check);
+  if (!opts.length) return null;
+  const seen = new Set(opts.map(o => o.word.toLowerCase()));
   for (const w of shuffle([...(pool || [])])) {
     if (opts.length >= A0_OPTS_MIN) break;
     const word = String(w || '').trim(), k = word.toLowerCase();
     if (!word || seen.has(k)) continue;
     seen.add(k); opts.push({ word, correct: false });
   }
-  return opts.length >= 2 ? opts : null;         // добрать неоткуда — лучше пропустить
+  return opts.length >= 2 ? opts : null;
+}
+
+/* Ступень 3: задание целиком из данных урока. Приложение владеет словами и переводами —
+   модель для такого вопроса не нужна вовсе. */
+function a0SynthCheck(items, pool) {
+  const pairs = [];
+  (items || []).forEach(it => (it.examples || []).forEach(ex => {
+    if (ex.word && ex.translation) pairs.push(ex);
+  }));
+  if (!pairs.length) return null;
+  const ex = shuffle(pairs)[0];
+  const wrong = shuffle((pool || []).filter(w => norm(w) !== norm(ex.word))).slice(0, 3);
+  if (wrong.length < 1) return null;
+  return {
+    prompt_native: I18N.t('Как будет:') + ' ' + ex.translation,
+    options: [{ word: ex.word, correct: true }, ...wrong.map(w => ({ word: w, correct: false }))],
+    _synth: true
+  };
+}
+
+/* Приводим набор мини-проверок к нужному количеству: годные оставляем, недостачу
+   восполняем собранными на месте. Перезапрос к модели — на вызывающей стороне. */
+function a0EnsureChecks(list, want, items, pool) {
+  const out = [];
+  (list || []).forEach(c => { if (a0FillOptions(c, pool)) out.push(c); else A0_SKIPPED.push(c); });
+  let guard = 0;
+  while (out.length < want && guard++ < want) {
+    const synth = a0SynthCheck(items, pool);
+    if (!synth) break;
+    out.push(synth);
+  }
+  return out;
 }
 
 
@@ -4052,7 +4134,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
     if (ei >= scene.exchanges.length) return onDone();
     const ex = scene.exchanges[ei];
     const isLast = ei === scene.exchanges.length - 1;
-    const nextLabel = isLast ? 'Завершить сцену ✓' : 'Дальше →';
+    const nextLabel = I18N.t(isLast ? 'Завершить сцену ✓' : 'Дальше →');
 
     /* --- Выбор фразы (task_options) --- */
     if (ex.task_options?.length) {
@@ -4087,7 +4169,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
         fb.className = ok ? 'feedback ok' : 'feedback bad';
         const correctOpt = opts.find(o => o.correct);
         fb.innerHTML = ok
-          ? `✅ Верно! ${esc(b.dataset.translit)}`
+          ? `${I18N.t('✅ Верно!')} ${esc(b.dataset.translit)}`
           : `❌ Правильно: <b>${esc(correctOpt?.word||'')}</b> ${esc(correctOpt?.translit||'')}`;
         document.getElementById('scCard').appendChild(fb);
         document.getElementById('scCard').after(nextBtn(nextLabel, advance));
@@ -4108,7 +4190,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
         </div>`);
       $('#tapSay').onclick = () => {
         speak(ex.text_target||'', DB.profile.targetLang);
-        $('#tapSay').textContent = '✅ Сказано!'; $('#tapSay').disabled = true;
+        $('#tapSay').textContent = I18N.t('✅ Сказано!'); $('#tapSay').disabled = true;
         document.getElementById('scCard').after(nextBtn(nextLabel, advance));
       };
       return;
@@ -5098,7 +5180,7 @@ function drillRecog(s) {
       b.classList.add('wrong'); b.disabled = true;
       L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term);
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ Не то. Попробуйте ещё раз — верный вариант на экране.`;
+      $('#fb').textContent = I18N.t('❌ Не то. Попробуйте ещё раз — верный вариант на экране.');
     }
   });
   $('#next').onclick = () => { L.i++; renderStep(); };
@@ -5366,7 +5448,7 @@ function drillReviewContext(s, rd) {
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence);
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
-      $('#check').textContent='Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
+      $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
@@ -5456,7 +5538,7 @@ function drillContext(s) {
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence);
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
-      $('#check').textContent = 'Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
+      $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
       $('#fb').className='feedback bad';
@@ -5496,7 +5578,7 @@ function drillWrite(s) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
-      $('#check').textContent = 'Дальше';
+      $('#check').textContent = I18N.t('Дальше');
       $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(w.term); mustRetype = true; }
@@ -5585,7 +5667,7 @@ function drillConstruct(s) {
     if (v && v.kind==='article') { firstTry(key, true); if (c.focus_word) noteWordError(c.focus_word);
       return passOK({ note:`Почти верно — обратите внимание на артикль: «${v.detail}».`, articleSlip:true }); }
     // 2) смысл/синонимы — через Gemini
-    $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+    $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent=I18N.t('Проверяю…');
     let res = null;
     try {
       res = await Gemini.call({ task:'check_answer', target_lang:DB.profile.targetLang, native_lang:DB.profile.nativeLang,
@@ -5618,7 +5700,7 @@ function drillConstruct(s) {
       r.errors = (r.errors||0) + 1; r.status='на закреплении'; Storage.save(DB);
     }
     if (res && res.note && res.rule_title) saveErrorRule(ruleFromCheck(res));
-    $('#check').textContent='Дальше'; $('#check').disabled=false;
+    $('#check').textContent=I18N.t('Дальше'); $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
   }
 }
@@ -5726,7 +5808,7 @@ async function runQuest(cfg) {
 
   async function nextScene() {
     saveQuestPos();
-    Screen.loader(`Сцена ${Q.scene} из ${cfg.maxScenes}…`);
+    Screen.loader(`${I18N.t('Сцена')} ${Q.scene} ${I18N.t('из')} ${cfg.maxScenes}…`);
     let sc;
     try {
       sc = await Gemini.call({
@@ -5797,7 +5879,7 @@ async function runQuest(cfg) {
         </div>
       </div>`);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
-    if (correctForm) $('#qhint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML = '💡 Ответ: <b>'+esc(correctForm)+'</b>' + sayBtn(correctForm); speak(correctForm, p.targetLang); };
+    if (correctForm) $('#qhint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML = I18N.t('💡 Ответ:')+' <b>'+esc(correctForm)+'</b>' + sayBtn(correctForm); speak(correctForm, p.targetLang); };
     attachTapAll(null, [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])]);
     bindAutoGrow('ans');
     if (Q.scene === 1) Hints.show('quest', HintTexts.quest);
@@ -5821,7 +5903,7 @@ async function runQuest(cfg) {
         if (v && v.kind==='typo') { toast(I18N.t('Верно, опечатка:')+' '+v.detail.exp, false); return pass(); }
         if (v && v.kind==='article') { toast(I18N.t('Почти верно — артикль:')+' '+v.detail, false); return pass(); }
       }
-      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent=I18N.t('Проверяю…');
       let res = null;
       try {
         res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
@@ -5840,7 +5922,7 @@ async function runQuest(cfg) {
         $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
         speak(res?.correct_form||correctForm, p.targetLang);
         showErrorRule(res);
-        $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
+        $('#check').textContent = I18N.t(isFinal ? 'Завершить квест' : 'Дальше');
         $('#check').onclick = () => advance(sc, isFinal, true);
         return;
       }
@@ -5869,7 +5951,7 @@ async function runQuest(cfg) {
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
-        $('#check').textContent = isFinal ? 'Завершить квест' : 'Дальше';
+        $('#check').textContent = I18N.t(isFinal ? 'Завершить квест' : 'Дальше');
         $('#check').onclick = () => advance(sc, isFinal, false);
       }
     }
@@ -6376,7 +6458,7 @@ async function explainElement(term, sentence, popup, reposition) {
     const d = box.querySelector('#tapDetail');
     const open = d.style.display === 'none';
     d.style.display = open ? 'block' : 'none';
-    moreBtn.textContent = open ? 'свернуть ▲' : 'подробнее ▼';
+    moreBtn.textContent = I18N.t(open ? 'свернуть ▲' : 'подробнее ▼');
     if (reposition) reposition();
   };
   if (reposition) reposition();
@@ -6619,7 +6701,7 @@ async function runSuperquestAct(cfg) {
     bindAutoGrow('ans');
     if (Q.scene === 1 && cfg.actIndex === 1) Hints.show('superquest', HintTexts.superquest);
     if (L&&L.grammar) $('#qrule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
-    if (correctForm) $('#qhint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML = '💡 Ответ: <b>'+esc(correctForm)+'</b>' + sayBtn(correctForm); speak(correctForm, p.targetLang); };
+    if (correctForm) $('#qhint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML = I18N.t('💡 Ответ:')+' <b>'+esc(correctForm)+'</b>' + sayBtn(correctForm); speak(correctForm, p.targetLang); };
     $('#sayScene').onclick = () => speak(sc.scene_text, p.targetLang);
     speak(sc.scene_text, p.targetLang);
 
@@ -6640,7 +6722,7 @@ async function runSuperquestAct(cfg) {
         if (v && v.kind==='typo') { toast(I18N.t('Верно, опечатка:')+' '+v.detail.exp, false); return pass(); }
         if (v && v.kind==='article') { toast(I18N.t('Почти верно — артикль:')+' '+v.detail, false); return pass(); }
       }
-      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent='Проверяю…';
+      $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent=I18N.t('Проверяю…');
       let res = null;
       try {
         res = await Gemini.call({ task:'check_answer', target_lang:p.targetLang, native_lang:p.nativeLang, cefr:cfg.cefr,
@@ -6660,7 +6742,7 @@ async function runSuperquestAct(cfg) {
         $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
         speak(res?.correct_form||correctForm, p.targetLang);
         showErrorRule(res);
-        $('#check').textContent = isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше');
+        $('#check').textContent = I18N.t(isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше'));
         $('#check').onclick = () => advance(sc, isActFinal, isWholeFinal);
         return;
       }
@@ -6686,7 +6768,7 @@ async function runSuperquestAct(cfg) {
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
-        $('#check').textContent = isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше');
+        $('#check').textContent = I18N.t(isWholeFinal ? 'Завершить Суперквест' : (isActFinal ? 'Завершить главу' : 'Дальше'));
         $('#check').onclick = () => advance(sc, isActFinal, isWholeFinal);
       }
     }
