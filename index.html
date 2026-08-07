@@ -245,7 +245,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v94';
+const APP_VERSION = 'v95';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -292,6 +292,20 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.47: надписи диктанта на слух (QUEUE-117). */
+    'диктант',
+    'Прослушайте и запишите слово',
+    'Прослушать ещё раз',
+    'Напишите слово',
+    'Прослушайте и передайте смысл своими словами.',
+    'Прослушайте и впишите пропущенное слово.',
+    'Прослушайте и напишите фразу целиком.',
+    'Диктант',
+    'на слух',
+    'Прослушать',
+    'Напишите услышанное',
+    'Пропущенное слово',
+    'Осталось прослушиваний:',
     /* 4.46: добор по итогам линтера надписей (tools/i18n_lint.py). Строки, разведённые
        с данными через lbl(), и запасные тексты в t() обязаны быть здесь: предзагрузка
        при создании профиля идёт именно по этому набору, иначе человек увидит их
@@ -1483,13 +1497,13 @@ const Gemini = {
 };
 
 /* ---------- TTS / STT (раздел 5.0 «Чтение и звучание», 5.B) ---------- */
-function speak(text, langCode) {
+function speak(text, langCode, rate) {
   const bcp = langBcp(langCode);
   if (!bcp) return;          // нет надёжной озвучки → только транскрипция
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = bcp; u.rate = 0.92;
+    u.lang = bcp; u.rate = rate || 0.92;
     speechSynthesis.speak(u);
   } catch(e){}
 }
@@ -3717,19 +3731,19 @@ async function startA0Lesson(code) {
   Screen.loader(I18N.t('Готовлю урок') + ' A0.' + String(lessonN).padStart(2,'0') + '…');
 
   let lesson;
-  const schemaHint = `{"lesson_title":"заголовок на native_lang","mode":"${isAlpha?'alphabet':'standard'}","items":[{"pattern":"буква/сочетание/тема","ipa_approx":"звук native_lang буквами","native_hint":"подсказка","examples":[{"word":"слово на target_lang","translit":"[транскрипция]","translation":"перевод","emoji":"эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на native_lang","options":[{"word":"вариант","correct":true}]}]${blk.hasMiniScene?`,"mini_scene":{"situation_native":"ситуация на native_lang — 1 предложение","exchanges":[{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_native":"что сказать:","task_options":[{"word":"правильная фраза","translit":"[транскр]","correct":true},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false}]},{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_target":"фраза","translit":"[транскр]","text_native":"скажите:","task_type":"tap_to_say"}]}`:''}}`;
+  const schemaHint = `{"lesson_title":"заголовок на native_lang","mode":"${isAlpha?'alphabet':'standard'}","items":[{"pattern":"буква/сочетание/тема","ipa_approx":"звук native_lang буквами","native_hint":"подсказка","examples":[{"word":"слово на target_lang","translit":"[транскрипция]","translation":"перевод","emoji":"эмодзи"}]}],"mini_check":[{"prompt_native":"вопрос на native_lang","options":[{"word":"верный вариант","correct":true},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false}]}]${blk.hasMiniScene?`,"mini_scene":{"situation_native":"ситуация на native_lang — 1 предложение","exchanges":[{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_native":"что сказать:","task_options":[{"word":"правильная фраза","translit":"[транскр]","correct":true},{"word":"неверный вариант","correct":false},{"word":"неверный вариант","correct":false}]},{"speaker":"other","text_target":"фраза","translit":"[транскр]","text_native":"перевод"},{"speaker":"you","text_target":"фраза","translit":"[транскр]","text_native":"скажите:","task_type":"tap_to_say"}]}`:''}}`;
 
   const rules = isAlpha
     ? `ПРАВИЛА — АЛФАВИТНЫЙ УРОК (блок: ${blk.focus}):
 items: ПОЛНЫЙ алфавит target_lang — ВСЕ буквы и спецсимволы (ü,ö,ä,ß для немецкого и т.п.), по ОДНОЙ букве на item, ОДНО слово-пример на букву. Транскрипция — native_lang буквами.
-mini_check: РОВНО 12 упражнений ТОЛЬКО фонетических типов (по 6 каждого):
+mini_check: РОВНО 12 упражнений ТОЛЬКО фонетических типов (по 6 каждого). В КАЖДОМ упражнении options — РОВНО 4 варианта: один correct:true и три correct:false. Один вариант в options — грубая ошибка: выбирать не из чего.
   Тип 1 (6 шт) — буква → звук: "Как читается буква X?" → 4 варианта транскрипции native_lang буквами.
   Тип 2 (6 шт) — звук → буква: "Какая буква даёт звук [Y]?" → 4 варианта букв.
 ЗАПРЕТ: НЕ задавай вопросов на значение слов, перевод или лексику — человек ещё не знает языка, только учится читать буквы.
 Все вопросы на native_lang. Транскрипция в квадратных скобках.`
     : `ПРАВИЛА — СТАНДАРТНЫЙ УРОК (блок: ${blk.block}, фокус: ${blk.focus}):
 items: 5-7 тематических групп слов/фраз по теме фокуса. Для КАЖДОЙ группы — 3-4 слова или фразы в поле examples. Первое слово каждой группы — самое важное. Транскрипция — native_lang буквами.
-mini_check: РОВНО 12 упражнений — узнавание слов, перевод, выбор правильного варианта из 4. Используй слова из items. Каждый вопрос на native_lang.`;
+mini_check: РОВНО 12 упражнений — узнавание слов, перевод, выбор правильного варианта. Используй слова из items. Каждый вопрос на native_lang. В КАЖДОМ упражнении options — РОВНО 4 варианта: один correct:true и три correct:false, все правдоподобные. Один вариант в options — грубая ошибка: выбирать не из чего.`;
 
   try {
     lesson = await Gemini.call({
@@ -3758,7 +3772,23 @@ mini_check: РОВНО 12 упражнений — узнавание слов, 
   } else {
     (lesson.items||[]).forEach((item,i) => steps.push({ type:'item', item, idx:i, title: lesson.lesson_title||'' }));
   }
-  (lesson.mini_check||[]).forEach((check,i) => steps.push({ type:'check', check, idx:i }));
+  /* Пул для добора вариантов: слова этого урока — сами примеры и их переводы (вопрос бывает
+     и «какое слово значит X», и «как переводится Y»). */
+  const a0Pool = [];
+  (lesson.items||[]).forEach(it => (it.examples||[]).forEach(ex => {
+    if (ex.word) a0Pool.push(String(ex.word));
+    if (ex.translation) a0Pool.push(String(ex.translation));
+  }));
+  (lesson.mini_check||[]).forEach((check,i) => steps.push({ type:'check', check, idx:i, pool:a0Pool }));
+  /* Диктант слова — только в тематических блоках: в алфавитных «звук → буква» мини-проверки
+     уже делают ровно это. Слово берём первое из урока, пул для выбора написания — остальные. */
+  if (!isAlpha && hasTTS(DB.profile.targetLang)) {
+    const first = (lesson.items || []).map(it => (it.examples || [])[0]).filter(Boolean)[0];
+    if (first && first.word) {
+      steps.push({ type:'dictation', word:first, pool:a0Pool.filter(w => w !== first.word) });
+    }
+  }
+
   // Мини-сцена — финальный шаг тематических уроков (не phonics)
   if (blk.hasMiniScene && lesson.mini_scene?.exchanges?.length) {
     steps.push({ type:'scene', scene: lesson.mini_scene });
@@ -3773,21 +3803,30 @@ mini_check: РОВНО 12 упражнений — узнавание слов, 
 function runA0Lesson(S) {
   const { code, lessonN, total } = S;
   const steps = S.steps;
-  const totalChecks = steps.filter(s=>s.type==='check').length;
+  const totalChecks = steps.filter(s=>s.type==='check'||s.type==='dictation').length;
   let mark = Date.now();   // метка текущего захода: паузы между заходами в статистику не идут
 
   const runStep = () => {
     S.spent = (S.spent||0) + (Date.now() - mark); mark = Date.now();
     if (S.stepIdx >= steps.length) {
       Episodes.drop('a0', code);   // урок пройден — снимок больше не нужен
-      return finishA0Lesson(code, lessonN, total, S.correctChecks, totalChecks, Date.now() - S.spent);
+      return finishA0Lesson(code, lessonN, total, S.correctChecks, totalChecks - (S.skippedChecks||0), Date.now() - S.spent);
     }
     Episodes.put('a0', code, S);   // снимок позиции перед каждым шагом
     const s = steps[S.stepIdx];
     const progress = `${S.stepIdx+1}/${steps.length}`;
     if (s.type === 'alpha_grid') showA0AlphaGrid(s.items, s.title, lessonN, total, progress, () => { S.stepIdx++; runStep(); });
     else if (s.type === 'item')  showA0Item(s.item, s.title, lessonN, total, progress, () => { S.stepIdx++; runStep(); });
-    else if (s.type === 'check') showA0Check(s.check, lessonN, total, progress, (ok) => { if(ok) S.correctChecks++; S.stepIdx++; runStep(); });
+    else if (s.type === 'check') showA0Check(s.check, lessonN, total, progress, (ok) => {
+      if (ok === null) S.skippedChecks = (S.skippedChecks||0) + 1;   // негодное задание вне счёта
+      else if (ok) S.correctChecks++;
+      S.stepIdx++; runStep();
+    }, s.pool);
+    else if (s.type === 'dictation') showA0Dictation(s.word, s.pool, lessonN, total, progress, (ok) => {
+      if (ok === null) S.skippedChecks = (S.skippedChecks||0) + 1;
+      else if (ok) S.correctChecks++;
+      S.stepIdx++; runStep();
+    });
     else if (s.type === 'scene') showA0MiniScene(s.scene, lessonN, total, progress, () => { S.stepIdx++; runStep(); });
     else { S.stepIdx++; runStep(); }
   };
@@ -3848,9 +3887,119 @@ function showA0Item(item, title, lessonN, total, progress, onNext) {
   $('#a0next').onclick = onNext;
 }
 
-function showA0Check(check, lessonN, total, progress, onDone) {
-  const opts = shuffle([...(check.options||[])]);
-  if (!opts.length) { onDone(true); return; }
+/* 4.47: мини-проверка приходила с ОДНИМ вариантом ответа — выбирать было не из чего, и задание
+   засчитывалось само собой. Пустой список вариантов был ещё хуже: задание молча уходило в плюс
+   и накручивало точность урока. Дистракторы добираются из лексики ЭТОГО же урока: слова человек
+   только что видел, поэтому путать предлагается с ними, а не со случайным набором. */
+const A0_OPTS_MIN = 4;
+function a0FillOptions(check, pool) {
+  const raw = (check.options || []).filter(o => (o && (o.word || typeof o === 'string')));
+  const seen = new Set(), opts = [];
+  raw.forEach(o => {
+    const w = String(o.word || o).trim();
+    const k = w.toLowerCase();
+    if (!w || seen.has(k)) return;            // дубликаты вариантов — тоже отсутствие выбора
+    seen.add(k); opts.push({ word: w, correct: !!o.correct });
+  });
+  if (!opts.some(o => o.correct)) return null;   // верного ответа нет — задание негодное
+  for (const w of shuffle([...(pool || [])])) {
+    if (opts.length >= A0_OPTS_MIN) break;
+    const word = String(w || '').trim(), k = word.toLowerCase();
+    if (!word || seen.has(k)) continue;
+    seen.add(k); opts.push({ word, correct: false });
+  }
+  return opts.length >= 2 ? opts : null;         // добрать неоткуда — лучше пропустить
+}
+
+
+/* Диктант слова на A0 (спека 4.47). В блоках 1–2 (алфавит, буквосочетания) отдельного задания
+   нет: тип 2 мини-проверки — «звук → буква» — уже диктант в чистом виде, дублировать нечем.
+   В тематических блоках 3–9 звучит слово этого урока, рядом эмодзи и перевод как смысловая
+   опора. Фраза на A0 не годится: человек ещё не удерживает конструкцию, а связь звучания и
+   написания — ровно то, ради чего уровень существует.
+
+   Форма ответа зависит от письменности. Печать осмысленна, только когда письменность целевого
+   языка совпадает с родной: румын, набирающий испанское слово, тренирует нужное; тот же румын,
+   набирающий греческое или японское слово на второй неделе, тренирует поиск букв на клавиатуре.
+   Расходятся — вместо печати выбор написания из четырёх. Проверка письменности та же, что у
+   транскрипции (4.39): чужие для родного языка знаки в слове и означают расхождение. */
+function showA0Dictation(word, pool, lessonN, total, progress, onDone) {
+  const term = String(word?.term || word?.word || '').trim();
+  if (!term || !hasTTS(DB.profile.targetLang)) { onDone(null); return; }
+  const typed = !isBadTranslit(term, DB.profile.nativeLang);   // письменности совпали — печатаем
+
+  let options = null;
+  if (!typed) {
+    const seen = new Set([term.toLowerCase()]);
+    options = [{ word: term, correct: true }];
+    for (const w of shuffle([...(pool || [])])) {
+      if (options.length >= 4) break;
+      const x = String(w || '').trim();
+      if (!x || seen.has(x.toLowerCase())) continue;
+      seen.add(x.toLowerCase()); options.push({ word: x, correct: false });
+    }
+    if (options.length < 2) { onDone(null); return; }
+    options = shuffle(options);
+  }
+
+  const say = () => speak(term, DB.profile.targetLang, 0.7);   // на A0 темп всегда замедленный
+  Screen.show(`
+    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('диктант')}</div>
+    <div class="card" id="a0dcard">
+      <div class="task-text">🎧 ${esc(t('Прослушайте и запишите слово'))}</div>
+      <div style="height:6px"></div>
+      <button class="btn btn-ghost" id="play">🔊 ${lbl('Прослушать ещё раз')}</button>
+      <p class="note" style="margin:10px 0 0">${esc(word.emoji || '')} ${esc(word.translation || '')}</p>
+      <div style="height:10px"></div>
+      ${typed
+        ? `<input id="ans" class="inp" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="${esc(t('Напишите слово'))}">
+           <div class="feedback" id="fb"></div>
+           <div class="btn-row" style="margin-top:12px">
+             <button class="btn btn-primary" id="check">Проверить</button>
+           </div>`
+        : options.map((o, i) => `<button class="opt" data-correct="${!!o.correct}" data-idx="${i}">${esc(o.word)}</button>`).join('')}
+    </div>`);
+  $('#play').onclick = say;
+  say();
+
+  const finish = (ok) => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
+    btn.textContent = I18N.t('Дальше →');
+    btn.onclick = () => onDone(ok);
+    document.getElementById('a0dcard').after(btn);
+  };
+
+  if (typed) {
+    $('#check').onclick = () => {
+      const a = $('#ans').value.trim();
+      if (!a) return;
+      const ok = normDict(a) === normDict(term);
+      const fb = $('#fb');
+      fb.className = 'feedback ' + (ok ? 'ok' : 'bad');
+      fb.innerHTML = ok ? `✅ ${esc(t('Верно!'))}`
+                        : `❌ ${lbl('Правильно:')} <b>${esc(term)}</b>`;
+      $('#check').disabled = true; $('#ans').disabled = true;
+      finish(ok);
+    };
+  } else {
+    document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+      const ok = b.dataset.correct === 'true';
+      document.querySelectorAll('.opt').forEach(x => {
+        x.disabled = true;
+        if (x.dataset.correct === 'true') x.classList.add('correct-opt');
+        else if (x === b && !ok) x.classList.add('wrong-opt');
+      });
+      finish(ok);
+    });
+  }
+}
+
+function showA0Check(check, lessonN, total, progress, onDone, pool) {
+  const filled = a0FillOptions(check, pool);
+  if (!filled) { onDone(null); return; }          // null — задание не показано, в счёт не идёт
+  const opts = shuffle(filled);
   Screen.show(`
     <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>задание</span> ${progress}</div>
     <div class="card" id="a0card">
@@ -4113,11 +4262,18 @@ async function startLesson(code) {
   recapItems.forEach((w,i) => steps.push({ t:'reviewCtx', phase:'Повторение', n:`R${i+1}/7`, w, ri:i }));
   steps.push({ t:'present' });
   steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
-  for (let i=0;i<5;i++) steps.push({ t:'recog', phase:'Узнавание', n:'<span>Задание</span> '+(i+1)+'/21', w: words[i % words.length], pool:'lesson' });
-  for (let i=0;i<6;i++) steps.push({ t:'context', phase:'Слово в контексте', n:'<span>Задание</span> '+(i+6)+'/21', ci:i });
+  /* 4.47: порядок 21 задания задаёт планировщик — перемежение типов и растущие интервалы.
+     Квоты и содержание прежние (5 узнаваний, 6 контекстов, 9 сборок), меняется расстановка. */
+  /* Диктант — 22-е задание, после финального квеста. Языку без озвучки задание не даётся,
+     и тогда урок остаётся о 21 задании: молчащий диктант хуже отсутствующего. */
+  const hasDictation = hasTTS(DB.profile.targetLang);
+  const totalDrills  = hasDictation ? 22 : 21;
+  const drills = planDrillSteps(words, totalDrills);
+  drills.slice(0, 11).forEach(d => steps.push(d));
   if (((parseCode(code)||{}).n || 1) % 2 === 1) steps.push({ t:'phrases' });   // повседневные выражения — через урок (4.14)
-  for (let i=0;i<9;i++) steps.push({ t:'construct', phase:'Сборка фразы', n:'<span>Задание</span> '+(i+12)+'/21', ci:i });
-  steps.push({ t:'quest', n:'Задание 21/21 · Final Challenge' });
+  drills.slice(11).forEach(d => steps.push(d));
+  steps.push({ t:'quest', n:`<span>Задание</span> 21/${totalDrills} · Final Challenge` });
+  if (hasDictation) steps.push({ t:'dictation', n:`<span>Задание</span> 22/22` });
 
   L = { code, words, steps, i:0, grammar:null, constructs:null, reviewDrills:null,
         reviewWords: recapItems.map(w=>({ term:w.term, translation:w.translation||'' })),
@@ -4125,7 +4281,7 @@ async function startLesson(code) {
         lvl, known,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
-        wordErr:{}, firstTryDone:{} };
+        wordErr:{}, firstTryDone:{}, retryPlanned:{} };
   fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
   renderStep();
 }
@@ -4445,10 +4601,225 @@ const LessonCache = {
   clearSuper(code) { code ? Episodes.drop('super', code) : Episodes.dropKind('super'); }
 };
 
+
+/* ============================================================
+   ПЛАНИРОВЩИК УРОКА (спека 4.47, QUEUE-114/115/116)
+
+   До этого порядок 21 задания был захардкожен блоками: пять узнаваний подряд, шесть
+   контекстов, девять сборок. Три пункта очереди меняли одно и то же место, поэтому
+   сделаны одной работой.
+
+   Что делает планировщик:
+   • ПЕРЕМЕЖЕНИЕ (116). Типы заданий раскладываются по 21 слоту равномерно, не более двух
+     одинаковых подряд. Квоты не меняются: 5 узнаваний, 6 контекстов, 9 сборок — меняется
+     только порядок, содержание остаётся прежним.
+   • РАСТУЩИЕ ИНТЕРВАЛЫ (115). Слово, показанное в презентации, не спрашивается сразу:
+     узнавания разъезжаются по уроку самим перемежением, а слова назначаются на слоты так,
+     чтобы каждое успело «остыть». Оговорка честная: приложение управляет выбором слова
+     только в узнавании и диктанте — в контекстах и сборках слово задаёт сгенерированное
+     предложение, поэтому интервалы гарантируются на управляемой части, а не на всех 21.
+   • ВОЗВРАТ ПОСЛЕ ОШИБКИ (114). Слово с ошибкой возвращается через 2–3 задания в облегчённом
+     виде (узнавание) и ещё раз ближе к концу урока. Повторы вставляются на ходу и НЕ входят
+     в счёт 21 — иначе номера заданий поехали бы посреди урока; помечаются значком повтора,
+     как повторение прошлого урока помечается R1/7.
+   ============================================================ */
+
+/* Раскладка типов по слотам. Жадный отбор «у кого больше остаток» ставил бы сборки фраз в
+   начало урока — их просто больше всех, — и человек начинал бы с самого трудного. Поэтому
+   раскладка позиционная: у каждого задания есть желаемое место на шкале урока, типы имеют
+   разные диапазоны (узнавание — раньше, сборка — позже, контекст — посередине, с перекрытием),
+   и порядок получается сортировкой. Детерминированно: возврат к сохранённой точке даёт тот же
+   урок. Профиль сложности сохраняется от простого к сложному, но блоками уже не идёт. */
+const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20] };
+function interleaveTypes(quota) {
+  const want = [];
+  for (const t of Object.keys(quota)) {
+    const [from, to] = DRILL_SPAN[t] || [1, 20];
+    const k = quota[t];
+    for (let i = 0; i < k; i++) want.push({ t, at: k === 1 ? (from + to) / 2 : from + i * (to - from) / (k - 1) });
+  }
+  want.sort((a, b) => a.at - b.at);
+  return want.map(x => x.t);
+}
+
+/* Назначение слов узнаваниям: по кругу в порядке презентации. Узнаваний пять, а слов урока
+   семь (пять новых плюс два неправильных глагола), поэтому два слова в узнавание не попадают —
+   их подхватывает диктант, который берёт как раз неохваченное слово. */
+function assignRecogWords(words, count) {
+  const pool = words.length ? words : [];
+  const out = [];
+  for (let i = 0; i < count && pool.length; i++) out.push(pool[i % pool.length]);
+  return out;
+}
+
+/* Построение 21 задания. Возвращает готовый список шагов с проставленной нумерацией. */
+function planDrillSteps(words, total) {
+  const types = interleaveTypes({ recog: 5, context: 6, construct: 9 });
+  const recogWords = assignRecogWords(words, 5);
+  let ri = 0, ci = 0, bi = 0;
+  return types.map((t, i) => {
+    const num = '<span>Задание</span> ' + (i + 1) + '/' + total;
+    if (t === 'recog')   return { t: 'recog',     phase: 'Узнавание',        n: num, w: recogWords[ri++], pool: 'lesson' };
+    if (t === 'context') return { t: 'context',   phase: 'Слово в контексте', n: num, ci: ci++ };
+    return                      { t: 'construct', phase: 'Сборка фразы',      n: num, ci: bi++ };
+  });
+}
+
+/* QUEUE-114: возврат слова после ошибки. Вызывается из мест, где фиксируется ошибка по слову.
+   Первый повтор — через 2–3 задания, второй — ближе к концу урока. Оба вне счёта 21. */
+function scheduleRetry(term) {
+  if (!L || !L.steps || !term) return;
+  const w = (L.words || []).find(x => norm(x.term) === norm(term));
+  if (!w) return;
+  L.retryPlanned = L.retryPlanned || {};
+  if (L.retryPlanned[norm(term)]) return;      // одно слово планируется один раз за урок
+  L.retryPlanned[norm(term)] = true;
+  const mk = () => ({ t: 'recog', phase: 'Повторение', n: '↻', w, pool: 'lesson', isRetry: true });
+  const near = Math.min(L.i + 3, L.steps.length);
+  L.steps.splice(near, 0, mk());
+  const late = Math.max(near + 1, L.steps.length - 3);
+  L.steps.splice(late, 0, mk());
+}
+
+
+/* ============================================================
+   ДИКТАНТ НА СЛУХ (спека 4.47, QUEUE-117)
+
+   Навык аудирования не тренировался вовсе. Ограничение здесь физиологическое, а не языковое:
+   слуховая рабочая память удерживает около двух секунд звучания — это 5–7 слов на родном языке
+   и заметно меньше на чужом. Поэтому диктант не одно задание, а лестница из четырёх форм.
+
+     A1  — диктант с пропуском: фраза видна целиком, одно слово скрыто, напечатать нужно только
+           его. Память не нагружается; тренируется ровно то, ради чего задание заведено —
+           выделить знакомое слово в потоке речи и записать.
+     A2  — короткая фраза целиком (4–6 слов) из тех, что собирались в этом уроке.
+     B1  — фраза 7–10 слов, прослушиваний два.
+     B2+ — dictogloss: фраза звучит дважды в обычном темпе, восстановить нужно СМЫСЛ своими
+           словами. Проверка по ключевым словам, а не по буквальному совпадению.
+
+   Общее для всех ступеней: только лексика этого урока (иначе это угадывание орфографии
+   незнакомого слова, а не аудирование); на A1–A2 замедленный темп и неограниченный повтор —
+   переслушивание и есть основной механизм тренировки на низких уровнях; нет голоса для языка —
+   задания нет вовсе (языков 72, качество озвучки у них очень разное, а молчащий диктант хуже
+   отсутствующего).
+   ============================================================ */
+
+/* Нормализация ответа диктанта. В отличие от norm() диакритика СОХРАНЯЕТСЯ: она часть
+   орфографии, а диктант проверяет именно письмо. Регистр и финальная пунктуация не считаются. */
+const normDict = s => String(s || '').toLowerCase()
+  .replace(/[.,!?;:«»"'’]/g, ' ').replace(/\s+/g, ' ').trim();
+
+function dictationMode(cefr) {
+  const lv = String(cefr || 'A1').toUpperCase();
+  if (lv.indexOf('A1') === 0) return 'gap';
+  if (lv.indexOf('A2') === 0) return 'short';
+  if (lv.indexOf('B1') === 0) return 'full';
+  return 'gloss';
+}
+
+/* Выбор фразы: из предложений, собранных в этом уроке, берём ближайшую по длине к целевому
+   диапазону ступени. Ничего не генерируем — озвучка и фразы уже есть. */
+function pickDictationPhrase(mode) {
+  const src = (L.constructs || []).map(c => String(c.expected_target || '')).filter(Boolean);
+  if (!src.length) return null;
+  const span = mode === 'short' ? [4, 6] : mode === 'full' ? [7, 10] : [4, 12];
+  const score = p => {
+    const k = p.split(/\s+/).filter(Boolean).length;
+    return k < span[0] ? span[0] - k : k > span[1] ? k - span[1] : 0;
+  };
+  return src.slice().sort((a, b) => score(a) - score(b))[0];
+}
+
+/* Оценка ответа. Для dictogloss — по доле знаменательных слов эталона: восстанавливается
+   смысл, а не буквы, поэтому служебные слова из сравнения выкидываются. */
+function checkDictation(input, answer, mode) {
+  const a = normDict(input), b = normDict(answer);
+  if (!a) return false;
+  if (mode !== 'gloss') return a === b;
+  const keys = b.split(' ').filter(w => w.length > 3);
+  if (!keys.length) return a === b;
+  const hit = keys.filter(w => a.indexOf(w) >= 0).length;
+  return hit / keys.length >= 0.7;
+}
+
+function drillDictation(s, onDone) {
+  const mode = dictationMode(L.lvl);
+  const phrase = pickDictationPhrase(mode);
+  if (!phrase) { L.i++; return renderStep(); }
+  const slow  = (mode === 'gap' || mode === 'short') ? 0.7 : 0.92;
+  const limit = (mode === 'gap' || mode === 'short') ? 0 : 2;   // 0 — прослушиваний не ограничиваем
+  let plays = 0;
+
+  // A1: прячем одно слово урока — напечатать нужно только его
+  let gap = null, answer = phrase;
+  if (mode === 'gap') {
+    for (const w of (L.words || [])) {
+      const g = makeGapSentence(phrase, w.term);
+      if (g.found) { gap = g; answer = g.answer; break; }
+    }
+    if (!gap) { answer = phrase; }
+  }
+  const hintText = mode === 'gloss'
+    ? t('Прослушайте и передайте смысл своими словами.')
+    : gap ? t('Прослушайте и впишите пропущенное слово.')
+          : t('Прослушайте и напишите фразу целиком.');
+
+  Screen.show(`
+    <div class="eyebrow">${esc(L.code)} · ${lbl('Диктант')}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
+      <p class="note" style="margin:0 0 10px;color:var(--accent)">🎯 ${esc(hintText)}</p>
+      ${gap ? `<div class="task-text target">${esc(gap.gapped)}</div>` : ''}
+      <button class="btn btn-ghost" id="play" style="margin:6px 0 10px">🔊 ${lbl('Прослушать')}</button>
+      <div class="note" id="plays" style="margin:0 0 8px"></div>
+      <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off"
+        placeholder="${esc(gap ? t('Пропущенное слово') : t('Напишите услышанное'))}"></textarea>
+      <div class="feedback" id="fb"></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-primary" id="check">Проверить</button>
+      </div>
+    </div>`);
+  bindAutoGrow('ans');
+
+  const playsEl = $('#plays');
+  const paint = () => {
+    if (!limit) { playsEl.innerHTML = ''; return; }
+    const left = Math.max(0, limit - plays);
+    playsEl.innerHTML = `${lbl('Осталось прослушиваний:')} ${left}`;
+    if (!left) $('#play').disabled = true;
+  };
+  const play = () => {
+    if (limit && plays >= limit) return;
+    plays++; speak(phrase, DB.profile.targetLang, slow); paint();
+  };
+  $('#play').onclick = play;
+  play();                                     // первое воспроизведение сразу
+
+  $('#check').onclick = () => {
+    const a = $('#ans').value.trim();
+    if (!a) return;
+    const ok = checkDictation(a, answer, mode);
+    const fb = $('#fb');
+    fb.className = 'feedback ' + (ok ? 'ok' : 'bad');
+    fb.innerHTML = ok
+      ? `✅ ${esc(t('Верно!'))} <b>${esc(phrase)}</b>` + sayBtn(phrase)
+      : `❌ ${lbl('Правильно:')} <b>${esc(answer)}</b>` + sayBtn(phrase)
+        + (gap ? '' : `<br><span style="color:var(--dim)">${esc(phrase)}</span>`);
+    if (!ok) { L.errors.writing = (L.errors.writing || 0) + 1; }
+    $('#check').disabled = true;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
+    btn.textContent = I18N.t('Дальше →');
+    btn.onclick = () => { L.ft.total++; if (ok) L.ft.ok++; onDone(); };
+    fb.after(btn);
+  };
+}
+
 function renderStep() {
   if (!L || L.i >= L.steps.length) return finishLesson();
   LessonCache.save();   // сохраняем позицию при каждом переходе
   const s = L.steps[L.i];
+  if (s.t==='dictation') return drillDictation(s, () => { L.i++; renderStep(); });
   if (s.t==='present')   return drillPresent();
   if (s.t==='ruleRecap') return drillRuleRecap(s);
   if (s.t==='reviewCtx') {                // повторение слова в контексте предложения (пункт 12)
@@ -4725,7 +5096,7 @@ function drillRecog(s) {
       $('#next').disabled = false;
     } else {
       b.classList.add('wrong'); b.disabled = true;
-      L.errors.recognition++; noteWordError(w.term);
+      L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term);
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ Не то. Попробуйте ещё раз — верный вариант на экране.`;
     }
@@ -4997,7 +5368,7 @@ function drillReviewContext(s, rd) {
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent='Дальше'; $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
-      if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); mustRetype = true; }
+      if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
       $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
@@ -5226,7 +5597,7 @@ function drillConstruct(s) {
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(null); }
     if (res.correct) { firstTry(key, true); return passOK(res); }
     firstTry(key, false);
-    L.errors.construction++; if (c.focus_word) noteWordError(c.focus_word);
+    L.errors.construction++; if (c.focus_word) { noteWordError(c.focus_word); scheduleRetry(c.focus_word); }
     correctForm = (res && res.correct_form) || c.expected_target;
     const cTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
     mustRetype = true;
