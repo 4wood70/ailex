@@ -48,8 +48,10 @@ body::before{ /* circuit atmosphere */
 .top-status{margin-left:auto;font-size:11px;color:var(--faint);letter-spacing:.14em;text-transform:uppercase;
   font-family:'Chakra Petch'}
 .top-status.online{color:var(--ok)}
-.nav-home{position:absolute;left:44px;top:50%;transform:translateY(-50%);background:none;border:0;
-  color:var(--dim);font-size:22px;line-height:1;padding:4px 8px;cursor:pointer}
+/* 4.49: кнопка выхода в меню — внизу экрана, под основной. В шапке для неё нет места: там
+   логотип, код занятия и версия, и значок налезал на логотип. Внизу она под рукой и не мешает. */
+.nav-home{display:block;width:100%;margin:18px 0 4px;background:none;border:0;
+  color:var(--dim);font-size:14px;padding:10px;cursor:pointer}
 .nav-home:active{color:var(--ink)}
 /* 4.49: свой диалог подтверждения — системный confirm() в обёртке TWA не показывается */
 .overlay{position:fixed;inset:0;background:rgba(2,6,16,.72);display:flex;align-items:center;
@@ -240,7 +242,6 @@ a{color:var(--cyan)}
     <div class="logo-badge"><span>A</span></div>
     <div class="logo-word">AI<b>LEX</b></div>
     <div class="top-status" id="sysStatus">SYSTEM ONLINE</div>
-    <button id="btnHome" class="nav-home" style="display:none" aria-label="В главное меню">⌂</button>
   </div>
   <div class="screen" id="screen"></div>
 </div>
@@ -255,7 +256,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v97';
+const APP_VERSION = 'v98';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -302,6 +303,10 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.50: небо прогресса и транскрипция без озвучки. */
+    'Глубина языка:',
+    'правил',
+    'слов',
     /* 4.49: диалог подтверждения и навигация. */
     'Удалить',
     'Выйти из экзамена?',
@@ -689,6 +694,8 @@ const UI_EXTRA = [
     '🏆 После каждого акта — краткий итог.',
     '🏆 Экзамен сдан:',
     '👆 Нажмите на букву, чтобы услышать её произношение',
+    'Нажмите на букву, чтобы услышать её произношение',
+    'Для этого языка на устройстве нет голоса — ориентируйтесь на транскрипцию под буквой.',
     '💡 Полный ответ:',
     '💬 Иногда появится',
     '💬 Фразы на каждый день',
@@ -1089,7 +1096,7 @@ const I18N = {
     batch.forEach((x,k) => { if (tr[k]) d[x] = tr[k]; });
     if (this._onStep) { this._done = (this._done||0) + batch.length; try { this._onStep(this._done, this._total); } catch(_){} }
     try {
-      localStorage.setItem('AILEX_UI_CACHE', JSON.stringify(
+      localStorage.setItem(UI_CACHE_KEY, JSON.stringify(
         Object.fromEntries(Object.keys(this.dict).filter(l=>l!=='en').map(l=>[l,this.dict[l]]))));
     } catch(_) {}
     try { localizeDOM(document.getElementById('screen')); } catch(_) {}
@@ -1294,7 +1301,12 @@ const langName = c => (LANGS.find(l=>l.c===c)||{}).n || c;
 /* 4.49: в шапке профиля пара выглядела как «Русский → አማርኛ» — целевой язык не читался вовсе.
    Название даётся на родном языке (переводится наравне с интерфейсом), самоназвание — в скобках,
    и только если письменности расходятся: «Español» дважды писать незачем. */
-function langLabel(c) {
+/* 4.49: строка над заданием не показывала, какой язык изучается — на скриншоте «A0 · урок 2/15 ·
+   задание 6/13» и ни слова о языке. Ставим изучаемый язык первым: он важнее номера урока. */
+function tgtTag() {
+  try { return '<span>' + esc(langPair(DB.profile.targetLang)) + '</span> · '; } catch(_) { return ''; }
+}
+function langPair(c) {
   const own = langName(c);
   const ru  = (LANG_RU[c] || '');
   if (!ru || ru === own) return own;
@@ -1921,11 +1933,14 @@ const Screen = {
     const b = $('#btnBack');
     b.style.display = Screen._back ? '' : 'none';
     b.onclick = Screen._back || null;
-    const h = $('#btnHome');
-    if (h) {
-      h.style.display = Screen._isMenu ? 'none' : '';
+    /* Кнопка выхода дописывается в конец экрана автоматически — одним местом на все экраны,
+       а не по одному вызову в каждом. */
+    if (!Screen._isMenu) {
+      const h = document.createElement('button');
+      h.className = 'nav-home';
+      h.textContent = '⌂ ' + I18N.t('В главное меню');
       h.onclick = goHome;
-      h.setAttribute('aria-label', I18N.t('В главное меню'));
+      s.appendChild(h);
     }
     syncSysStatus();          // v68: код занятия в шапке — виден на любом скриншоте
     window.scrollTo(0,0);
@@ -2827,6 +2842,71 @@ function profileHue(p){
   let h = 0; for (let i=0;i<src.length;i++) h = (h*31 + src.charCodeAt(i)) % 360;
   return h;
 }
+
+/* ============================================================
+   НЕБО ПРОГРЕССА (спека 4.50, QUEUE-146)
+
+   Кольцо показывает УРОВЕНЬ: у него есть конец — известное число уроков, поэтому процент там
+   честен. У языка конца нет, и мерить его процентом нельзя: «12% языка» подразумевает, что
+   осталось восемь таких же кусков, а это неправда. Поэтому глубина языка показывается небом,
+   у которого нет края: оно не заполняется, а густеет.
+
+     звёзды   — освоенные слова: чем больше выучено, тем гуще небо;
+     связи    — закреплённые правила: точки соединяются в конструкции;
+     палитра  — уровень CEFR: с каждым закрытым уровнем небо смещается по тону.
+
+   Читается с одного взгляда и говорит то, чего кольцо сказать не может: можно пройти все
+   уроки уровня и иметь редкое небо — значит проходил, но не усвоил.
+   ============================================================ */
+const SKY_HUE = { A0: 205, A1: 195, A2: 170, B1: 140, B2: 45, C1: 25 };
+function progressSky(cv, stat) {
+  if (!cv || !cv.getContext) return;
+  const ctx = cv.getContext('2d'), DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const slow = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const hue = SKY_HUE[String(stat.level || 'A0').slice(0,2).toUpperCase()] ?? 205;
+  /* Плотность растёт быстро на первых словах и замедляется дальше: первые двадцать слов должны
+     давать видимую разницу, иначе небо не отзывается на усилие. */
+  const stars = Math.round(8 + 46 * (1 - Math.exp(-(stat.mastered || 0) / 40)));
+  const link  = Math.min(150, 40 + (stat.rules || 0) * 6);   // правила стягивают звёзды в структуру
+  let W = 0, H = 0, pts = [];
+  function measure() {
+    W = cv.clientWidth || 320; H = cv.clientHeight || 160;
+    cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  function seedSky() {
+    pts = [];
+    for (let i = 0; i < stars; i++) pts.push({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: (Math.random()-.5)*0.06, vy: (Math.random()-.5)*0.06,
+      r: 0.6 + Math.random()*1.5, ph: Math.random()*Math.PI*2
+    });
+  }
+  function frame(now) {
+    if (!cv.isConnected) return;
+    ctx.clearRect(0,0,W,H);
+    const t = now/1000;
+    pts.forEach(p => {
+      if (!slow) { p.x += p.vx; p.y += p.vy; }
+      if (p.x < 0 || p.x > W) p.vx *= -1;
+      if (p.y < 0 || p.y > H) p.vy *= -1;
+    });
+    for (let i=0;i<pts.length;i++) for (let j=i+1;j<pts.length;j++) {
+      const a=pts[i], b=pts[j], d=Math.hypot(a.x-b.x, a.y-b.y);
+      if (d > link) continue;
+      ctx.strokeStyle = `hsla(${hue},80%,62%,${(0.16*(1-d/link)).toFixed(3)})`;
+      ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    }
+    pts.forEach(p => {
+      const tw = 0.55 + 0.45*Math.sin(t*0.9 + p.ph);
+      ctx.fillStyle = `hsla(${hue},85%,72%,${(0.5*tw).toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    });
+    requestAnimationFrame(frame);
+  }
+  measure(); seedSky(); requestAnimationFrame(frame);
+  window.addEventListener('resize', () => { measure(); seedSky(); }, { passive:true });
+}
+
 function ambientNet(cv){
   if (!cv || !cv.getContext) return;
   const slow = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2897,7 +2977,7 @@ function profileSelect(opts) {
               font-family:'Chakra Petch';font-weight:700;font-size:20px;color:hsl(${h},80%,72%)">${esc((p.name||'?').slice(0,1).toUpperCase())}</span>
             <span style="flex:1;min-width:0">
               <span style="display:block;font-family:'Chakra Petch';font-weight:600;font-size:17px;color:var(--ink)">${esc(p.name)}</span>
-              <span style="display:block;font-size:13px;color:var(--dim);margin-top:2px">${esc(langLabel(p.nativeLang))} → ${esc(langLabel(p.targetLang))}</span>
+              <span style="display:block;font-size:13px;color:var(--dim);margin-top:2px">${esc(langPair(p.nativeLang))} → ${esc(langPair(p.targetLang))}</span>
             </span>
             ${p.cefr?`<span style="flex:0 0 auto;font-family:'Chakra Petch';font-size:11px;letter-spacing:.1em;
               padding:4px 9px;border-radius:999px;color:hsl(${h},80%,75%);
@@ -3749,10 +3829,12 @@ function mainMenu() {
   const orphanA0     = !!cachedA0 && !resumeA0;
   Screen.show(`
     <h1><span>С возвращением,</span> ${esc(p.name)}!</h1>
-    <p class="sub">${esc(langLabel(p.nativeLang))} → ${esc(langLabel(p.targetLang))} · <span>уровень</span> ${esc(p.cefr)} · <span>следующий этап:</span> <b style="color:var(--ink)">${esc(next)}</b></p>
+    <p class="sub">${esc(langPair(p.nativeLang))} → ${esc(langPair(p.targetLang))} · <span>уровень</span> ${esc(p.cefr)} · <span>следующий этап:</span> <b style="color:var(--ink)">${esc(next)}</b></p>
     <div class="card glow">
       <div class="ring-wrap">${ringSVG(lp.pct, lp.lvl)}</div>
       <div class="segbar">${Array.from({length:segs},(_,i)=>`<i class="${i<lit?(i>=segs-2?'on hot':'on'):''}"></i>`).join('')}</div>
+      <canvas id="skyCv" style="display:block;width:100%;height:74px;margin:2px 0 4px"></canvas>
+      <div style="text-align:center;font-size:11px;color:var(--dim);margin:0 0 6px">${lbl('Глубина языка:')} ${mastered} ${lbl('слов')} · ${(DB.rules||[]).length} ${lbl('правил')}</div>
       <div style="text-align:center;font-size:12px;color:var(--dim);margin:2px 0 6px"><span>Прогресс уровня:</span> <b style="color:var(--ink)">${lp.done}</b> <span>из</span> ${lp.total} <span>уроков</span>${acc?`<span> · точность</span> ${acc}%`:''}</div>
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)">
         <span><span>Слов в словаре:</span> <b style="color:var(--ink)">${words}</b></span>
@@ -3795,6 +3877,8 @@ function mainMenu() {
       <button class="menu-item" id="mProf"><span class="ic">👥</span><span class="t"><b>Сменить профиль</b><small>выбрать другой профиль</small></span><span class="chev">›</span></button>
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`, { isMenu: true });
+  try { progressSky(document.getElementById('skyCv'),
+        { mastered, rules:(DB.rules||[]).length, level: currentLevel() }); } catch(_) {}
   if (orphanA0 && document.getElementById('mResumeA0')) {
     document.getElementById('mResumeA0').onclick = () => runA0Lesson(cachedA0);   // 4.29: контент урока A0 в снимке — регенерации нет
   }
@@ -4051,7 +4135,7 @@ function showSettings() {
       <h2>Ключ Gemini</h2>
       <button class="btn btn-ghost btn-mini" id="sKey" style="margin-top:8px">Заменить ключ</button>
     </div>
-    <button class="btn btn-ghost" id="sReset" style="color:var(--err)">Удалить профиль и начать заново</button>`,
+    <button class="btn btn-ghost" id="sWipe" style="color:var(--err)">Удалить профиль и начать заново</button>`,
     { back: mainMenu });
   $('#sSave').onclick = async () => {
     p.name = $('#sName').value.trim() || p.name;
@@ -4083,7 +4167,7 @@ function showSettings() {
   /* 4.49: здесь стоял системный confirm(). В обёртке TWA и в Chrome Custom Tab он часто не
    показывается вовсе — диалога нет, ответа нет, код удаления не выполняется, и кнопка «не
    работает». Свой диалог работает везде и заодно переводится. */
-$('#sReset').onclick = () => askConfirm(
+$('#sWipe').onclick = () => askConfirm(
   t('Удалить профиль?'),
   t('Прогресс, словарь и коллекция правил этого профиля будут удалены с устройства. Языковая база сохранится на 3 дня — если создадите профиль с той же парой языков, качать заново не придётся.'),
   () => { Storage.wipe(); boot(); });
@@ -4228,12 +4312,15 @@ function showA0AlphaGrid(items, title, lessonN, total, progress, onNext) {
       <div class="a0-ltr">${esc(item.pattern||'')}</div>
       <div class="a0-sound">${esc(item.ipa_approx||'')}</div>
       <div class="a0-ex">${esc(item.examples?.[0]?.word||'')}</div>
+      <div class="a0-ex" style="color:var(--orange)">${esc(item.examples?.[0]?.translit||'')}</div>
     </div>`).join('');
   Screen.show(`
-    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
+    <div class="eyebrow">${tgtTag()}<span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
     <div class="card">
       <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
-      <p class="note" style="margin:4px 0 8px">👆 Нажмите на букву, чтобы услышать её произношение</p>
+      <p class="note" style="margin:4px 0 8px">${hasTTS(DB.profile.targetLang)
+        ? '👆 ' + esc(t('Нажмите на букву, чтобы услышать её произношение'))
+        : '👆 ' + esc(t('Для этого языка на устройстве нет голоса — ориентируйтесь на транскрипцию под буквой.'))}</p>
       <div class="a0-alpha-grid" id="alphaGrid">${cells}</div>
     </div>
     <p class="note" style="text-align:center">Изучите все буквы — затем переходите к заданиям</p>
@@ -4260,7 +4347,7 @@ function showA0Item(item, title, lessonN, total, progress, onNext) {
       ${sayBtn(ex.word||'')}
     </div>`).join('');
   Screen.show(`
-    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
+    <div class="eyebrow">${tgtTag()}<span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>шаг</span> ${progress}</div>
     <div class="card">
       <div class="drill-head"><span class="n" style="font-size:13px">${esc(title)}</span></div>
       <div class="a0-pattern">
@@ -4395,7 +4482,7 @@ function showA0Dictation(word, pool, lessonN, total, progress, onDone) {
 
   const say = () => speak(term, DB.profile.targetLang, 0.7);   // на A0 темп всегда замедленный
   Screen.show(`
-    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('диктант')}</div>
+    <div class="eyebrow">${tgtTag()}<span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('диктант')}</div>
     <div class="card" id="a0dcard">
       <div class="task-text">🎧 ${esc(t('Прослушайте и запишите слово'))}</div>
       <div style="height:6px"></div>
@@ -4452,7 +4539,7 @@ function showA0Check(check, lessonN, total, progress, onDone, pool) {
   if (!filled) { onDone(null); return; }          // null — задание не показано, в счёт не идёт
   const opts = shuffle(filled);
   Screen.show(`
-    <div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>задание</span> ${progress}</div>
+    <div class="eyebrow">${tgtTag()}<span>A0</span> · <span>урок</span> ${lessonN}/${total} · <span>задание</span> ${progress}</div>
     <div class="card" id="a0card">
       <div class="task-text">🎯 ${esc(check.prompt_native||t('Выберите правильный вариант:'))}</div>
       <div style="height:10px"></div>
@@ -4493,7 +4580,7 @@ function showA0MiniScene(scene, lessonN, total, progress, onDone) {
   let ei = 0;
 
   const header = () =>
-    `<div class="eyebrow"><span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('мини-сцена')}</div>
+    `<div class="eyebrow">${tgtTag()}<span>A0</span> · <span>урок</span> ${lessonN}/${total} · ${lbl('мини-сцена')}</div>
      <p class="note" style="margin:0 0 8px;font-size:13px">📍 ${esc(sit)}</p>`;
 
   const nextBtn = (label, cb) => {
@@ -5222,7 +5309,7 @@ function drillDictation(s, onDone) {
           : t('Прослушайте и напишите фразу целиком.');
 
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${lbl('Диктант')}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Диктант')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
       <p class="note" style="margin:0 0 10px;color:var(--accent)">🎯 ${esc(hintText)}</p>
@@ -5331,7 +5418,7 @@ function drillPhrases() {
   });
   Storage.save(DB);
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${lbl('Повседневные выражения')}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Повседневные выражения')}</div>
     <h1>💬 Фразы на каждый день</h1>
     <p class="sub">Готовые разговорные выражения для живого общения. Нажмите 🔊, чтобы услышать. Они сохранены в словарь.</p>
     <div class="card">
@@ -5352,7 +5439,7 @@ function drillPhrases() {
 /* ---------- Presentation: таблица новых слов ---------- */
 function drillPresent() {
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Presentation</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · Presentation</div>
     <h1>Новые слова</h1>
     <p class="sub">🧠 Слово → эмодзи-якорь → транскрипция → перевод. Нажмите 🔊, чтобы услышать живое звучание.</p>
     <div class="card">
@@ -5479,7 +5566,7 @@ function showErrorRule(res) {
 function drillRuleRecap(s) {
   const g = s.rule;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${lbl('Закрепление правила')}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Закрепление правила')}</div>
     <h1>🔁 ${esc(g.title||'Правило')}</h1>
     <p class="sub">Это правило часто вызывает ошибки — перечитайте его перед уроком, чтобы закрепить.</p>
     ${grammarCardHTML(g)}
@@ -5490,7 +5577,7 @@ function drillRuleRecap(s) {
 function drillGrammar() {
   const g = L.grammar;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${lbl('Грамматика урока')}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Грамматика урока')}</div>
     <h1>📐 ${esc(g.title||'Правило')}</h1>
     <p class="sub">Новое правило этого урока. Оно сохранится в «Свод правил» — сможете открыть его в любой момент с главного экрана.</p>
     ${grammarCardHTML(g)}
@@ -5533,7 +5620,7 @@ function drillRecog(s) {
   const opts = shuffle([w, ...fillers]);
   const key = 'st'+L.i;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase)}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${esc(s.phase)}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎯 узнавание</span></div>
       <p class="note" style="margin:0 0 8px;color:var(--accent)">🎯 Какое слово соответствует: <b>«${esc(w.translation)}»</b>?</p>
@@ -5788,7 +5875,7 @@ function drillReviewContext(s, rd) {
   const fullSentence = rd.sentence;   // полное предложение для показа после верного ответа
   const key = 'st'+L.i; let mustRetype = false;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||'Повторение')}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${esc(s.phase||'Повторение')}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🔁 повторение в контексте</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${w.translation?` — «${esc(w.translation)}»`:''}.</p>
@@ -5860,7 +5947,7 @@ function drillContext(s) {
   // перевод предложения: берём из prompt_native (поле constructs)
   const sentTranslation = item.prompt_native || '';
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · ${esc(s.phase||t('Контекст'))}</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${esc(s.phase||t('Контекст'))}</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🧩 слово в контексте</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
@@ -5943,7 +6030,7 @@ function drillWrite(s) {
   const hard = (L.wordErr[w.term]||0) > 0 || DB.reviewQueue.includes(w.term);
   let mustRetype = false;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Writing</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · Writing</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">✍️ письмо</span></div>
       <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}${hard?` <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span>`:''}</div>
@@ -6013,7 +6100,7 @@ function drillConstruct(s) {
      одном задании. Если слова даны, перевод уже сделан за ученика: остаётся порядок слов. */
   const instruction = `Соберите фразу на ${esc(langName(DB.profile.targetLang))}:`;
   Screen.show(`
-    <div class="eyebrow">${esc(L.code)} · Construction</div>
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · Construction</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🧩 собери фразу</span></div>
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>

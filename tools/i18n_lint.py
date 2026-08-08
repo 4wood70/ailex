@@ -352,5 +352,51 @@ def lint(path):
     return 1 if total else 0
 
 
+def lint_collisions(path):
+    """Столкновения имён — отдельный класс дефектов, ломающий код молча.
+
+    Два случая, оба стоили по билду: `id="sReset"` на одном экране у двух кнопок (поиск
+    возвращает первую, обработчик второй кнопки не срабатывает — удаление профиля не
+    работало), и функция `langLabel`, объявленная дважды с разными сигнатурами (вторая
+    перекрыла первую, и языковые пары исчезли с карточек профилей). Ни то, ни другое не
+    даёт ошибки: код просто делает не то, что написано рядом.
+    """
+    import collections
+    src = open(path, encoding='utf-8').read()
+    bad = []
+
+    # дубликаты id внутри одного шаблона экрана
+    for m in re.finditer(r'Screen\.show\(`', src):
+        i = m.end(); depth = 0; j = i
+        while j < len(src):
+            c = src[j]
+            if c == '\\': j += 2; continue
+            if c == '`' and depth == 0: break
+            if src.startswith('${', j): depth += 1; j += 2; continue
+            if c == '}' and depth > 0: depth -= 1
+            j += 1
+        ids = re.findall(r'\bid="([A-Za-z][\w-]*)"', src[i:j])
+        dup = {k: v for k, v in collections.Counter(ids).items() if v > 1}
+        if dup:
+            bad.append(('дубль id на экране', src[:m.start()].count('\n') + 1, dup))
+
+    # функции верхнего уровня, объявленные повторно
+    top = [(m.group(1), src[:m.start()].count('\n') + 1)
+           for m in re.finditer(r'^function\s+([A-Za-z_$][\w$]*)\s*\(', src, re.M)]
+    cnt = collections.Counter(n for n, _ in top)
+    for name, k in cnt.items():
+        if k > 1:
+            bad.append(('функция объявлена %d раза' % k, [l for n, l in top if n == name], name))
+
+    print('\nСТОЛКНОВЕНИЯ ИМЁН — %d' % len(bad))
+    for row in bad:
+        print('  ' + ' | '.join(str(x) for x in row))
+    return len(bad)
+
+
 if __name__ == '__main__':
-    sys.exit(lint(sys.argv[1] if len(sys.argv) > 1 else 'index.html'))
+    path = sys.argv[1] if len(sys.argv) > 1 else 'index.html'
+    code = lint(path)
+    if '--keys' not in sys.argv:
+        code += lint_collisions(path)
+    sys.exit(1 if code else 0)
