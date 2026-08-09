@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v101';
+const APP_VERSION = 'v102';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -2915,9 +2915,21 @@ function progressSky(cv, stat) {
     });
     /* 4.52: линий нет вовсе — космос не рисуют соединениями. Структура читается плотностью:
        где звёзд больше, глаз сам видит скопление. Соединённые узлы давали нейросеть, а не небо. */
+    /* 4.53: ровное дыхание синусоидой на всей карточке выглядело как тусклые пузырьки в воде —
+       мерцание было слишком плавным (диапазон яркости 0.05–0.5) и без свечения. Пик мерцания
+       сузили степенью (резкая вспышка, а не плавный вдох-выдох), добавили мягкое гало вокруг
+       каждой точки радиальным градиентом и подняли яркость ядра к почти-белому на пике. */
     pts.forEach(p => {
-      const tw = 0.55 + 0.45*Math.sin(t*0.9 + p.ph);
-      ctx.fillStyle = `hsla(${hue},85%,72%,${(0.5*tw).toFixed(3)})`;
+      const cyc = (t*0.6 + p.ph) % (Math.PI*2);
+      const tw = Math.pow(Math.max(0, Math.sin(cyc)), 3);
+      const alpha = 0.18 + 0.82*tw;
+      const glowR = p.r * (2 + 2*tw);
+      const glow = ctx.createRadialGradient(p.x,p.y,0, p.x,p.y,glowR);
+      glow.addColorStop(0, `hsla(${hue},95%,80%,${(alpha*0.5).toFixed(3)})`);
+      glow.addColorStop(1, `hsla(${hue},95%,80%,0)`);
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(p.x,p.y,glowR,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = `hsla(${hue},25%,${(85+tw*13).toFixed(0)}%,${alpha.toFixed(3)})`;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
     });
     requestAnimationFrame(frame);
@@ -3864,8 +3876,7 @@ function mainMenu() {
       </div>
     </div>
     <div class="menu-list">
-      ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>
-      <button class="btn btn-ghost" id="mRestart" style="margin:-4px 0 8px;font-size:13px">Начать урок заново</button>` : ''}
+      ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
       ${orphanA0 ? `<button class="menu-item" id="mResumeA0" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedA0.code)}</b><small><span>Шаг</span> ${esc(String(cachedA0.stepIdx+1))} <span>из</span> ${esc(String((cachedA0.steps||[]).length))} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
       ${false ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>${lbl('Глава')} ${esc(String(cachedSuper.actIndex||1))} ${lbl('из')} ${esc(String(cachedSuper.actsTotal||'?'))} · ${lbl('сцена')} ${esc(String(cachedSuper.sqScene))} · ${lbl('прогресс сохранён')}</small></span><span class="chev">›</span></button>` : ''}
       <button class="menu-item" id="mLesson"${resumeLesson||resumeA0?' style="border:1px solid var(--accent)"':''}><span class="ic">${resumeLesson||resumeA0?'▶️':(isA0?'🔤':'🎯')}</span><span class="t"><b>${
@@ -3879,6 +3890,10 @@ function mainMenu() {
         : isExam ? lbl('50 вопросов · порог 85%')
         : isA0 ? 'Чтение, произношение, базовая лексика'
         : '<span>21 задание + рассказ-квест</span>'}</small></span><span class="chev">›</span></button>
+      ${/* 4.53: кнопка сброса раньше жила только у «сироты» (снимок не следующего этапа) —
+           у обычного продолжения текущего урока её не было вовсе, хотя именно этот случай
+           самый частый: вернуться и пересобрать урок под свежую методику/билд. */
+        (orphanLesson || resumeLesson) ? `<button class="btn btn-ghost" id="mRestart" style="margin:-4px 0 8px;font-size:13px">Начать урок заново</button>` : ''}
       ${(()=>{
         /* 4.39: у режима больше нет служебного имени на экране. Есть история — на кнопке её
            собственное название и зацепка из арки, обе приходят на родном языке вместе с аркой,
@@ -3911,7 +3926,7 @@ function mainMenu() {
     document.getElementById('mRestart').onclick = () => askConfirm(
       t('Начать урок заново?'),
       t('Пройденные задания этого урока будут сброшены, урок соберётся с нуля.'),
-      () => { try { LessonCache.clearLesson(cachedLesson.code); } catch(_) {} mainMenu(); },
+      () => { try { LessonCache.clearLesson((orphanLesson ? cachedLesson : resumeLesson).code); } catch(_) {} mainMenu(); },
       t('Начать заново'));
   }
   if (orphanLesson && document.getElementById('mResume')) {
@@ -4857,7 +4872,8 @@ async function startLesson(code) {
         lvl, known,
         errors:{ recognition:0, writing:0, construction:0, quest:0 },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
-        wordErr:{}, firstTryDone:{}, retryPlanned:{} };
+        wordErr:{}, firstTryDone:{}, retryPlanned:{},
+        _contentBuild: APP_VERSION };
   fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
   renderStep();
 }
@@ -5274,12 +5290,18 @@ const Episodes = {
     if (this._isDone(code)) return null;                                // QUEUE-63: снимок пройденного не отдаём
     const r = this._read().items.find(x => x.id === this._id(kind, code, Storage.activeId()));
     if (!r) return null;
-    /* 4.52: снимок переживал обновление и подсовывал материал, собранный старой версией:
-       после v99 урок продолжился с прежними кривыми эталонами, новые проверки к ним не
-       применились. Билд, меняющий порождение материала, обязан обесценивать снимки. */
-    if (r.build && r.build !== APP_VERSION) {
+    /* 4.52: снимок переживал обновление и подсовывал материал, собранный старой версией.
+       4.53 (фикс): сверялись по r.build — билду ПОСЛЕДНЕГО СОХРАНЕНИЯ, а не билду, которым
+       материал был СГЕНЕРИРОВАН. save() вызывается на каждом шаге урока (LessonCache.save()),
+       и штампует текущий APP_VERSION в r.build независимо от того, менялось ли содержимое.
+       Практически: урок начат на билде N, продолжен после обновления на N+1 — первый же шаг
+       пересохраняет запись с build=N+1, и проверка перестаёт видеть подмену навсегда для
+       остатка урока, хотя reviewDrills/constructs так и остались сгенерированы под N. Источник
+       правды — метка внутри данных (`_contentBuild`, ставится один раз при создании L
+       в startLesson и не трогается сохранением), а не метка записи хранилища. */
+    if (r.data && r.data._contentBuild && r.data._contentBuild !== APP_VERSION) {
       this.drop(kind, code);
-      console.log('[AILEX] урок собран прежним билдом (' + r.build + ') — пересобираем');
+      console.log('[AILEX] урок собран прежним билдом (' + r.data._contentBuild + ') — пересобираем');
       return null;
     }
     return r.data;
