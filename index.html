@@ -256,7 +256,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v99';
+const APP_VERSION = 'v100';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -303,6 +303,10 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.52: перезапуск урока и список встреченных слов. */
+    'Начать урок заново?',
+    'Пройденные задания этого урока будут сброшены, урок соберётся с нуля.',
+    'Начать заново',
     /* 4.50: небо прогресса и транскрипция без озвучки. */
     'Глубина языка:',
     'правил',
@@ -636,7 +640,7 @@ const UI_EXTRA = [
     'Свободный разговор на изучаемом языке — собеседник поддерживает беседу по вашей теме.',
     'Следующий этап:',
     'Слов в словаре:',
-    'Слов закреплено:',
+    'Слов встречено:',
     'Соберите и впишите фразу на',
     'Сохранить ключ и продолжить без проверки',
     'Суперквест · Акт',
@@ -2875,11 +2879,22 @@ function progressSky(cv, stat) {
   }
   function seedSky() {
     pts = [];
-    for (let i = 0; i < stars; i++) pts.push({
-      x: Math.random()*W, y: Math.random()*H,
+    /* Скопления: слова тяготеют к темам, поэтому точки садятся вокруг нескольких центров,
+       а не равномерно по полю. Чем больше правил закреплено, тем отчётливее сгущения. */
+    const cores = [];
+    const nCores = Math.max(2, Math.min(5, 2 + Math.round((stat.rules || 0) / 40)));
+    for (let c = 0; c < nCores; c++) cores.push({ x: (0.18 + 0.64*Math.random())*W, y: (0.2 + 0.6*Math.random())*H });
+    for (let i = 0; i < stars; i++) {
+      const c = cores[i % cores.length];
+      const spread = Math.min(W, H) * (0.10 + 0.22*Math.random());
+      const ang = Math.random()*Math.PI*2;
+      pts.push({
+      x: Math.max(2, Math.min(W-2, c.x + Math.cos(ang)*spread*Math.random())),
+      y: Math.max(2, Math.min(H-2, c.y + Math.sin(ang)*spread*Math.random())),
       vx: (Math.random()-.5)*0.06, vy: (Math.random()-.5)*0.06,
-      r: 0.6 + Math.random()*1.5, ph: Math.random()*Math.PI*2
+      r: 0.5 + Math.random()*1.9, ph: Math.random()*Math.PI*2
     });
+    }
   }
   function frame(now) {
     if (!cv.isConnected) return;
@@ -2890,12 +2905,8 @@ function progressSky(cv, stat) {
       if (p.x < 0 || p.x > W) p.vx *= -1;
       if (p.y < 0 || p.y > H) p.vy *= -1;
     });
-    for (let i=0;i<pts.length;i++) for (let j=i+1;j<pts.length;j++) {
-      const a=pts[i], b=pts[j], d=Math.hypot(a.x-b.x, a.y-b.y);
-      if (d > link) continue;
-      ctx.strokeStyle = `hsla(${hue},80%,62%,${(0.16*(1-d/link)).toFixed(3)})`;
-      ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-    }
+    /* 4.52: линий нет вовсе — космос не рисуют соединениями. Структура читается плотностью:
+       где звёзд больше, глаз сам видит скопление. Соединённые узлы давали нейросеть, а не небо. */
     pts.forEach(p => {
       const tw = 0.55 + 0.45*Math.sin(t*0.9 + p.ph);
       ctx.fillStyle = `hsla(${hue},85%,72%,${(0.5*tw).toFixed(3)})`;
@@ -3843,7 +3854,8 @@ function mainMenu() {
       ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
-      ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
+      ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>
+      <button class="btn btn-ghost" id="mRestart" style="margin:-4px 0 8px;font-size:13px">Начать урок заново</button>` : ''}
       ${orphanA0 ? `<button class="menu-item" id="mResumeA0" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedA0.code)}</b><small><span>Шаг</span> ${esc(String(cachedA0.stepIdx+1))} <span>из</span> ${esc(String((cachedA0.steps||[]).length))} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>` : ''}
       ${false ? `<button class="menu-item" id="mResumeSuper" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b>Продолжить Суперквест</b><small>${lbl('Глава')} ${esc(String(cachedSuper.actIndex||1))} ${lbl('из')} ${esc(String(cachedSuper.actsTotal||'?'))} · ${lbl('сцена')} ${esc(String(cachedSuper.sqScene))} · ${lbl('прогресс сохранён')}</small></span><span class="chev">›</span></button>` : ''}
       <button class="menu-item" id="mLesson"${resumeLesson||resumeA0?' style="border:1px solid var(--accent)"':''}><span class="ic">${resumeLesson||resumeA0?'▶️':(isA0?'🔤':'🎯')}</span><span class="t"><b>${
@@ -3881,6 +3893,16 @@ function mainMenu() {
         { mastered, rules:(DB.rules||[]).length, level: currentLevel() }); } catch(_) {}
   if (orphanA0 && document.getElementById('mResumeA0')) {
     document.getElementById('mResumeA0').onclick = () => runA0Lesson(cachedA0);   // 4.29: контент урока A0 в снимке — регенерации нет
+  }
+  /* 4.52: брошенный урок можно было только доигрывать. Кнопка нужна и в обычной жизни
+     (вернуться через неделю и начать чисто), и при обновлениях, меняющих порождение
+     материала: снимок старого билда теперь недействителен, но выбор должен быть у человека. */
+  if (document.getElementById('mRestart')) {
+    document.getElementById('mRestart').onclick = () => askConfirm(
+      t('Начать урок заново?'),
+      t('Пройденные задания этого урока будут сброшены, урок соберётся с нуля.'),
+      () => { try { LessonCache.clearLesson(cachedLesson.code); } catch(_) {} mainMenu(); },
+      t('Начать заново'));
   }
   if (orphanLesson && document.getElementById('mResume')) {
     document.getElementById('mResume').onclick = () => resumeCachedLesson(cachedLesson);
@@ -4926,6 +4948,10 @@ function cardDefect(w, targetLang) {
   const pos = String(w.part_of_speech || '').toLowerCase();
   if (FUNCTION_POS.some(p => pos.indexOf(p) === 0)) return 'function';   // служебное — из словаря вон
   if (!w.translation) return 'no_translation';
+  /* 4.52: транскрипция приходит выборочно — у одного слова сцены есть, у соседнего нет.
+     Поле необязательное, поэтому модель заполняет его через раз. Для A1–A2 это единственная
+     опора для произношения: человек ещё не читает по правилам языка. Считаем дефектом. */
+  if (!w.translit) return 'no_translit';
   if (pos.indexOf('noun') === 0 && ARTICLE_LANGS.indexOf(targetLang) >= 0 && !w.article
       && !/^(der|die|das|le|la|les|el|los|las|il|lo|gli|de|het|en|ett)\s/i.test(term)) return 'no_article';
   if (pos.indexOf('verb') === 0 && w.is_conjugated) return 'conjugated';
@@ -5012,6 +5038,21 @@ function cardForPrompt(w) {
    Значит проверять надо результат, а не надеяться на исполнение. Проверяем то, что видно
    формально: существительное урока стоит в эталоне без артикля там, где язык его требует.
    ============================================================ */
+
+/* 4.52: перевод сцены возвращался кратким пересказом вместо перевода — шести немецким
+   предложениям соответствовали два русских, часть содержания отсутствовала вовсе. Дефект
+   плавающий: в части сцен перевод полный, в части сокращён, то есть требование в контракте
+   есть, но соблюдается через раз. Проверяем каждую сцену: считаем предложения. Учебный текст
+   без полного перевода не даёт свериться в середине — человек читает и не знает, верно ли понял. */
+function sentenceCount(t) {
+  return String(t || '').split(/[.!?…]+(?:\s|$)/).filter(x => x.trim().length > 1).length;
+}
+function translationIncomplete(src, tr) {
+  const a = sentenceCount(src), b = sentenceCount(tr);
+  if (!a || !b) return false;
+  return b < a - 1;                       // одно предложение расхождения допускаем: пунктуация разная
+}
+
 function targetDefect(sentence, words) {
   const tgt = DB && DB.profile && DB.profile.targetLang;
   if (!sentence || ARTICLE_LANGS.indexOf(tgt) < 0) return null;
@@ -5222,7 +5263,10 @@ const Episodes = {
     if (this._isDone(code)) return null;                                // QUEUE-63: снимок пройденного не отдаём
     const r = this._read().items.find(x => x.id === this._id(kind, code, Storage.activeId()));
     if (!r) return null;
-    if (kind === 'lesson' && r.build && r.build !== APP_VERSION) {
+    /* 4.52: снимок переживал обновление и подсовывал материал, собранный старой версией:
+       после v99 урок продолжился с прежними кривыми эталонами, новые проверки к ним не
+       применились. Билд, меняющий порождение материала, обязан обесценивать снимки. */
+    if (r.build && r.build !== APP_VERSION) {
       this.drop(kind, code);
       console.log('[AILEX] урок собран прежним билдом (' + r.build + ') — пересобираем');
       return null;
@@ -6437,7 +6481,7 @@ async function runQuest(cfg) {
         known_rules:(DB.rules||[]).map(r=>r.title).slice(-40),
         rules:'СЦЕНА — ТОЛЬКО НОВОЕ (критично, 4.43): story_so_far дан, чтобы ты ЗНАЛ предысторию, а НЕ чтобы её пересказывать. scene_text содержит только НОВЫЕ события, продолжающие историю с того места, где она остановилась. Повторять предложения из story_so_far ЗАПРЕЩЕНО: ученик читает одно и то же по три раза и теряет интерес, а объём чтения растёт впустую. ЯЗЫК УСЛОВИЯ (критично, 4.43): prompt_for_user — СТРОГО на native_lang. Неверно: «Sie sind in der Pause. Was machen Sie?». Верно: «Вы на перерыве. Что вы делаете?». На target_lang — только scene_text, scaffold и сам ожидаемый ответ. НЕ ДУБЛИРУЙ ТРЕБУЕМЫЕ СЛОВА (4.43): приложение само показывает их строкой «Используйте: …» над полем ввода, поэтому в prompt_for_user не пиши «используя слово „gut“» — условие должно называть только ЗАДАЧУ. Всего в истории ровно 2 развилки по 2 варианта; развилок уже использовано: '+Q.branchesUsed+'. РАЗВИЛКА — СЮЖЕТНАЯ, НЕ ГРАММАТИЧЕСКАЯ (QUEUE-48, критично): когда is_branch=true, два варианта choices — это РАЗНЫЕ поступки/повороты сюжета (что герой делает дальше), ведущие к разным продолжениям истории. ОБА варианта грамматически верны и естественны. ЗАПРЕЩЕНО делать выбор между правильной и неправильной формой (артикль/падеж/окончание/спеллинг) или между двумя формулировками одного и того же — это не развилка, а квиз. label_target — осмысленное действие в мире истории (напр. «К реке» / «Остаться в лагере»), label_native — его перевод. Языковое задание сцены (expected_target) отдельно и НЕ является выбором ветки. Конкретная чувственная сцена в сфере интересов. is_final=true ТОЛЬКО когда scene_index === max_scenes (последняя сцена акта). До этого — is_final=false ВСЕГДА, история продолжается. На последней сцене заверши историю (is_final=true, без развилки). '+levelPromptBlock(cfg.cefr)+'ГРАММАТИКА СЦЕНЫ (критично): scene_text ОБЯЗАН быть грамматически безупречным — каждый глагол спрягается правильно (ich berechne, не ich berechnen), артикли согласованы, порядок слов верный. УЗУАЛЬНОСТЬ (QUEUE-34, критично): scene_text и expected_target обязаны быть такими, как реально говорит носитель целевого языка — живая, употребимая фраза, а НЕ формально-правильная дословная сборка слов. Перед выдачей перечитай каждое предложение и спроси себя: «так действительно говорят в живой речи?» — если фраза грамматически верна, но неупотребима, переформулируй естественнее. Пример калька↔живое (нем.): «das Ankratzen im Manuell» ❌ → «im Handbetrieb» / «manuell» / «im manuellen Betrieb» ✅. Не заставляй ученика заучивать кальку. SCAFFOLD (обязательно на A1–A2): поле scaffold ВСЕГДА заполняй — каркас expected_target с ___ на месте ключевых слов которые нужно вспомнить/вставить; минимум 1 прочерк. КАРКАС И ВЫБОР (критично): если prompt_for_user предлагает выбор из двух и более слов разного рода/падежа — артикль (der/die/das/den/dem...) НЕЛЬЗЯ выносить за прочерк, он входит в прочерк вместе с существительным («Ich nutze ___.», а НЕ «Ich nutze den ___.»). Прочерк обязан поглощать всё что различается между допустимыми ответами (артикль, род, падежное окончание); видимая часть каркаса одинаково верна для любого допустимого варианта. prompt_for_user ОБЯЗАН быть напрямую связан с содержимым scene_text — спрашивай ТОЛЬКО о том что упомянуто в сцене; ответ пользователя должен быть выводим из текста сцены. Запрещено задавать вопросы о вещах которых нет в тексте. АНТИ-КОЛЛИЗИЯ ПОДСКАЗКИ (QUEUE-36, критично): конструкция/глагол, который задание просит достроить (например «Ich wähle ___», «Ich bezahle ___»), НЕ должна встречаться в scene_text уже достроенной с ДРУГИМ объектом. Если задание просит достроить «Ich wähle (аэропорт/кафе)» — в сцене ЗАПРЕЩЕНО писать «Ich wähle das Ziel»; если просит «Ich bezahle ___» — в сцене не должно быть «Ich bezahle das Ticket». Иначе сцена учит одному завершению, а эталон требует другого, и ответ становится невыводимым из контекста. Перед выдачей проверь: expected_target согласован с тем, как эта конструкция (не) показана в сцене. ЯВНЫЙ НАБОР ОТВЕТОВ (QUEUE-36): если задание — выбор из перечисленных слов (например аэропорт или кафе), prompt_for_user обязан прямо называть этот ограниченный набор («Выберите: аэропорт или кафе?»), а не давать размытое «используя конструкцию Ich wähle ___». prompt_for_user должен быть логически точным на native_lang: если задание про транспорт — «на чём вы едете», не «куда едете»; вопрос должен точно соответствовать ожидаемому ответу. Задание которое пользователь МОЖЕТ выполнить зная только слова урока и конструкции из known_rules. ЗАПРЕЩЕНО использовать технические коды, аббревиатуры, цифровые команды (G01, T010101, CNC-команды и т.п.) как целевые слова — только обычные слова целевого языка. ПЕРЕВОД (native_hint): на A1–A2 переводи корректно по-русски сохраняя ВСЕ смысловые слова оригинала. Служебные глаголы которые в русском опускаются (sein/быть) — опускай ("Ich bin dort" → "Я там", не "Я есть там"). Порядок слов — русский, не немецкий. Если конструкция принципиально не переводится прямо — добавь пояснение в скобках ("stehen здесь = находиться"). В answer_glossary — ВСЕ ключевые слова для ответа с транскрипцией и переводом. СЛОВА ЗАДАНИЯ С АРТИКЛЕМ (критично): в answer_glossary и encountered_words поле term для СУЩЕСТВИТЕЛЬНЫХ целевого языка обязано включать артикль рода в словарной форме (нем.: die Automatik, der Handbetrieb, das Auto). Прилагательным, наречиям, глаголам артикль НЕ добавляется (manuell, schneiden). Если в целевом языке артиклей нет — не добавляется. ПЕРЕВОД В ГЛОССАРИИ ТОЖЕ СЛОВАРНЫЙ (4.31): «das Buch — книга», а НЕ «книгу» по форме из фразы — иначе ученик заучивает падежную форму как исходную. В encountered_words — значимые слова сцены (до 5). translit — ТОЛЬКО буквами native_lang, НЕ приводи пример на другом языке и НЕ копируй письменность этой инструкции.'
       },
-      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","scaffold":"каркас предложения с ___ на месте ключевых слов которые нужно подставить (напр. Ich ___ auch mit dem Bus ___), или null если задание простое","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом","label_native":"перевод варианта А на родном"},{"id":"B","label_target":"вариант на целевом","label_native":"перевод варианта Б на родном"}],"is_final":false}');
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"ПОЛНЫЙ перевод scene_text на родной язык: каждое предложение оригинала переведено отдельным предложением, ничего не пропущено и не сжато в пересказ","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","scaffold":"каркас предложения с ___ на месте ключевых слов которые нужно подставить (напр. Ich ___ auch mit dem Bus ___), или null если задание простое","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом","label_native":"перевод варианта А на родном"},{"id":"B","label_target":"вариант на целевом","label_native":"перевод варианта Б на родном"}],"is_final":false}');
     } catch(e) {
       // 4.29: раньше обрыв связи молча ЗАСЧИТЫВАЛ квест → finishLesson стирал урок и сдвигал этап.
       // Телефон после сна поднимает сеть не сразу, поэтому это било ровно по тем, кто вернулся продолжать.
@@ -6454,6 +6498,27 @@ async function runQuest(cfg) {
       return;
     }
     sc = await validateScene(sc, p, cfg.cefr);   // QUEUE-42: согласованность задания (структурно + семантически)
+    /* 4.52: перевод сцены приходил пересказом вместо перевода — часть содержания терялась.
+       Проверяем по числу предложений и перезапрашиваем ТОЛЬКО перевод, не пересобирая сцену. */
+    if (translationIncomplete(sc.scene_text, sc.native_hint)) {
+      try {
+        const t = await Gemini.call({
+          task: 'translate_scene',
+          target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+          scene_text: sc.scene_text,
+          rules: 'Переведи текст на native_lang ПОЛНОСТЬЮ и пофразово: каждому предложению оригинала '
+               + 'соответствует предложение перевода. Пересказывать, сокращать и объединять ЗАПРЕЩЕНО.',
+          schemaHint: '{"native_hint":"полный перевод"}'
+        });
+        if (t && t.native_hint && !translationIncomplete(sc.scene_text, t.native_hint)) sc.native_hint = t.native_hint;
+      } catch(_) {}
+    }
+    /* 4.52: эталон Суперквеста и квеста проверку 4.51 не проходил — она стояла только на
+       фразах обычного урока. Отсюда «Ich schalte Bedienfeld aus» без артикля. */
+    try {
+      const lw = [].concat(DB.core || [], DB.vocab || []);
+      if (targetDefect(sc.expected_target, lw)) console.warn('эталон сцены с дефектом:', sc.expected_target);
+    } catch(_) {}
     // слова сцены И слова для ответа — в словарь (без дублей), статус «встречено в контексте»
     [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])].forEach(w => {
       if (!w || !w.term) return;
@@ -7235,7 +7300,7 @@ async function runSuperquestAct(cfg) {
           +(cfg.isLastAct ? 'Это ПОСЛЕДНИЙ акт истории: is_act_final=true и is_final=true ТОЛЬКО на сцене '+cfg.scenesInAct+' (последней). До неё — is_act_final=false ВСЕГДА.' : 'Это не последний акт — is_final=false ВСЕГДА. is_act_final=true ТОЛЬКО на сцене '+cfg.scenesInAct+' (последней сцене этого акта). До неё — is_act_final=false.')
           +' Конкретная чувственная сцена в сфере интересов. ' + levelPromptBlock(cfg.cefr) + 'SCAFFOLD (обязательно на A1–A2): поле scaffold ВСЕГДА заполняй — каркас expected_target с ___ на месте ключевых слов; минимум 1 прочерк. КАРКАС И ВЫБОР (критично): если prompt_for_user предлагает выбор из двух и более слов разного рода/падежа — артикль (der/die/das/den/dem...) НЕЛЬЗЯ выносить за прочерк, он входит в прочерк вместе с существительным («Ich nutze ___.», а НЕ «Ich nutze den ___.»). Прочерк обязан поглощать всё что различается между допустимыми ответами (артикль, род, падежное окончание); видимая часть каркаса одинаково верна для любого допустимого варианта. ГРАММАТИКА И СВЯЗНОСТЬ СЦЕНЫ (критично): scene_text ОБЯЗАН быть грамматически безупречным — каждый глагол спрягается по лицу и числу (ich berechne, не ich berechnen), артикли согласуются, порядок слов правильный. Сцена — единый логический контекст: запрещено смешивать несвязанные темы в одной сцене (например производство и путешествие одновременно). Все предложения сцены развивают одну ситуацию. УЗУАЛЬНОСТЬ (QUEUE-34, критично): scene_text и expected_target обязаны быть такими, как реально говорит носитель целевого языка — живая, употребимая фраза, а НЕ формально-правильная дословная сборка слов. Перед выдачей перечитай каждое предложение и спроси себя: «так действительно говорят в живой речи?» — если фраза грамматически верна, но неупотребима, переформулируй естественнее. Пример калька↔живое (нем.): «das Ankratzen im Manuell» ❌ → «im Handbetrieb» / «manuell» / «im manuellen Betrieb» ✅. Не заставляй ученика заучивать кальку. ПЕРЕВОД (native_hint): на A1–A2 корректно по-русски, все смысловые слова сохраняются, служебные глаголы (sein) опускаются, порядок слов русский. prompt_for_user ОБЯЗАН быть напрямую связан с содержимым scene_text — спрашивай ТОЛЬКО о том что упомянуто в сцене; запрещено задавать вопросы о вещах которых нет в тексте сцены. АНТИ-КОЛЛИЗИЯ ПОДСКАЗКИ (QUEUE-36, критично): конструкция/глагол, который задание просит достроить (например «Ich wähle ___», «Ich bezahle ___»), НЕ должна встречаться в scene_text уже достроенной с ДРУГИМ объектом. Если задание просит достроить «Ich wähle (аэропорт/кафе)» — в сцене ЗАПРЕЩЕНО писать «Ich wähle das Ziel»; если просит «Ich bezahle ___» — в сцене не должно быть «Ich bezahle das Ticket». Иначе сцена учит одному завершению, а эталон требует другого, и ответ становится невыводимым из контекста. Перед выдачей проверь: expected_target согласован с тем, как эта конструкция (не) показана в сцене. ЯВНЫЙ НАБОР ОТВЕТОВ (QUEUE-36): если задание — выбор из перечисленных слов, prompt_for_user обязан прямо называть этот ограниченный набор («Выберите: аэропорт или кафе?»), а не давать размытое «используя конструкцию Ich wähle ___». must_use — мягкая опора: вплетай эти слова там где естественно по сюжету; новые слова допустимы и желательны для живости истории (тап и глоссарий их подхватят). Динамика сюжета важнее повторения лексики. ЗАПРЕЩЕНО использовать технические коды, аббревиатуры, цифровые команды (G01, T010101, CNC-команды и т.п.) как целевые слова для изучения — только обычные слова целевого языка. В answer_glossary — ВСЕ ключевые слова для ответа (термин+транскрипция+перевод). СЛОВА ЗАДАНИЯ С АРТИКЛЕМ (критично): в answer_glossary и encountered_words поле term для СУЩЕСТВИТЕЛЬНЫХ целевого языка обязано включать артикль рода в словарной форме (нем.: die Automatik, der Handbetrieb, das Auto). Прилагательным, наречиям, глаголам артикль НЕ добавляется (manuell, schneiden). Если в целевом языке артиклей нет — не добавляется. ПЕРЕВОД В ГЛОССАРИИ ТОЖЕ СЛОВАРНЫЙ (4.31): «das Buch — книга», а НЕ «книгу» по форме из фразы — иначе ученик заучивает падежную форму как исходную. В encountered_words — значимые слова из текста сцены (до 5) — доступны по тапу. translit — ТОЛЬКО буквами native_lang, НЕ приводи пример на другом языке и НЕ копируй письменность этой инструкции.'
       },
-      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"перевод-подсказка на родном","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","scaffold":"каркас с ___ на месте ключевых слов (обязательно на A1-A2)","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом","label_native":"перевод варианта А на родном"},{"id":"B","label_target":"вариант на целевом","label_native":"перевод варианта Б на родном"}],"is_act_final":false,"is_final":false}');
+      '{"scene_text":"текст сцены на целевом языке (объём по CEFR)","native_hint":"ПОЛНЫЙ перевод scene_text на родной язык: каждое предложение оригинала переведено отдельным предложением, ничего не пропущено и не сжато в пересказ","prompt_for_user":"внятное задание на родном: что сказать","expected_target":"эталонная фраза на целевом","scaffold":"каркас с ___ на месте ключевых слов (обязательно на A1-A2)","answer_glossary":[{"term":"слово нужное для ответа","translit":"[транскрипция]","translation":"перевод"}],"encountered_words":[{"term":"слово на целевом","translit":"[транскрипция]","translation":"перевод"}],"is_branch":false,"choices":[{"id":"A","label_target":"вариант на целевом","label_native":"перевод варианта А на родном"},{"id":"B","label_target":"вариант на целевом","label_native":"перевод варианта Б на родном"}],"is_act_final":false,"is_final":false}');
     } catch(e) {
       if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return; }
       if (Q.scene === 1 && cfg.actIndex === 1) {
@@ -7261,6 +7326,27 @@ async function runSuperquestAct(cfg) {
       return;
     }
     sc = await validateScene(sc, p, cfg.cefr);   // QUEUE-42: согласованность задания (структурно + семантически)
+    /* 4.52: перевод сцены приходил пересказом вместо перевода — часть содержания терялась.
+       Проверяем по числу предложений и перезапрашиваем ТОЛЬКО перевод, не пересобирая сцену. */
+    if (translationIncomplete(sc.scene_text, sc.native_hint)) {
+      try {
+        const t = await Gemini.call({
+          task: 'translate_scene',
+          target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+          scene_text: sc.scene_text,
+          rules: 'Переведи текст на native_lang ПОЛНОСТЬЮ и пофразово: каждому предложению оригинала '
+               + 'соответствует предложение перевода. Пересказывать, сокращать и объединять ЗАПРЕЩЕНО.',
+          schemaHint: '{"native_hint":"полный перевод"}'
+        });
+        if (t && t.native_hint && !translationIncomplete(sc.scene_text, t.native_hint)) sc.native_hint = t.native_hint;
+      } catch(_) {}
+    }
+    /* 4.52: эталон Суперквеста и квеста проверку 4.51 не проходил — она стояла только на
+       фразах обычного урока. Отсюда «Ich schalte Bedienfeld aus» без артикля. */
+    try {
+      const lw = [].concat(DB.core || [], DB.vocab || []);
+      if (targetDefect(sc.expected_target, lw)) console.warn('эталон сцены с дефектом:', sc.expected_target);
+    } catch(_) {}
     // слова сцены и слова для ответа — в словарь (без дублей), статус «встречено в контексте»
     const newGloss = [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])];
     newGloss.forEach(w => {
@@ -7404,7 +7490,24 @@ async function runSuperquestAct(cfg) {
         <div class="eyebrow">Суперквест</div>
         <h1>${Q.errors>=2?'🤝 '+lbl('Прошли главу вместе!'):'📖 '+lbl('Глава')+' '+cfg.actIndex+' '+lbl('пройдена!')}</h1>
         <div class="chapter-card">
-          <p class="sub" style="margin:0">Слов закреплено: <b style="color:var(--ink)">${learned}</b></p>
+          <p class="sub" style="margin:0">${lbl('Слов встречено:')} <b style="color:var(--ink)">${learned}</b></p>
+          ${(() => {
+            /* 4.52: одно число ничего не говорит — человек видел десятки слов и не понимает,
+               какие семь засчитаны. Список с переводом и транскрипцией даёт свериться, а беглый
+               просмотр сразу после главы работает как дополнительное повторение. */
+            const terms = (Q && Q.newWordsInAct) ? [...Q.newWordsInAct] : [];
+            const pool = [].concat(DB.core || [], DB.vocab || []);
+            const seen = terms.map(t => pool.find(v => norm(v.term) === norm(t)) || { term: t });
+            if (!seen.length) return '';
+            return '<div class="note" style="margin-top:10px;line-height:1.9;text-align:left">'
+              + seen.slice(0, 20).map(w =>
+                  `<b>${esc(w.term)}</b>`
+                  + (w.translit ? ` <span style="color:var(--orange)">${esc(w.translit)}</span>` : '')
+                  + (w.translation ? ` — ${esc(w.translation)}` : '')
+                  + sayBtn(w.term)
+                ).join('<br>')
+              + '</div>';
+          })()}
         </div>
         <button class="btn btn-primary" id="goAct">Продолжить</button>`);
       $('#goAct').onclick = () => startSuperquestAct(cfg.actIndex+1);
