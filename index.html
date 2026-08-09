@@ -256,7 +256,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v98';
+const APP_VERSION = 'v99';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -4889,6 +4889,145 @@ async function validateDrillLevel(items, lvl) {
   return items;
 }
 
+
+/* ============================================================
+   ЧИСТОТА КАРТОЧЕК (спека 4.51, QUEUE-152/153/157)
+
+   Корень целой серии дефектов: в словаре лежал обрубок, и из обрубка строилась фраза.
+   Карточка «Stimme» без артикля и «weine» вместо «weinen» неизбежно дают эталон
+   «Ich weine, Stimme klingt» — генератору просто не из чего собрать правильное.
+   Поэтому качество материала начинается со словаря, а не с проверки результата.
+
+   Карточка обязана хранить СЛОВАРНУЮ ЕДИНИЦУ, а не встреченную форму:
+     существительное — с артиклем и множественным числом,
+     глагол — в инфинитиве, формы отдельным полем,
+     служебные слова (артикли, предлоги, вспомогательные глаголы) карточек не заводят вовсе:
+       без связки с существительным они не запоминаются и не имеют самостоятельного значения.
+
+   Проверка идёт НА ЛЕТУ: перед сборкой урока смотрим только те карточки, что в нём участвуют.
+   Локальная проверка занимает доли секунды; дефектные (обычно единицы) достраиваются одним
+   запросом и сразу пишутся в базу — дальше используется исправленная карточка. За несколько
+   уроков база выправляется сама. Механизм постоянный, а не разовая уборка: кривая карточка
+   чинится тогда, когда понадобилась, независимо от того, когда попала в базу.
+   ============================================================ */
+
+/* Языки, где существительное без артикля в словаре — дефект. */
+const ARTICLE_LANGS = ['de','fr','es','it','pt','nl','da','sv','no','el','ca','ro'];
+
+/* Служебные слова: приходят от модели пометкой части речи. Список слов не ведём — он был бы
+   свой для каждого из 72 языков; полагаемся на разметку и на длину. */
+const FUNCTION_POS = ['article','determiner','preposition','conjunction','particle','auxiliary'];
+
+function cardDefect(w, targetLang) {
+  if (!w || !w.term) return 'empty';
+  const term = String(w.term).trim();
+  if (!term) return 'empty';
+  if (term.length > 60 || term.split(/\s+/).length > 5) return 'junk';   // строка из импорта, не слово
+  const pos = String(w.part_of_speech || '').toLowerCase();
+  if (FUNCTION_POS.some(p => pos.indexOf(p) === 0)) return 'function';   // служебное — из словаря вон
+  if (!w.translation) return 'no_translation';
+  if (pos.indexOf('noun') === 0 && ARTICLE_LANGS.indexOf(targetLang) >= 0 && !w.article
+      && !/^(der|die|das|le|la|les|el|los|las|il|lo|gli|de|het|en|ett)\s/i.test(term)) return 'no_article';
+  if (pos.indexOf('verb') === 0 && w.is_conjugated) return 'conjugated';
+  return null;
+}
+
+/* Достройка дефектных карточек. Одним запросом на все сразу: слов обычно единицы, а лишний
+   круг к модели стоит дороже, чем разбор ответа. */
+async function ensureLessonCards(words) {
+  if (!DB || !Array.isArray(words) || !words.length) return words;
+  const tgt = DB.profile.targetLang;
+  const bad = [], junk = [];
+  words.forEach(w => {
+    const d = cardDefect(w, tgt);
+    if (!d) return;
+    if (d === 'junk' || d === 'function' || d === 'empty') junk.push(w); else bad.push(w);
+  });
+  /* Мусор и служебные слова убираем молча: сбои приложения — не забота учащегося. */
+  if (junk.length) {
+    const drop = new Set(junk.map(w => norm(w.term)));
+    DB.vocab = (DB.vocab || []).filter(v => !drop.has(norm(v.term)));
+    DB.core  = (DB.core  || []).filter(v => !drop.has(norm(v.term)));
+    Storage.save(DB);
+  }
+  const live = words.filter(w => junk.indexOf(w) < 0);
+  if (!bad.length) return live;
+  try {
+    const r = await Gemini.call({
+      task: 'fix_vocab_cards',
+      target_lang: langId(tgt), native_lang: langId(DB.profile.nativeLang),
+      words: bad.map(w => ({ term: w.term, translation: w.translation || '' })),
+      rules: 'Для каждого слова верни СЛОВАРНУЮ форму и её грамматику. Существительное — с артиклем '
+           + 'и формой множественного числа. Глагол — в инфинитиве, плюс основные формы. '
+           + 'Если пришла НЕ словарная форма (спряжённый глагол, слово с окончанием) — верни словарную. '
+           + 'part_of_speech: noun|verb|adjective|adverb|pronoun|numeral|article|preposition|conjunction|particle. '
+           + 'Служебные слова (артикли, предлоги, союзы, частицы) помечай честно — приложение их удалит.',
+      schemaHint: '{"cards":[{"term":"словарная форма","article":"артикль или пустая строка",'
+                + '"plural":"мн. число или пустая строка","forms":"формы через запятую или пустая строка",'
+                + '"translation":"перевод","translit":"транскрипция письменностью родного языка",'
+                + '"part_of_speech":"часть речи"}]}'
+    });
+    const cards = (r && r.cards) || [];
+    cards.forEach(c => {
+      if (!c || !c.term) return;
+      const old = bad.find(w => norm(w.term) === norm(c.term)) || bad.shift();
+      if (!old) return;
+      const v = (DB.vocab || []).find(x => norm(x.term) === norm(old.term))
+             || (DB.core  || []).find(x => norm(x.term) === norm(old.term)) || old;
+      v.term = c.term;
+      if (c.article)     v.article = c.article;
+      if (c.plural)      v.plural = c.plural;
+      if (c.forms)       v.forms = c.forms;
+      if (c.translation) v.translation = c.translation;
+      if (c.translit)    v.translit = c.translit;
+      if (c.part_of_speech) v.part_of_speech = c.part_of_speech;
+      v.is_conjugated = false;
+      Object.assign(old, v);
+    });
+    Storage.save(DB);
+  } catch (e) {
+    /* Нет сети или лимит — урок идёт на том, что есть, починка случится в следующий раз. */
+    console.warn('ensureLessonCards:', e && e.message);
+  }
+  return live;
+}
+
+/* Слово для запроса: карточка целиком, а не голый термин. Генератор строит фразу ИЗ КАРТОЧЕК —
+   тогда «die Stimme» и «weinen» попадают в предложение правильно сами, без дополнительной
+   проверки грамматики после. */
+function cardForPrompt(w) {
+  return {
+    term: (w.article ? w.article + ' ' : '') + w.term,
+    lemma: w.term,
+    translation: w.translation || '',
+    part_of_speech: w.part_of_speech || '',
+    plural: w.plural || '',
+    forms: w.forms || ''
+  };
+}
+
+/* ============================================================
+   ПРОВЕРКА ЭТАЛОНА (спека 4.51, QUEUE-159/154/161)
+   Правило «эталон обязан быть живой грамотной фразой» стоит в запросе с 4.41 — и нарушается.
+   Значит проверять надо результат, а не надеяться на исполнение. Проверяем то, что видно
+   формально: существительное урока стоит в эталоне без артикля там, где язык его требует.
+   ============================================================ */
+function targetDefect(sentence, words) {
+  const tgt = DB && DB.profile && DB.profile.targetLang;
+  if (!sentence || ARTICLE_LANGS.indexOf(tgt) < 0) return null;
+  const text = ' ' + String(sentence) + ' ';
+  for (const w of (words || [])) {
+    if (String(w.part_of_speech || '').toLowerCase().indexOf('noun') !== 0) continue;
+    if (!w.article) continue;
+    const re = new RegExp('(^|[\\s.,!?;:«»"\'(-])([\\wÄÖÜäöüßÀ-ÿ]+\\s+)?' + w.term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\b', 'i');
+    const m = text.match(re);
+    if (!m) continue;                            // слова в этой фразе нет — не наше дело
+    const before = String(m[2] || '').trim().toLowerCase();
+    if (!before) return 'noun_without_article:' + w.term;
+  }
+  return null;
+}
+
 function fetchLessonChunk2() {
   if (!L) return;
   L.chunk2.state = 'loading'; L.chunk2.err = null;
@@ -4896,7 +5035,7 @@ function fetchLessonChunk2() {
   L.chunk2.promise = (async () => {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
-      topic:p.interests, lesson_words: words.map(w=>w.term), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:9,
+      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:9,
       rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно 9 объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
@@ -4904,6 +5043,14 @@ function fetchLessonChunk2() {
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     constructs = dropLeaky(constructs);                       // 4.41: условие без целевых слов
     constructs = await validateDrillLevel(constructs, lvl);   // QUEUE-66: вторая линия обороны по уровню
+    /* 4.51: третья линия — грамматическая полнота эталона. Правило «живая грамотная фраза»
+       стоит в запросе с 4.41 и всё равно нарушается: приходило «Ich weine, Stimme klingt»
+       без союза и артикля. Проверяем формально то, что видно: существительное урока стоит
+       без артикля там, где язык его требует. Негодная фраза выбрасывается ДО раздачи по
+       заданиям — иначе одна ошибка расходится по трём упражнениям сразу. */
+    const beforeFix = constructs.length;
+    constructs = constructs.filter(c => !targetDefect(c && c.expected_target, words));
+    if (constructs.length < beforeFix) console.warn('эталонов отбраковано:', beforeFix - constructs.length);
     L.constructs = constructs;
     // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
     const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
