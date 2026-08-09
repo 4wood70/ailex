@@ -71,6 +71,9 @@ h2{font-family:'Chakra Petch';font-weight:600;font-size:17px;margin-bottom:4px}
 
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:14px}
 .card.glow{box-shadow:0 0 0 1px rgba(65,184,255,.12),0 8px 40px rgba(47,125,246,.10)}
+.card.glow.sky-host{position:relative;overflow:hidden}
+.card.glow.sky-host>.sky-bg{position:absolute;inset:0;width:100%;height:100%;z-index:0}
+.card.glow.sky-host>.sky-fg{position:relative;z-index:1}
 
 .btn{display:block;width:100%;border:none;border-radius:13px;padding:15px 18px;font-size:16px;font-weight:600;
   font-family:'Inter';cursor:pointer;text-align:center;transition:transform .08s ease,filter .15s}
@@ -99,7 +102,8 @@ textarea.ans-grow{resize:none;overflow:hidden;min-height:52px;line-height:1.45}
 .ring-wrap{display:grid;place-items:center;padding:10px 0 6px}
 .ring{position:relative;width:210px;height:210px}
 .ring svg{width:100%;height:100%;transform:rotate(-90deg)}
-.ring .core{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.ring .core{position:absolute;inset:0;display:grid;place-items:center;text-align:center;
+  background:radial-gradient(circle,rgba(12,19,34,.74) 0%,rgba(12,19,34,.56) 52%,rgba(12,19,34,0) 76%)}
 .ring .core .lbl{font-size:12px;color:var(--dim);letter-spacing:.08em}
 .ring .core .pct{font-family:'Chakra Petch';font-weight:700;font-size:46px;line-height:1.05;
   background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -256,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v100';
+const APP_VERSION = 'v101';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -2870,12 +2874,16 @@ function progressSky(cv, stat) {
   const hue = SKY_HUE[String(stat.level || 'A0').slice(0,2).toUpperCase()] ?? 205;
   /* Плотность растёт быстро на первых словах и замедляется дальше: первые двадцать слов должны
      давать видимую разницу, иначе небо не отзывается на усилие. */
-  const stars = Math.round(8 + 46 * (1 - Math.exp(-(stat.mastered || 0) / 40)));
-  const link  = Math.min(150, 40 + (stat.rules || 0) * 6);   // правила стягивают звёзды в структуру
-  let W = 0, H = 0, pts = [];
+  const baseStars = 8 + 46 * (1 - Math.exp(-(stat.mastered || 0) / 40));
+  const REF_AREA = 320 * 74;   // площадь прежней узкой полосы — точка отсчёта плотности
+  let W = 0, H = 0, pts = [], stars = 0;
   function measure() {
-    W = cv.clientWidth || 320; H = cv.clientHeight || 160;
+    W = cv.clientWidth || 320; H = cv.clientHeight || 320;
     cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+    /* 4.53: канвас теперь фон всей карточки, а не узкая полоса — без масштабирования небо
+       на большой площади выглядело бы пусто, хотя слов освоено столько же. */
+    const areaScale = Math.max(1, Math.min(5, (W * H) / REF_AREA));
+    stars = Math.round(baseStars * areaScale);
   }
   function seedSky() {
     pts = [];
@@ -3841,17 +3849,19 @@ function mainMenu() {
   Screen.show(`
     <h1><span>С возвращением,</span> ${esc(p.name)}!</h1>
     <p class="sub">${esc(langPair(p.nativeLang))} → ${esc(langPair(p.targetLang))} · <span>уровень</span> ${esc(p.cefr)} · <span>следующий этап:</span> <b style="color:var(--ink)">${esc(next)}</b></p>
-    <div class="card glow">
-      <div class="ring-wrap">${ringSVG(lp.pct, lp.lvl)}</div>
-      <div class="segbar">${Array.from({length:segs},(_,i)=>`<i class="${i<lit?(i>=segs-2?'on hot':'on'):''}"></i>`).join('')}</div>
-      <canvas id="skyCv" style="display:block;width:100%;height:74px;margin:2px 0 4px"></canvas>
-      <div style="text-align:center;font-size:11px;color:var(--dim);margin:0 0 6px">${lbl('Глубина языка:')} ${mastered} ${lbl('слов')} · ${(DB.rules||[]).length} ${lbl('правил')}</div>
-      <div style="text-align:center;font-size:12px;color:var(--dim);margin:2px 0 6px"><span>Прогресс уровня:</span> <b style="color:var(--ink)">${lp.done}</b> <span>из</span> ${lp.total} <span>уроков</span>${acc?`<span> · точность</span> ${acc}%`:''}</div>
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)">
-        <span><span>Слов в словаре:</span> <b style="color:var(--ink)">${words}</b></span>
-        <span><span>Освоено:</span> <b style="color:var(--ink)">${mastered}</b></span>
+    <div class="card glow sky-host">
+      <canvas id="skyCv" class="sky-bg"></canvas>
+      <div class="sky-fg">
+        <div class="ring-wrap">${ringSVG(lp.pct, lp.lvl)}</div>
+        <div class="segbar">${Array.from({length:segs},(_,i)=>`<i class="${i<lit?(i>=segs-2?'on hot':'on'):''}"></i>`).join('')}</div>
+        <div style="text-align:center;font-size:11px;color:var(--dim);margin:2px 0 6px">${lbl('Глубина языка:')} ${mastered} ${lbl('слов')} · ${(DB.rules||[]).length} ${lbl('правил')}</div>
+        <div style="text-align:center;font-size:12px;color:var(--dim);margin:2px 0 6px"><span>Прогресс уровня:</span> <b style="color:var(--ink)">${lp.done}</b> <span>из</span> ${lp.total} <span>уроков</span>${acc?`<span> · точность</span> ${acc}%`:''}</div>
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)">
+          <span><span>Слов в словаре:</span> <b style="color:var(--ink)">${words}</b></span>
+          <span><span>Освоено:</span> <b style="color:var(--ink)">${mastered}</b></span>
+        </div>
+        ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
       </div>
-      ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
     </div>
     <div class="menu-list">
       ${orphanLesson ? `<button class="menu-item" id="mResume" style="border:1px solid var(--accent)"><span class="ic">▶️</span><span class="t"><b><span>Продолжить урок</span> ${esc(cachedLesson.code)}</b><small><span>Задание</span> ${cachedStep} <span>из</span> ${cachedTotal} <span>· прогресс сохранён</span></small></span><span class="chev">›</span></button>
@@ -5105,9 +5115,10 @@ function fetchLessonChunk2() {
         const rv = await Gemini.call({
           task:'generate_review_sentences', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
           review_words: L.reviewWords.map(w=>({ word:w.term, meaning:w.translation||'' })), count: L.reviewWords.length,
-          rules:'Для КАЖДОГО объекта из review_words верни короткое естественное предложение на целевом языке, СОДЕРЖАЩЕЕ слово word в ЗНАЧЕНИИ meaning. КРИТИЧНО (QUEUE-40): у слова может быть несколько значений — используй ИМЕННО meaning, и весь смысл предложения обязан соответствовать этому значению (если meaning = «патрон (токарный)» — предложение про станок/деталь, НЕ про корм для собаки; если meaning = «корм» — про животное). Предложение строго по уровню CEFR. word — то слово из review_words, к которому относится предложение.'
+          rules:'Для КАЖДОГО объекта из review_words верни короткое естественное предложение на целевом языке, СОДЕРЖАЩЕЕ слово word в ЗНАЧЕНИИ meaning. КРИТИЧНО (QUEUE-40): у слова может быть несколько значений — используй ИМЕННО meaning, и весь смысл предложения обязан соответствовать этому значению (если meaning = «патрон (токарный)» — предложение про станок/деталь, НЕ про корм для собаки; если meaning = «корм» — про животное). Предложение строго по уровню CEFR. word — то слово из review_words, к которому относится предложение. '
+            + 'ПЕРЕВОД ПОЛНЫЙ И ТОЧНЫЙ (критично, 4.53): translation обязан передавать ВЕСЬ смысл sentence — модальность (must/должен, can/может, want/хочет), время, отрицание, каждое смысловое слово. Терять модальный глагол ЗАПРЕЩЕНО: «Das Baby muss weinen» переводится «Младенец должен плакать», а НЕ «Младенец плачет» — это разные предложения с разным смыслом. Проверь перед ответом: если убрать из sentence модальный/вспомогательный глагол, изменится ли translation — если нет, перевод неполный, исправь.'
         },
-        '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной"}]}');
+        '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной, полностью передающий смысл — включая модальность и время"}]}');
         L.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
       } catch(_) { L.reviewDrills = []; }
     }
@@ -6082,9 +6093,20 @@ function drillReviewContext(s, rd) {
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
-  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span> — ${esc(w.translation||'')}` + sayBtn(answer);
-    speak(answer, DB.profile.targetLang); };
+  /* 4.53 (QUEUE-149): подсказка запрашивает карточку РОВНО этой формы через тот же контракт
+     translate_word, что и тап-перевод (4.32) — вместо транскрипции словарной карточки w
+     (инфинитив), которая для спрягаемой/склонённой формы физически другое слово со своим
+     звучанием («werde» показывался с транскрипцией «werden» — [вэрдэн] не читается как «werde»). */
+  $('#hint').onclick = async () => {
+    L.hints++; $('#fb').className='feedback ok';
+    $('#fb').innerHTML = `💡 …`;
+    const card = await fetchWordCard(answer, fullSentence);
+    const tr = (card && card.translit) || w.translit || '';
+    const tn = (card && card.translation) || w.translation || '';
+    const morphLine = (card && card.morph) ? `<div style="margin-top:4px;color:var(--dim);font-size:12px;line-height:1.4">${esc(card.morph)}</div>` : '';
+    $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
+    speak(answer, DB.profile.targetLang);
+  };
   $('#check').onclick = () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
@@ -6108,14 +6130,14 @@ function drillReviewContext(s, rd) {
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence);
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
@@ -6155,15 +6177,21 @@ function drillContext(s) {
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
-  $('#hint').onclick = () => {
+  $('#hint').onclick = async () => {
     L.hints++; hintLevel++;
     $('#fb').className = 'feedback ok';
     if (hintLevel === 1) {
       $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>`;
     } else {
-      // QUEUE-03: показываем форму из задания (answer), не инфинитив из словаря
-      const hintTranslit = item.expected_translit || vEntry.translit || '';
-      $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(hintTranslit)}</span>` + sayBtn(answer) + ` — ${esc(vEntry.translation||'')}`;
+      /* 4.53 (QUEUE-149): та же замена, что в drillReviewContext — транскрипция запрашивается
+         для РОВНО этой формы (answer) через translate_word, а не берётся от словарной карточки
+         (item.expected_translit — транскрипция ВСЕЙ фразы-эталона, тоже не форма answer). */
+      $('#fb').innerHTML = `💡 …`;
+      const card = await fetchWordCard(answer, fullSentence);
+      const tr = (card && card.translit) || vEntry.translit || '';
+      const tn = (card && card.translation) || vEntry.translation || '';
+      const morphLine = (card && card.morph) ? `<div style="margin-top:4px;color:var(--dim);font-size:12px;line-height:1.4">${esc(card.morph)}</div>` : '';
+      $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
       speak(answer, DB.profile.targetLang); // QUEUE-10: авто-TTS при показе полного ответа
     }
   };
@@ -6198,7 +6226,7 @@ function drillContext(s) {
     if (ok) {
       markSeen(dictWord);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence);
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
@@ -6207,7 +6235,7 @@ function drillContext(s) {
       $('#fb').className='feedback bad';
       // QUEUE-04: при ошибке формы — показываем пояснение если есть
       const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 <span>В этом предложении:</span> <b>${esc(answer)}</b> ${lbl('— форма слова')} «${esc(dictWord)}»</span>` : '';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
+      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
@@ -6854,7 +6882,7 @@ const stripArtG = x => String(x||'').trim().replace(/^(der|die|das|ein|eine)\s+/
 
 const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в тексте","term":"словарная форма","translit":"[транскрипция буквами native_lang]",'
   + '"translation":"перевод формы из текста на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other",'
-  + '"morph":"одна короткая строка о форме на native_lang или пусто","forms":"три формы неправильного глагола или пусто","is_irregular":true}';
+  + '"morph":"одна-две коротких строки о форме на native_lang (вторая — чем вызвано изменение формы, если оно есть) или пусто","forms":"три формы неправильного глагола или пусто","is_irregular":true}';
 
 const TAP_CARD_RULES =
     'КОНТЕКСТ (критично): слово word стоит в предложении sentence и является словом target_lang. Разбирай его ТОЛЬКО как слово target_lang в этом предложении. '
@@ -6862,7 +6890,7 @@ const TAP_CARD_RULES =
   + 'surface — ровно та форма, что стоит в тексте, без изменений. '
   + 'term — словарная форма: существительное с артиклем рода (das Buch), глагол в неопределённой форме (planen), прилагательное в начальной форме. Если форма из текста и есть словарная — повтори её. '
   + 'translation — перевод формы так, как она стоит в предложении («планирует», а не «планировать»). '
-  + 'morph — ОДНА короткая строка на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). Для глагола: словарная форма с переводом и лицо/время — «planen — планировать; здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer». Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
+  + 'morph — ОДНА-ДВЕ коротких строки на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). Для глагола: словарная форма с переводом и лицо/время — «planen — планировать; здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer»; ЕСЛИ форма слова из текста отличается от словарной формой окончания или входит в состав именной группы после предлога или другого слова, управляющего формой (Suche nach dem Schlüssel, dem Mechaniker helfen) — ДОБАВЬ в то же поле ещё одной фразой, ЧЕМ вызвано изменение: какое слово рядом (предлог или глагол) требует этой формы — «здесь форма вызвана предлогом nach» / «здесь форма вызвана глаголом helfen, который требует эту форму у зависимого слова». Если изменения нет (форма и без того словарная) — вторую фразу не добавляй. Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
   + 'forms — ТОЛЬКО для неправильного глагола: три основные формы («fahren – fuhr – ist gefahren»). Для правильного глагола и других частей речи — пустая строка. is_irregular — true только для неправильного глагола. '
   + 'ТРАНСКРИПЦИЯ (критично): translit — буквами native_lang, без знаков IPA, и передаёт звучание формы surface. Перед выдачей сверь звук за звуком: КАЖДЫЙ согласный слова surface обязан быть отражён в транскрипции. Пропуск согласной — брак: Abenteuer → [абэнтойэр], а НЕ [абэнойэр].';
 
