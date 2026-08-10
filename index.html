@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v102';
+const APP_VERSION = 'v104';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1148,8 +1148,13 @@ const SRS = {
   overdue(v){ return SRS.onLadder(v) ? (_dayNum() - v.srs_due) : -1e9; }   // больше = дольше просрочено
 };
 const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-  .replace(/[.,!?;:«»"'’\-–—()]/g,' ').replace(/\s+/g,' ').trim()
+  .replace(/[.,!?;:«»"'’\-–—()]/g,' ').replace(/\s*\/\s*/g,'/').replace(/\s+/g,' ').trim()
   .replace(/ß/g,'ss');
+/* 4.53: словарная единица языка цифр не содержит — числительные учатся как слова, а не цифрами.
+   Термин с цифрой — код/модель/артикул (техническое обозначение, серийный номер, ГОСТ и т.п.),
+   не лексика для заучивания. Используется на входе в Ядро (Core._add) и как защита при отборе
+   слов на повторение — для того, что уже попало в словарь раньше этой правки. */
+const isNonLexicalCode = term => /\d/.test(String(term||''));
 const shuffle = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const pick = (a,n) => shuffle(a).slice(0,n);
 // авторасширение textarea по мере набора текста
@@ -2284,6 +2289,15 @@ const Core = {
       if (!w || !w.term || !w.translation) return;
       const term = String(w.term).trim(); const k = norm(term);
       if (!k || k.length > 40 || seen.has(k)) return;
+      /* 4.53 (тестирование 10.08.2026): CORE_RULES ниже уже просит модель не добавлять
+         технические коды — правило написано, но живёт только в промпте, и Gemini его нарушил:
+         в Ядро попал код станка «M41 / M42» вперемешку со словами интереса «оператор станков
+         с ЧПУ». Обозначение не переводится и не является лексикой языка — учить его как слово
+         немецкого бессмысленно. Признак прикладной, не лингвистический: словарная единица
+         языка цифр не содержит — числительные учатся как слова («zwei», не «2»); всё с цифрой
+         в написании — код, модель, артикул, а не слово. Гарантия здесь, а не только в промпте
+         (комментарий у _exclude() ниже это ровно и обещал). */
+      if (isNonLexicalCode(term)) return;
       seen.add(k); n++;
       DB.core.push({ term, translation: String(w.translation).trim(), translit: w.translit||'', emoji: w.emoji||'',
         part_of_speech: w.part_of_speech||'', article: w.article||'', forms: w.forms||'',
@@ -2447,7 +2461,7 @@ const Core = {
       const li = CORE_LEVELS.indexOf(CORE_LEVELS.includes(lvl) ? lvl : 'A1');
       const inVocab = new Set((DB.vocab||[]).map(w => norm(w.term)));
       const avail = f => this.list().filter(w => w.status === 'склад'
-        && CORE_LEVELS.indexOf(w.cefr) <= li && !inVocab.has(norm(w.term)) && f(w));
+        && CORE_LEVELS.indexOf(w.cefr) <= li && !inVocab.has(norm(w.term)) && !isNonLexicalCode(w.term) && f(w));
       const byFreq = a => a.slice().sort((x,y) => (x.freq_rank||999) - (y.freq_rank||999));
       // 2 неправильных глагола — не «если уместны», а всегда, пока класс не исчерпан
       const irr = byFreq(avail(w => w.is_irregular === true)).slice(0,2);
@@ -4765,7 +4779,7 @@ function curCefr(){ const p = parseCode(String(L?.code||'').replace('SUPER_','')
 async function legacyVocabPortion(p, lvl, survN, known) {
   const SCHEMA = '{"words":[{"term":"слово на целевом языке","emoji":"один эмодзи-якорь","translit":"[транскрипция родными буквами]","translation":"перевод на родной","part_of_speech":"noun|verb|adj|other","article":"der|die|das или пусто","is_irregular":false,"forms":"паспорт форм: для глаголов 3 формы (+3 лицо у неправильных), для существительных артикль+множественное"}]}';
   const RULES = 'Исключи ВСЕ слова из known_vocab — они уже известны ученику. Включи ровно 2 неправильных глагола с формами (если в целевом языке их нет как класса — 7 обычных слов). Для КАЖДОГО слова заполни поле forms («паспорт»): для глаголов три основные формы + 3-е лицо при смене корня (например "sieht, sah, hat gesehen"), для существительных артикль рода и множественное число (например "der Tisch, die Tische"). Поле part_of_speech: noun/verb/adj/other; для существительных article: der/die/das. Транскрипция — средствами родного языка (native_lang), в квадратных скобках, IPA запрещён.';
-  const fresh = arr => (arr||[]).filter(w => w && w.term && w.translation && !DB.vocab.some(v => norm(v.term)===norm(w.term)));
+  const fresh = arr => (arr||[]).filter(w => w && w.term && w.translation && !isNonLexicalCode(w.term) && !DB.vocab.some(v => norm(v.term)===norm(w.term)));
   const ask = async (n, exclude) => {
     const r = await Gemini.call({
       task:'generate_vocab', audience: ageBand(p.age), target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
@@ -4835,9 +4849,9 @@ async function startLesson(code) {
   const passiveEncounter = w => w.seen_in_context === true
     || w.status === 'встречено в контексте' || w.status === 'встреченное';
   // 1) СРОЧНЫЙ слой: трудные + приоритетные/импортированные — всегда первыми, минуя даты
-  const urgent = DB.vocab.filter(w => DB.reviewQueue.includes(w.term) && seenOk(w));
+  const urgent = DB.vocab.filter(w => DB.reviewQueue.includes(w.term) && seenOk(w) && !isNonLexicalCode(w.term));
   // 2) СПОКОЙНЫЙ слой: подошедшие по графику 1/3/7/30, самые просроченные первыми (расписание заменяет прежний добор «последние 10»)
-  const due = DB.vocab.filter(w => seenOk(w) && !passiveEncounter(w) && !DB.reviewQueue.includes(w.term) && SRS.due(w))
+  const due = DB.vocab.filter(w => seenOk(w) && !passiveEncounter(w) && !DB.reviewQueue.includes(w.term) && !isNonLexicalCode(w.term) && SRS.due(w))
                       .sort((a,b) => SRS.overdue(b) - SRS.overdue(a));
   [...urgent, ...due].forEach(w => { if (!recapPool.some(x=>x.term===w.term)) recapPool.push(w); });
   const recapItems = DB.vocab.length >= 4 ? recapPool.slice(0, 7) : [];
