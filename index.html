@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v107';
+const APP_VERSION = 'v108';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1703,9 +1703,19 @@ function isBadTranslit(str, nat) {
 // Словарная форма: существительное с артиклем рода. Источник — Ядро языка (v64) и Словарь,
 // где артикль лежит отдельным полем; запроса к Gemini не требуется.
 function dictForm(term) {
-  const t = String(term||'').trim();
+  /* 4.55 (v108): принимает и запись слова, и голую строку. Экраны новых слов, Словаря и списка
+     слов главы печатали `w.term` как есть, поэтому существительное из Ядра, у которого артикль
+     лежит ОТДЕЛЬНЫМ полем, выходило голым — «Störung» вместо «die Störung». Когда артикль
+     известен прямо в записи, поиск по базе не нужен. Форма словарная, то есть именительного
+     падежа: падежные формы живут во фразах и объясняются полем `morph` карточки (4.53). */
+  const rec0 = (term && typeof term === 'object') ? term : null;
+  const t = String((rec0 ? rec0.term : term) || '').trim();
   if (!t || /\s/.test(t)) return t;           // фраза или уже с артиклем — не трогаем
   try {
+    const own = rec0 ? String(rec0.article || '').trim() : '';
+    if (own && !/[\s,;/()]/.test(own) && norm(own) !== norm(t)
+        && !articleSet().has(norm(t)) && t.toLowerCase().indexOf(own.toLowerCase()+' ') !== 0)
+      return own + ' ' + t;
     const key = norm(t);
     const pool = [].concat((typeof Core!=='undefined' && Core.list) ? Core.list() : [], (DB && DB.vocab) || []);
     const rec = pool.find(w => {
@@ -4130,7 +4140,7 @@ function showDictionary(letter, irrOnly) {
           <button class="dword" data-i="${i}" style="width:100%;text-align:left;background:none;border:none;color:var(--ink);
             font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
             <span class="emoji">${esc(w.emoji||'•')}</span>
-            <span style="flex:1"><b style="font-size:15px">${esc(w.term)}</b>
+            <span style="flex:1"><b style="font-size:15px">${esc(dictForm(w))}</b>
               <small style="display:block;color:var(--dim);font-size:12px">${esc(w.translit||'')} · ${esc(w.translation||'')}${(w.source==='import'&&(w.status==='новое'||w.status==='изучается'))?' · 📌 к изучению':''}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
             <span class="chev" style="color:var(--faint)">▾</span>
           </button>
@@ -4148,12 +4158,12 @@ function showDictionary(letter, irrOnly) {
       const _forms = w.forms || w.irregular_forms || '';
       body.innerHTML = `
         <div class="vocab-row" style="border:none">
-          <span class="w"><b>${esc(w.term)}</b> <span class="tr">${esc(w.translit||'')}</span>
+          <span class="w"><b>${esc(dictForm(w))}</b> <span class="tr">${esc(w.translit||'')}</span>
             <small>${esc(w.translation||'')}</small>
             ${_forms?`<small style="display:block;margin-top:2px;color:var(--accent2,#9ED7FF)">📋 ${esc(_forms)}</small>`:''}
             ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
             ${w.example?`<small style="display:block;margin-top:4px">${esc(w.example)}</small>`:''}</span>
-          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(w.term)}" aria-label="Озвучить">🔊</button>`:''}
+          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(dictForm(w))}" aria-label="Озвучить">🔊</button>`:''}
         </div>`;
       body.dataset.filled='1';
       body.querySelectorAll('.tts').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang));
@@ -5150,6 +5160,16 @@ async function validateDrillLevel(items, lvl) {
 /* Языки, где существительное без артикля в словаре — дефект. */
 const ARTICLE_LANGS = ['de','fr','es','it','pt','nl','da','sv','no','el','ca','ro'];
 
+/* Артикль уже стоит первым словом самого термина (4.55). Набор артиклей берётся из языка —
+   в коде его держать нельзя, это дефект, закрытый в 4.35. */
+function hasLeadingArticle(term) {
+  const t = String(term || '').trim();
+  const i = t.indexOf(' ');
+  if (i < 0) return false;
+  try { return articleSet().has(norm(t.slice(0, i))); } catch(_) { return false; }
+}
+
+
 /* Служебные слова: приходят от модели пометкой части речи. Список слов не ведём — он был бы
    свой для каждого из 72 языков; полагаемся на разметку и на длину. */
 const FUNCTION_POS = ['article','determiner','preposition','conjunction','particle','auxiliary'];
@@ -5167,7 +5187,13 @@ function cardDefect(w, targetLang) {
      опора для произношения: человек ещё не читает по правилам языка. Считаем дефектом. */
   if (!w.translit) return 'no_translit';
   if (pos.indexOf('noun') === 0 && ARTICLE_LANGS.indexOf(targetLang) >= 0 && !w.article
-      && !/^(der|die|das|le|la|les|el|los|las|il|lo|gli|de|het|en|ett)\s/i.test(term)) return 'no_article';
+      && !hasLeadingArticle(term)) return 'no_article';
+  /* 4.55 (v108): часть речи не проставлена — значит НЕИЗВЕСТНО, нужен ли слову артикль, и
+     проверка выше до него не доходит: она начинается с pos==='noun'. Импорт своих слов и слова
+     из глоссария задания приходят с пустым `part_of_speech`, поэтому существительные из них
+     жили в базе без артикля бессрочно и такими же попадали на экран новых слов. Для языка с
+     артиклями пустая часть речи — дефект: её достраивает тот же запрос, что и остальное. */
+  if (!pos && ARTICLE_LANGS.indexOf(targetLang) >= 0 && !w.article && !hasLeadingArticle(term)) return 'no_pos';
   if (pos.indexOf('verb') === 0 && w.is_conjugated) return 'conjugated';
   return null;
 }
@@ -5955,13 +5981,13 @@ function drillPresent() {
     <h1>Новые слова</h1>
     <p class="sub">🧠 Слово → эмодзи-якорь → транскрипция → перевод. Нажмите 🔊, чтобы услышать живое звучание.</p>
     <div class="card">
-      ${L.words.map(w=>`
+      ${L.words.map(w=>{ const _d = dictForm(w); return `
         <div class="vocab-row">
           <span class="emoji">${esc(w.emoji||'•')}</span>
-          <span class="w"><b>${esc(w.term)}</b><span class="tr">${esc(w.translit||'')}</span>
+          <span class="w"><b>${esc(_d)}</b><span class="tr">${esc(w.translit||'')}</span>
             <small>${esc(w.translation)}${w.is_irregular&&(w.forms||w.irregular_forms)?' · ⚠️ '+esc(w.forms||w.irregular_forms):''}</small></span>
-          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(w.term)}">🔊</button>`:''}
-        </div>`).join('')}
+          ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(_d)}">🔊</button>`:''}
+        </div>`;}).join('')}
     </div>
     ${L.words.some(w=>w.is_irregular&&(w.forms||w.irregular_forms)) ? `<p class="note">⚠️ Глагол со списком форм — особенный: он не подчиняется общему правилу. Формы даны справочно — просто запомните их вместе со словом. Правило разберём позже, а пока достаточно узнавать эти формы в тексте.</p>` : ''}
     <p class="note">${hasTTS(DB.profile.targetLang)
@@ -7917,7 +7943,7 @@ async function runSuperquestAct(cfg) {
             if (!seen.length) return '';
             return '<div class="note" style="margin-top:10px;line-height:1.9;text-align:left">'
               + seen.slice(0, 20).map(w =>
-                  `<b>${esc(w.term)}</b>`
+                  `<b>${esc(dictForm(w))}</b>`
                   + (w.translit ? ` <span style="color:var(--orange)">${esc(w.translit)}</span>` : '')
                   + (w.translation ? ` — ${esc(w.translation)}` : '')
                   + sayBtn(w.term)
