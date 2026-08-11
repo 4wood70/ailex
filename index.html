@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v105';
+const APP_VERSION = 'v106';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -638,6 +638,12 @@ const UI_EXTRA = [
     'Разбор завершён, прогресс сохранён.',
     'Развилка — что делаем дальше?',
     'Распознано слов:',
+    'Не взято',
+    'технический код (есть цифры)',
+    'не слово, а строка',
+    'слишком короткое',
+    'нет букв целевого языка',
+    'повтор в списке',
     'Результат:',
     'С возвращением,',
     'Сверьте:',
@@ -4230,13 +4236,52 @@ function parseImportLine(line) {
   if (!term) return null;
   return { term, translit, translation, category };
 }
+/* =====================================================================
+   4.54 — ИМПОРТ С ОТСЕВОМ (QUEUE-150; билд v106)
+   Импорт брал любую строку, распознанную по формату. Дальше эти записи шли в Словарь как
+   приоритетные, попадали в повторение и в подбор слов для Суперквеста — и мусор из чужого
+   списка (технические коды, куски предложений, служебные слова) становился материалом урока.
+   Правило чистоты словаря (4.51) применялось к словам урока и обходило импорт стороной.
+   Отсев делает КОД, локально, без запроса к модели: то, что видно по самой строке.
+   Отсеянное не молчит — человек вставлял список сам и должен видеть, что не взято и почему. */
+const IMPORT_REJECT = {
+  digit:   'технический код (есть цифры)',
+  long:    'не слово, а строка',
+  short:   'слишком короткое',
+  noletter:'нет букв целевого языка',
+  dup:     'повтор в списке'
+};
+function importDefect(w) {
+  const term = String((w && w.term) || '').trim();
+  if (!term) return 'noletter';
+  if (/\d/.test(term)) return 'digit';                              // G01, T010101 — как в Core._add
+  if (term.length > 40 || term.split(/\s+/).length > 4) return 'long';
+  if (!/[\p{L}]/u.test(term)) return 'noletter';
+  if (term.replace(/[^\p{L}]/gu, '').length < 2) return 'short';
+  return null;
+}
 function parseImportText(text) {
-  const out = [], seen = {};
+  const out = [], rejected = [], seen = {};
   String(text).split(/\r?\n/).forEach(l => {
     const w = parseImportLine(l);
-    if (w && !seen[norm(w.term)]) { seen[norm(w.term)] = 1; out.push(w); }
+    if (!w) return;
+    if (seen[norm(w.term)]) { rejected.push({ term:w.term, why:'dup' }); return; }
+    seen[norm(w.term)] = 1;
+    const d = importDefect(w);
+    if (d) { rejected.push({ term:w.term, why:d }); return; }
+    out.push(w);
   });
+  out.rejected = rejected;
   return out;
+}
+function importRejectNote(rejected) {
+  if (!rejected || !rejected.length) return '';
+  const by = {};
+  rejected.forEach(r => { (by[r.why] = by[r.why] || []).push(r.term); });
+  const parts = Object.keys(by).map(k =>
+    `${esc(t(IMPORT_REJECT[k] || k))}: ${esc(by[k].slice(0,5).join(', '))}${by[k].length>5?' …':''}`);
+  return `<div style="margin-top:6px;color:var(--dim);font-size:12px;line-height:1.6">`
+       + `${lbl('Не взято')} (${rejected.length}) — ${parts.join(' · ')}</div>`;
 }
 function showImportWords() {
   /* i18n-lint:off — в плейсхолдере образец формата импорта: учебный материал, а не надпись */
@@ -4255,9 +4300,10 @@ function showImportWords() {
   const info = $('#impInfo');
   $('#impPreview').onclick = () => {
     const list = parseImportText($('#impText').value);
-    info.innerHTML = list.length
+    info.innerHTML = (list.length
       ? `${lbl('Распознано слов:')} <b>${list.length}</b>. ${lbl('Пример:')} ${esc(list.slice(0,3).map(w=>w.term+' — '+w.translation).join('; '))}…`
-      : 'Не удалось распознать ни одной строки. Проверьте формат: «Термин — перевод».';
+      : 'Не удалось распознать ни одной строки. Проверьте формат: «Термин — перевод».')
+      + importRejectNote(list.rejected);
   };
   $('#impAdd').onclick = () => {
     const list = parseImportText($('#impText').value);
@@ -4274,7 +4320,8 @@ function showImportWords() {
     });
     DB.intensive = true;   // режим интенсива: приоритетные слова в Суперквестах
     Storage.save(DB);
-    info.innerHTML = `${lbl('Добавлено новых:')} <b>${added}</b>, ${lbl('всего распознано:')} ${list.length}. ${lbl('Режим интенсива включён — эти слова будут приоритетными в Суперквестах.')}`;
+    info.innerHTML = `${lbl('Добавлено новых:')} <b>${added}</b>, ${lbl('всего распознано:')} ${list.length}. ${lbl('Режим интенсива включён — эти слова будут приоритетными в Суперквестах.')}`
+      + importRejectNote(list.rejected);
     toast('Импортировано ✓');
   };
 }
@@ -5220,20 +5267,84 @@ function translationIncomplete(src, tr) {
   return b < a - 1;                       // одно предложение расхождения допускаем: пунктуация разная
 }
 
+/* =====================================================================
+   4.54 — ЭТАЛОН БЕЗ АРТИКЛЯ (QUEUE-172; билд v106)
+   Проверка 4.51 смотрела только на семь слов урока и пропускала всё остальное:
+   на прогоне v105 эталонами стали «Zyklus läuft.» и «Fachkraft wählt Position.» —
+   оба существительных пришли из known_vocab, и их никто не проверял. Вторая дыра
+   там же: достаточным считалось ЛЮБОЕ слово перед существительным, а не именно
+   определитель. Теперь источник один — bareNounHits (4.35), строящий индекс
+   существительных из Ядра и Словаря и проверяющий определитель через isDeterminer;
+   слова урока добавляются к индексу отдельно, потому что к моменту сборки порции 2
+   они могут ещё не лежать в базе.
+   ===================================================================== */
 function targetDefect(sentence, words) {
   const tgt = DB && DB.profile && DB.profile.targetLang;
   if (!sentence || ARTICLE_LANGS.indexOf(tgt) < 0) return null;
-  const text = ' ' + String(sentence) + ' ';
-  for (const w of (words || [])) {
-    if (String(w.part_of_speech || '').toLowerCase().indexOf('noun') !== 0) continue;
-    if (!w.article) continue;
-    const re = new RegExp('(^|[\\s.,!?;:«»"\'(-])([\\wÄÖÜäöüßÀ-ÿ]+\\s+)?' + w.term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\b', 'i');
-    const m = text.match(re);
-    if (!m) continue;                            // слова в этой фразе нет — не наше дело
-    const before = String(m[2] || '').trim().toLowerCase();
-    if (!before) return 'noun_without_article:' + w.term;
-  }
-  return null;
+  const hits = bareTargetNouns(sentence, words);
+  return hits.length ? ('noun_without_article:' + hits.join(', ')) : null;
+}
+/* Существительные эталона без определителя — в виде «артикль + слово», чтобы модели было
+   что подставлять. Нулевой артикль бывает законен (имена, вещественные, устойчивые обороты),
+   поэтому код только находит и поднимает флаг — решает модель в fix_targets. */
+function bareTargetNouns(sentence, words) {
+  const text = String(sentence || '');
+  if (!text) return [];
+  let hits = [];
+  try { hits = bareNounHits(text); } catch(_) { hits = []; }
+  const seen = new Set(hits.map(h => norm(h)));
+  const toks = tokenize(text);
+  (words || []).forEach(w => {
+    if (!w || !w.term) return;
+    if (String(w.part_of_speech || '').toLowerCase().indexOf('noun') !== 0) return;
+    const a = String(w.article || '').trim();
+    if (!a || /[\s,;/()]/.test(a)) return;
+    const key = norm(w.term);
+    toks.forEach((tk, i) => {
+      if (tk !== key) return;
+      if (i > 0 && isDeterminer(toks[i-1])) return;
+      const hit = a + ' ' + String(w.term).trim();
+      if (!seen.has(norm(hit))) { seen.add(norm(hit)); hits.push(hit); }
+    });
+  });
+  return hits.slice(0, 6);
+}
+/* Починка дефектных эталонов одним пакетным запросом (4.54). До v106 негодный эталон просто
+   выбрасывался, и урок худел на задание; починка дешевле потери материала. Упрямые — те, у
+   которых после починки дефект остался, — выбрасываются как раньше. */
+async function repairTargets(items, words) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return list;
+  const bad = [];
+  list.forEach((c, i) => {
+    if (!c || !c.expected_target) return;
+    const hits = bareTargetNouns(c.expected_target, words);
+    if (hits.length) bad.push({ i, hits });
+  });
+  if (!bad.length) return list;
+  try {
+    const p = DB.profile;
+    const r = await Gemini.call({
+      task: 'fix_targets', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      cefr: (L && L.lvl) || curCefr(),
+      items: bad.map(b => ({ id: b.i, prompt_native: list[b.i].prompt_native || '',
+                             expected_target: list[b.i].expected_target, bare_nouns: b.hits })),
+      rules: 'В каждом expected_target код нашёл существительные без артикля и без другого определителя '
+           + '(список bare_nouns, каждое со словарным артиклем). По каждому реши: законен ли нулевой артикль '
+           + 'в этой позиции (имя собственное, вещественное, устойчивый оборот, неопределённое множественное). '
+           + 'Если нет — поставь артикль в НУЖНОМ падеже по роли слова во фразе. ОСТАЛЬНОЕ НЕ ТРОГАЙ: '
+           + 'смысл, лексика и уровень фразы остаются прежними, меняется только артикль и согласованные с ним окончания. '
+           + 'Переписывать фразу целиком, добавлять или убирать смысловые слова ЗАПРЕЩЕНО — prompt_native остаётся как есть '
+           + 'и обязан соответствовать исправленному эталону. expected_translit — транскрипция ИСПРАВЛЕННОЙ фразы буквами native_lang.'
+    }, '{"items":[{"id":0,"expected_target":"исправленный эталон","expected_translit":"[транскрипция всей фразы]"}]}');
+    ((r && r.items) || []).forEach(f => {
+      const i = Number(f && f.id);
+      if (!Number.isInteger(i) || !list[i] || !f.expected_target) return;
+      list[i].expected_target = f.expected_target;
+      if (f.expected_translit) list[i].expected_translit = f.expected_translit;
+    });
+  } catch(e) { console.warn('repairTargets:', e && e.message); }
+  return list;
 }
 
 function fetchLessonChunk2() {
@@ -5243,11 +5354,11 @@ function fetchLessonChunk2() {
   L.chunk2.promise = (async () => {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
-      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:9,
+      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
       rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
-    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно 9 объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
-    let constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,9);
+    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
+    let constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,DRILL_POOL);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     constructs = dropLeaky(constructs);                       // 4.41: условие без целевых слов
     constructs = await validateDrillLevel(constructs, lvl);   // QUEUE-66: вторая линия обороны по уровню
@@ -5256,9 +5367,16 @@ function fetchLessonChunk2() {
        без союза и артикля. Проверяем формально то, что видно: существительное урока стоит
        без артикля там, где язык его требует. Негодная фраза выбрасывается ДО раздачи по
        заданиям — иначе одна ошибка расходится по трём упражнениям сразу. */
+    /* 4.54 (QUEUE-172): дефектный эталон сначала ЧИНИТСЯ пакетным запросом и только потом,
+       если дефект остался, выбрасывается. Выбрасывать сразу означало терять задание из-за
+       одного пропущенного артикля. */
     const beforeFix = constructs.length;
+    constructs = await repairTargets(constructs, words);
     constructs = constructs.filter(c => !targetDefect(c && c.expected_target, words));
     if (constructs.length < beforeFix) console.warn('эталонов отбраковано:', beforeFix - constructs.length);
+    /* 4.54 (QUEUE-173): транскрипция эталона — опора подсказки. Поле приходит через раз,
+       и подсказка молча показывала фразу без звучания. Недостающие добираем одним пакетом. */
+    await fillMissingTranslit(constructs);
     L.constructs = constructs;
     // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
     const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
@@ -5540,6 +5658,43 @@ const LessonCache = {
    и порядок получается сортировкой. Детерминированно: возврат к сохранённой точке даёт тот же
    урок. Профиль сложности сохраняется от простого к сложному, но блоками уже не идёт. */
 const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20] };
+/* 4.54 (QUEUE-161): фраз в порции 2 стало пятнадцать. Раньше их было девять, «слово в
+   контексте» брало items[0..5], «сборка фразы» — items[0..8], и шесть фраз урока человек
+   видел ДВАЖДЫ: сначала с пропуском, потом на сборку. Повтор одной и той же фразы в одном
+   уроке не повторение, а ощущение, что материал кончился. Теперь наборы не пересекаются:
+   сборка берёт 0..8, контекст — 9..14. Если фраз пришло меньше — работает прежний круг по
+   остатку (материал беднее, но урок идёт). */
+const DRILL_POOL = 15;
+const CONTEXT_OFFSET = 9;
+function drillItemAt(kind, i) {
+  const arr = (L && L.constructs) || [];
+  if (!arr.length) return null;
+  const want = (kind === 'context') ? CONTEXT_OFFSET + i : i;
+  return arr[want % arr.length];
+}
+/* 4.54 (QUEUE-173): транскрипция эталона добирается пакетом. Подсказка 💡 показывает фразу
+   целиком, и без транскрипции она остаётся набором незнакомых букв — то самое, ради чего
+   транскрипция в приложении и заведена. */
+async function fillMissingTranslit(items) {
+  const list = Array.isArray(items) ? items : [];
+  const miss = list.filter(c => c && c.expected_target && !c.expected_translit);
+  if (!miss.length) return list;
+  try {
+    const p = DB.profile;
+    const r = await Gemini.call({
+      task: 'transliterate_phrases', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      phrases: miss.map((c, i) => ({ id: i, phrase: c.expected_target })),
+      rules: 'Для каждой фразы верни транскрипцию буквами native_lang, передающую ЗВУЧАНИЕ фразы. '
+           + 'IPA запрещён. Сверь звук за звуком: каждый согласный оригинала обязан быть отражён.'
+    }, '{"items":[{"id":0,"translit":"[транскрипция фразы родными буквами]"}]}');
+    ((r && r.items) || []).forEach(f => {
+      const i = Number(f && f.id);
+      if (!Number.isInteger(i) || !miss[i] || !f.translit) return;
+      miss[i].expected_translit = f.translit;
+    });
+  } catch(e) { console.warn('fillMissingTranslit:', e && e.message); }
+  return list;
+}
 function interleaveTypes(quota) {
   const want = [];
   for (const t of Object.keys(quota)) {
@@ -5756,8 +5911,8 @@ function renderStep() {
   if (s.t==='write')     return drillWrite(s);
   if (s.t==='construct') {               // построение фраз из порции 2
     if (s.c) return drillConstruct(s);
-    if (L.constructs && L.constructs.length) { s.c = L.constructs[s.ci % L.constructs.length]; return drillConstruct(s); }
-    return ensureChunk2().then(ok => { if (!ok) return; s.c = L.constructs[s.ci % L.constructs.length]; drillConstruct(s); });
+    if (L.constructs && L.constructs.length) { s.c = drillItemAt('construct', s.ci); return drillConstruct(s); }
+    return ensureChunk2().then(ok => { if (!ok) return; s.c = drillItemAt('construct', s.ci); if (s.c) drillConstruct(s); else { L.i++; renderStep(); } });
   }
   if (s.t==='quest')     return runQuest({
       title:'Задание 21 · Интерактивный рассказ-квест',
@@ -6025,6 +6180,13 @@ function drillRecog(s) {
 
 /* ---------- Скелеты и контекст (раздел 5, версия 4.12) ---------- */
 // Предложение с пропуском на месте целевого слова (прячем именно цель задания)
+/* 4.54 (QUEUE-161): прочерк один, даже когда вырезано два слова («der Zyklus» → «_____»).
+   Человек видит одно место и вписывает одно слово, а ответ ждёт двух. Прочерков теперь
+   ровно столько, сколько слов скрыто. */
+function gapMark(matched) {
+  const n = String(matched || '').trim().split(/\s+/).filter(Boolean).length || 1;
+  return Array(n).fill('_____').join(' ');
+}
 function makeGapSentence(sentence, word) {
   const s = String(sentence||''); if (!word) return { gapped:s, found:false, answer:word };
   // пробуем: всё слово → без ведущего артикля → последний токен (существительное)
@@ -6040,13 +6202,13 @@ function makeGapSentence(sentence, word) {
     if (!cand) continue;
     const re = new RegExp('(^|[^\\p{L}])('+cand.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\p{L}*)(?=[^\\p{L}]|$)','iu');
     const m = s.match(re);
-    if (m) return { gapped: s.replace(re, (mm,p1)=>p1+'_____'), found:true, answer:m[2] };
+    if (m) return { gapped: s.replace(re, (mm,p1)=>p1+gapMark(m[2])), found:true, answer:m[2] };
   }
   // не нашли (другая форма) — спрячем существительное по основе (первые 4 буквы)
   if (noun.length>=4) {
     const re2 = new RegExp('(^|[^\\p{L}])('+noun.slice(0,4).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\p{L}*)(?=[^\\p{L}]|$)','iu');
     const m2 = s.match(re2);
-    if (m2) return { gapped: s.replace(re2,(mm,p1)=>p1+'_____'), found:true, answer:m2[2] };
+    if (m2) return { gapped: s.replace(re2,(mm,p1)=>p1+gapMark(m2[2])), found:true, answer:m2[2] };
   }
   return { gapped: s, found:false, answer:word };
 }
@@ -6310,7 +6472,7 @@ function drillReviewContext(s, rd) {
 
 // Слово в контексте — пропуск в предложении (пункт 12, версия 4.20)
 function drillContext(s) {
-  const item = (L.constructs||[])[s.ci % (L.constructs||[1]).length];
+  const item = drillItemAt('context', s.ci);
   if (!item) { L.i++; return renderStep(); }
   const dictWord = item.focus_word || (item.expected_target||'').split(/\s+/).find(x=>x.length>2) || (item.expected_target||'').trim();
   const vEntry = L.words.find(w=>norm(w.term)===norm(dictWord)) || DB.vocab.find(w=>norm(w.term)===norm(dictWord)) || {};
@@ -6515,7 +6677,7 @@ function drillConstruct(s) {
     }
     // 1) локальная человечная проверка (без сети): точное / опечатка / только артикль
     const v = localVerdict(a, correctForm);
-    if (v && v.kind==='exact') { firstTry(key, true); return passOK(); }
+    if (v && v.kind==='exact') { firstTry(key, true); return passOK(null, a); }
     if (v && v.kind==='typo') { firstTry(key, true);
       return passOK({ note:`Верно, маленькая опечатка: правильно «${v.detail.exp}», вы написали «${v.detail.got}».` }); }
     if (v && v.kind==='article') { firstTry(key, true); if (c.focus_word) noteWordError(c.focus_word);
@@ -6531,7 +6693,7 @@ function drillConstruct(s) {
     } catch(e){}
     $('#check').disabled = false;
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(null); }
-    if (res.correct) { firstTry(key, true); return passOK(res); }
+    if (res.correct) { firstTry(key, true); return passOK(res, a); }
     firstTry(key, false);
     L.errors.construction++; if (c.focus_word) { noteWordError(c.focus_word); scheduleRetry(c.focus_word); }
     correctForm = (res && res.correct_form) || c.expected_target;
@@ -6543,11 +6705,17 @@ function drillConstruct(s) {
     showErrorRule(res);
     $('#ans').value=''; $('#ans').focus();
   };
-  function passOK(res) {
+  /* 4.54: при верном ответе хвалим фразу УЧЕНИКА, а не эталон (тот же принцип, что в квесте с
+     4.31/QUEUE-74). Эталон может быть беднее верного ответа — на прогоне v105 ученик писал
+     «Der Zyklus läuft.», а образцом ему показывали «Zyklus läuft.» без артикля, то есть
+     приложение своими руками учило ошибке. Показываем ответ ученика, когда он засчитан как
+     точный; в остальных случаях (опечатка, промах по артиклю, вердикт модели) — верную форму. */
+  function passOK(res, own) {
     $('#fb').className='feedback ok';
+    const shown = (own && String(own).trim()) ? String(own).trim() : correctForm;
     const note = res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
-    $('#fb').innerHTML = `✅ <b>${esc(correctForm)}</b>` + sayBtn(correctForm) + note;
-    speak(correctForm, DB.profile.targetLang);
+    $('#fb').innerHTML = `✅ <b>${esc(shown)}</b>` + sayBtn(shown) + note;
+    speak(shown, DB.profile.targetLang);
     if (res && res.articleSlip) {   // пункт 14: копим промахи по артиклям в адаптивное правило
       let r = DB.rules.find(x=>norm(x.title)==='артикли' || (x.categories||[]).includes('Артикли'));
       if (!r) { r = { title:'Артикли', summary:'Род существительного определяет артикль (der/die/das). Обращайте внимание на артикль при заучивании слова.', table:[], examples:[], categories:['Артикли'], cefr:'A1', lesson:L.code, status:'на закреплении', errors:0, date_added:today() }; DB.rules.push(r); }
@@ -6735,7 +6903,7 @@ async function runQuest(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`).join(', ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
         ${sc.scaffold?`<div id="questScaffold" style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
@@ -7088,8 +7256,13 @@ function tapMatch(rec, t) {
 // Запись сделана до 4.32 (нет морфологии) — её надо дозаполнить. Служебные слова пропускаем:
 // закрытые классы полностью описаны в Ядре языка (v64), контекст даёт 📘.
 function tapNeedsCard(w) {
-  if (!w || w.mv >= TAP_CARD_V) return false;
-  return !CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase());
+  if (!w) return false;
+  if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return false;
+  /* 4.54 (QUEUE-173): запись без транскрипции неполна, каким бы ни было mv. До v106 карточка
+     штамповалась полной безусловно, поэтому пустая транскрипция закреплялась навсегда: тап по
+     «der Zyklus» показывал слово без звучания и в Словарь уходило то же самое. */
+  if (!w.translit) return true;
+  return !(w.mv >= TAP_CARD_V);
 }
 
 async function fetchWordCard(token, sentence, strict) {
@@ -7099,18 +7272,27 @@ async function fetchWordCard(token, sentence, strict) {
     out = await Gemini.call({
       task:'translate_word', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
       word: token, sentence: sentence || '',
-      rules: TAP_CARD_RULES + (strict
+      rules: TAP_CARD_RULES + (strict === 'translit'
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции. Поле translit ОБЯЗАТЕЛЬНО: буквами native_lang, передаёт звучание формы surface.'
+        : strict
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал словарную форму, не связанную со словом «'+token+'». «'+token+'» — слово target_lang из sentence; верни term, формой которого «'+token+'» действительно является.'
         : '')
     }, TAP_CARD_SCHEMA);
   } catch(e) { return null; }
   if (!out || typeof out !== 'object') return null;
   out.surface = token;                       // гарантия кода: карточка всегда о тапнутом токене
-  out.mv = TAP_CARD_V;
   if (out.term && !tapRelated(token, out.term)) {
     if (!strict) return await fetchWordCard(token, sentence, true);
     out.term = ''; out.morph = ''; out.forms = ''; out.unverified = true;   // непроверяемое не показываем и не храним
   }
+  /* 4.54 (QUEUE-173): транскрипция — обязательное поле карточки (4.52). Пришла пустой — один
+     повтор запроса; не пришла и со второго раза — карточка НЕ помечается полной, и следующий
+     тап попробует снова. Ставить mv на неполную запись значит закрыть путь к починке. */
+  if (!out.translit && !strict) {
+    const again = await fetchWordCard(token, sentence, 'translit');
+    if (again && again.translit) return again;
+  }
+  if (out.translit) out.mv = TAP_CARD_V;
   return out;
 }
 
@@ -7134,7 +7316,8 @@ function saveTappedWord(w, tapped) {
     const repair = !(rec.mv >= TAP_CARD_V);
     ['translit','translation','part_of_speech','forms','morph'].forEach(k => { if (w[k] && (repair || !rec[k])) rec[k] = w[k]; });
     if (typeof w.is_irregular === 'boolean') rec.is_irregular = w.is_irregular;
-    rec.mv = TAP_CARD_V;
+    if (rec.translit) rec.mv = TAP_CARD_V;   // 4.54: без транскрипции запись остаётся к починке
+    else delete rec.mv;
     const sf = norm(tapped||'');
     if (sf && sf !== norm(stripArtG(rec.term))) rec.surfaces = [...new Set([...(rec.surfaces||[]), sf])].slice(0,8);
     if (!ex) DB.vocab.push(rec);
@@ -7575,7 +7758,7 @@ async function runSuperquestAct(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`).join(', ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
         ${sc.scaffold?`<div style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
