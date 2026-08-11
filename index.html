@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v104';
+const APP_VERSION = 'v105';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -2873,82 +2873,209 @@ function profileHue(p){
    осталось восемь таких же кусков, а это неправда. Поэтому глубина языка показывается небом,
    у которого нет края: оно не заполняется, а густеет.
 
-     звёзды   — освоенные слова: чем больше выучено, тем гуще небо;
-     связи    — закреплённые правила: точки соединяются в конструкции;
-     палитра  — уровень CEFR: с каждым закрытым уровнем небо смещается по тону.
+     звёзды    — освоенные слова: чем больше выучено, тем гуще небо;
+     спектр    — частотность слова: голубые гиганты — самая ходовая лексика, красные
+                 карлики — редкое и профильное (4.54);
+     туманности— закреплённые правила: крупные своды видны как облака (4.54);
+     палитра   — уровень CEFR: тон туманностей и вуали смещается с каждым уровнем.
 
    Читается с одного взгляда и говорит то, чего кольцо сказать не может: можно пройти все
    уроки уровня и иметь редкое небо — значит проходил, но не усвоил.
    ============================================================ */
-const SKY_HUE = { A0: 205, A1: 195, A2: 170, B1: 140, B2: 45, C1: 25 };
+const SKY_HUE = { A0: 205, A1: 195, A2: 170, B1: 140, B2: 45, C1: 25 };   // тон туманностей и вуали
+
+/* 4.54. Спектральные классы: тип звезды задаёт ЧАСТОТНОСТЬ слова, а не уровень профиля.
+   Тон уровня CEFR ушёл с звёзд на туманности — иначе спектра не получается вовсе: одноцветное
+   небо выглядит ровной крупой, а настоящее небо разноцветно, и это единственный видимый признак,
+   по которому звёзды отличаются друг от друга. Частотность уже есть в Ядре (freq_rank), добывать
+   её отдельно не нужно. Крупные горячие звёзды мерцают слабее и медленнее, мелкие холодные —
+   чаще и резче: так же ведёт себя настоящее небо, и глаз получает иерархию без подписей. */
+const STAR_CLASSES = [
+  { hue:212, light:86, size:1.85, amp:0.34, spd:0.35 },   // O/B — голубой гигант: ядро языка
+  { hue:198, light:88, size:1.45, amp:0.52, spd:0.50 },   // A/F — бело-голубая
+  { hue: 48, light:82, size:1.10, amp:0.72, spd:0.70 },   // G   — жёлтая, солнечная: середина
+  { hue: 26, light:74, size:0.85, amp:0.88, spd:0.90 },   // K   — оранжевая
+  { hue:  8, light:66, size:0.66, amp:1.00, spd:1.15 }    // M   — красный карлик: редкое/профильное
+];
+function starClassOf(rec) {
+  if (!rec) return 2;                              // слова вне Ядра (фразы, импорт) — солнечные
+  if (rec.layer === 'interests') return 4;         // профессиональный слой — редкая лексика
+  const r = +rec.freq_rank || 999;
+  return r <= 150 ? 0 : r <= 400 ? 1 : r <= 800 ? 2 : r <= 998 ? 3 : 4;
+}
+/* Распределение освоенных слов по спектру. Небо рисует не сами слова (звёзд на карточке больше
+   или меньше, чем слов, — плотность масштабируется по площади), а их ПРОПОРЦИЮ: состав неба
+   честен, даже когда счёт точек не совпадает со счётом слов. */
+function masteredSpectrum() {
+  const core = new Map();
+  (DB && DB.core || []).forEach(c => core.set(norm(c.term), c));
+  const w = [0,0,0,0,0];
+  (DB && DB.vocab || []).forEach(v => { if (v.status === 'освоено') w[starClassOf(core.get(norm(v.term)))]++; });
+  return w.some(x => x) ? w : [0,0,1,0,0];
+}
+
 function progressSky(cv, stat) {
   if (!cv || !cv.getContext) return;
   const ctx = cv.getContext('2d'), DPR = Math.min(window.devicePixelRatio || 1, 2);
   const slow = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const hue = SKY_HUE[String(stat.level || 'A0').slice(0,2).toUpperCase()] ?? 205;
+  const spec = (stat.spectrum && stat.spectrum.length === 5 && stat.spectrum.some(x=>x)) ? stat.spectrum : [0,0,1,0,0];
+  const specSum = spec.reduce((s,x)=>s+x, 0);
   /* Плотность растёт быстро на первых словах и замедляется дальше: первые двадцать слов должны
      давать видимую разницу, иначе небо не отзывается на усилие. */
   const baseStars = 8 + 46 * (1 - Math.exp(-(stat.mastered || 0) / 40));
   const REF_AREA = 320 * 74;   // площадь прежней узкой полосы — точка отсчёта плотности
-  let W = 0, H = 0, pts = [], stars = 0;
+  const TURN_SEC = 540;        // полный оборот неба вокруг полюса: ускоренные сутки
+  const MARG = 0.30;           // запас сектора по углу (рад) — зона, где точки перебрасываются
+  let W = 0, H = 0, nStars = 0, stars = [], dust = [], neb = [], sprites = [];
+  let pole = { x:0, y:0 }, a0 = 0, a1 = 0, r0 = 0, r1 = 0, last = 0;
+
+  /* Спрайты звёзд рисуются один раз: радиальный градиент на каждую точку в каждом кадре —
+     самая дорогая операция канваса, а точек стало больше (спектр + пыль). */
+  function makeSprites() {
+    sprites = STAR_CLASSES.map(c => {
+      const S = 24, off = document.createElement('canvas');
+      off.width = off.height = Math.round(S * DPR);
+      const g = off.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+      const gr = g.createRadialGradient(S/2,S/2,0, S/2,S/2,S/2);
+      /* Ядро резкое, гало быстро сходит на нет: широкий мягкий градиент давал боке — размытые
+         кружки вместо звёзд. Точка должна быть точкой, свечение — только ореолом вокруг неё. */
+      gr.addColorStop(0,    `hsla(${c.hue},55%,98%,1)`);              // ядро почти белое
+      gr.addColorStop(0.09, `hsla(${c.hue},92%,${c.light}%,0.95)`);   // цвет спектрального класса
+      gr.addColorStop(0.22, `hsla(${c.hue},95%,${c.light}%,0.34)`);
+      gr.addColorStop(0.55, `hsla(${c.hue},95%,${c.light}%,0.07)`);
+      gr.addColorStop(1,    `hsla(${c.hue},95%,${c.light}%,0)`);
+      g.fillStyle = gr; g.fillRect(0,0,S,S);
+      return off;
+    });
+  }
+  function pickClass() {
+    let r = Math.random() * specSum;
+    for (let i = 0; i < 5; i++) { r -= spec[i]; if (r <= 0) return i; }
+    return 2;
+  }
   function measure() {
     W = cv.clientWidth || 320; H = cv.clientHeight || 320;
     cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
-    /* 4.53: канвас теперь фон всей карточки, а не узкая полоса — без масштабирования небо
-       на большой площади выглядело бы пусто, хотя слов освоено столько же. */
+    /* 4.53: канвас — фон всей карточки, а не узкая полоса; без масштабирования небо на большой
+       площади выглядело бы пусто, хотя слов освоено столько же. */
     const areaScale = Math.max(1, Math.min(5, (W * H) / REF_AREA));
-    stars = Math.round(baseStars * areaScale);
+    nStars = Math.round(baseStars * areaScale);
+    /* 4.54: полюс мира — за пределами карточки, слева-снизу. Небо поворачивается вокруг него
+       ЦЕЛИКОМ: взаимное расположение звёзд неизменно, меняется только общий угол. Именно этим
+       небо отличается от воды — в 4.53 каждая точка плыла своим вектором и отскакивала от краёв,
+       и картинка читалась как пузырьки. Точки хранятся в полярных координатах от полюса, кадр
+       меняет только угол — движение физически не может «разбежаться». */
+    pole = { x: -0.20 * W, y: 1.30 * H };
+    const cor = [[0,0],[W,0],[0,H],[W,H]].map(([x,y]) => {
+      const dx = x - pole.x, dy = y - pole.y;
+      return { a: Math.atan2(dy, dx), r: Math.hypot(dx, dy) };
+    });
+    /* Полюс строго левее и ниже карточки, поэтому все углы лежат в (-π/2, 0) — перехода через ±π,
+       на котором ломается сравнение углов, здесь не бывает. */
+    a0 = Math.min(...cor.map(c=>c.a)) - MARG;   a1 = Math.max(...cor.map(c=>c.a)) + MARG;
+    r0 = Math.max(4, Math.min(...cor.map(c=>c.r)) - 12);   r1 = Math.max(...cor.map(c=>c.r)) + 12;
   }
   function seedSky() {
-    pts = [];
-    /* Скопления: слова тяготеют к темам, поэтому точки садятся вокруг нескольких центров,
-       а не равномерно по полю. Чем больше правил закреплено, тем отчётливее сгущения. */
+    /* Сектор шире карточки: точка, вышедшая за дальний край, возвращается на ближний, и оба края
+       лежат ЗА пределами видимой области — переброс не виден, всплывающих точек нет. */
+    const cardA = W * H, secA = 0.5 * (a1 - a0) * (r1*r1 - r0*r0);
+    const kArea = Math.max(1, Math.min(3.2, secA / cardA));
+    const N = Math.min(800, Math.round(nStars * kArea));
+    /* Скопления: слова тяготеют к темам, поэтому часть точек садится вокруг центров, а число
+       центров растёт с количеством закреплённых правил. Остальные — поле: если ВСЕ звёзды уходят
+       в скопления, половина карточки остаётся пустой, а пустое небо читается как «ничего не
+       выучено». Сектор шире карточки, поэтому число центров масштабируется вместе с площадью,
+       иначе все скопления могут оказаться за кадром. */
+    const nCores = Math.round(Math.max(2, Math.min(5, 2 + (stat.rules || 0) / 40)) * kArea);
+    /* Радиус берётся через корень: равномерная выборка по (угол, радиус) даёт в декартовых
+       координатах плотность ∝ 1/r — небо сгущается у полюса и пустеет к дальнему краю карточки.
+       sqrt-выборка распределяет точки равномерно по ПЛОЩАДИ. */
+    const rr = () => Math.sqrt(r0*r0 + Math.random()*(r1*r1 - r0*r0));
     const cores = [];
-    const nCores = Math.max(2, Math.min(5, 2 + Math.round((stat.rules || 0) / 40)));
-    for (let c = 0; c < nCores; c++) cores.push({ x: (0.18 + 0.64*Math.random())*W, y: (0.2 + 0.6*Math.random())*H });
-    for (let i = 0; i < stars; i++) {
+    for (let c = 0; c < nCores; c++) cores.push({ a: a0 + (0.12 + 0.76*Math.random())*(a1-a0), r: rr() });
+    stars = [];
+    for (let i = 0; i < N; i++) {
+      let a, rad;
+      if (i % 5 < 2) {                                  // 40% — скопления тем
+        const c = cores[i % cores.length];
+        const spread = (r1 - r0) * (0.05 + 0.11*Math.random());
+        const ang = Math.random()*Math.PI*2, k = Math.random();
+        rad = Math.max(r0, Math.min(r1, c.r + Math.sin(ang)*spread*k));
+        /* Угловой разброс делится на радиус: иначе дальние скопления растягивало бы веером. */
+        a = Math.max(a0, Math.min(a1, c.a + (Math.cos(ang)*spread*k) / Math.max(1, rad)));
+      } else {                                          // 60% — поле
+        a = a0 + Math.random()*(a1 - a0); rad = rr();
+      }
+      const cls = pickClass();
+      stars.push({ a, rad, cls, sz: STAR_CLASSES[cls].size * (0.75 + Math.random()*0.6),
+                   ph: Math.random()*Math.PI*2 });
+    }
+    /* Звёздная пыль: почти невидимая крупа без гало и мерцания. Даёт глубину — небо перестаёт
+       быть россыпью отдельных точек на пустом фоне. */
+    dust = [];
+    const Nd = Math.min(1200, Math.round(N * 1.6));
+    for (let i = 0; i < Nd; i++)
+      dust.push({ a: a0 + Math.random()*(a1-a0), rad: rr(), al: 0.05 + Math.random()*0.15 });
+    /* Туманности: крупные своды правил. Одна туманность на ~45 закреплённых правил, тон — от
+       уровня CEFR (палитра уровня живёт здесь, а не на звёздах). Вращаются вместе с небом. */
+    neb = [];
+    const nNeb = Math.max(0, Math.min(4, Math.round((stat.rules || 0) / 45)));
+    for (let i = 0; i < nNeb; i++) {
       const c = cores[i % cores.length];
-      const spread = Math.min(W, H) * (0.10 + 0.22*Math.random());
-      const ang = Math.random()*Math.PI*2;
-      pts.push({
-      x: Math.max(2, Math.min(W-2, c.x + Math.cos(ang)*spread*Math.random())),
-      y: Math.max(2, Math.min(H-2, c.y + Math.sin(ang)*spread*Math.random())),
-      vx: (Math.random()-.5)*0.06, vy: (Math.random()-.5)*0.06,
-      r: 0.5 + Math.random()*1.9, ph: Math.random()*Math.PI*2
-    });
+      neb.push({ a: c.a, rad: c.r, R: Math.min(W,H) * (0.30 + 0.22*Math.random()), h: hue + (i % 2 ? 18 : -14) });
     }
   }
+  const px = o => pole.x + o.rad * Math.cos(o.a);
+  const py = o => pole.y + o.rad * Math.sin(o.a);
   function frame(now) {
-    if (!cv.isConnected) return;
-    ctx.clearRect(0,0,W,H);
-    const t = now/1000;
-    pts.forEach(p => {
-      if (!slow) { p.x += p.vx; p.y += p.vy; }
-      if (p.x < 0 || p.x > W) p.vx *= -1;
-      if (p.y < 0 || p.y > H) p.vy *= -1;
+    if (!cv.isConnected) return;                     // экран сменился — анимация умирает сама
+    if (!last) last = now;
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    const dA = slow ? 0 : dt * 2 * Math.PI / TURN_SEC, span = a1 - a0, t = now / 1000;
+    ctx.clearRect(0, 0, W, H);
+    // 1) туманности — нижний слой
+    neb.forEach(n => {
+      n.a += dA; if (n.a > a1) n.a -= span;
+      const x = px(n), y = py(n);
+      if (x < -n.R || x > W + n.R || y < -n.R || y > H + n.R) return;
+      /* Много промежуточных стопов: на альфе порядка 0.05 трёх точек мало — 8-битный градиент
+         разбивается на видимые концентрические кольца вместо облака. */
+      const g = ctx.createRadialGradient(x, y, 0, x, y, n.R);
+      g.addColorStop(0,    `hsla(${n.h},70%,62%,0.075)`);
+      g.addColorStop(0.22, `hsla(${n.h},70%,60%,0.055)`);
+      g.addColorStop(0.42, `hsla(${n.h},70%,58%,0.036)`);
+      g.addColorStop(0.60, `hsla(${n.h},70%,56%,0.021)`);
+      g.addColorStop(0.78, `hsla(${n.h},70%,53%,0.010)`);
+      g.addColorStop(0.90, `hsla(${n.h},70%,51%,0.004)`);
+      g.addColorStop(1,    `hsla(${n.h},70%,50%,0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, n.R, 0, Math.PI*2); ctx.fill();
     });
-    /* 4.52: линий нет вовсе — космос не рисуют соединениями. Структура читается плотностью:
-       где звёзд больше, глаз сам видит скопление. Соединённые узлы давали нейросеть, а не небо. */
-    /* 4.53: ровное дыхание синусоидой на всей карточке выглядело как тусклые пузырьки в воде —
-       мерцание было слишком плавным (диапазон яркости 0.05–0.5) и без свечения. Пик мерцания
-       сузили степенью (резкая вспышка, а не плавный вдох-выдох), добавили мягкое гало вокруг
-       каждой точки радиальным градиентом и подняли яркость ядра к почти-белому на пике. */
-    pts.forEach(p => {
-      const cyc = (t*0.6 + p.ph) % (Math.PI*2);
-      const tw = Math.pow(Math.max(0, Math.sin(cyc)), 3);
-      const alpha = 0.18 + 0.82*tw;
-      const glowR = p.r * (2 + 2*tw);
-      const glow = ctx.createRadialGradient(p.x,p.y,0, p.x,p.y,glowR);
-      glow.addColorStop(0, `hsla(${hue},95%,80%,${(alpha*0.5).toFixed(3)})`);
-      glow.addColorStop(1, `hsla(${hue},95%,80%,0)`);
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(p.x,p.y,glowR,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle = `hsla(${hue},25%,${(85+tw*13).toFixed(0)}%,${alpha.toFixed(3)})`;
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    // 2) пыль
+    ctx.fillStyle = `hsla(${hue},35%,90%,1)`;
+    dust.forEach(d => {
+      d.a += dA; if (d.a > a1) d.a -= span;
+      const x = px(d), y = py(d);
+      if (x < 0 || x > W || y < 0 || y > H) return;
+      ctx.globalAlpha = d.al; ctx.fillRect(x, y, 1, 1);
     });
+    ctx.globalAlpha = 1;
+    /* 3) звёзды. Линий нет вовсе (4.52): космос не рисуют соединениями, структура читается
+       плотностью. Пик мерцания сужен степенью (4.53) — резкая вспышка, а не вдох-выдох. */
+    stars.forEach(s => {
+      s.a += dA; if (s.a > a1) s.a -= span;
+      const x = px(s), y = py(s);
+      if (x < -6 || x > W + 6 || y < -6 || y > H + 6) return;
+      const cl = STAR_CLASSES[s.cls];
+      const tw = Math.pow(Math.max(0, Math.sin(t * 0.6 * cl.spd + s.ph)), 3) * cl.amp;
+      const R = s.sz * (2.9 + 2.8 * tw);
+      ctx.globalAlpha = 0.22 + 0.78 * tw;
+      ctx.drawImage(sprites[s.cls], x - R, y - R, R * 2, R * 2);
+    });
+    ctx.globalAlpha = 1;
     requestAnimationFrame(frame);
   }
-  measure(); seedSky(); requestAnimationFrame(frame);
+  makeSprites(); measure(); seedSky(); requestAnimationFrame(frame);
   window.addEventListener('resize', () => { measure(); seedSky(); }, { passive:true });
 }
 
@@ -3929,7 +4056,7 @@ function mainMenu() {
       <button class="menu-item" id="mSet"><span class="ic">⚙️</span><span class="t"><b>Настройки</b><small>Профиль · ключ · экспорт базы</small></span><span class="chev">›</span></button>
     </div>`, { isMenu: true });
   try { progressSky(document.getElementById('skyCv'),
-        { mastered, rules:(DB.rules||[]).length, level: currentLevel() }); } catch(_) {}
+        { mastered, rules:(DB.rules||[]).length, level: currentLevel(), spectrum: masteredSpectrum() }); } catch(_) {}
   if (orphanA0 && document.getElementById('mResumeA0')) {
     document.getElementById('mResumeA0').onclick = () => runA0Lesson(cachedA0);   // 4.29: контент урока A0 в снимке — регенерации нет
   }
