@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v106';
+const APP_VERSION = 'v107';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -5290,24 +5290,16 @@ function targetDefect(sentence, words) {
 function bareTargetNouns(sentence, words) {
   const text = String(sentence || '');
   if (!text) return [];
-  let hits = [];
-  try { hits = bareNounHits(text); } catch(_) { hits = []; }
-  const seen = new Set(hits.map(h => norm(h)));
+  const arts = nounIndex(words || []);   // слов урока может ещё не быть в базе — передаём отдельно
+  if (!arts.size) return [];
   const toks = tokenize(text);
-  (words || []).forEach(w => {
-    if (!w || !w.term) return;
-    if (String(w.part_of_speech || '').toLowerCase().indexOf('noun') !== 0) return;
-    const a = String(w.article || '').trim();
-    if (!a || /[\s,;/()]/.test(a)) return;
-    const key = norm(w.term);
-    toks.forEach((tk, i) => {
-      if (tk !== key) return;
-      if (i > 0 && isDeterminer(toks[i-1])) return;
-      const hit = a + ' ' + String(w.term).trim();
-      if (!seen.has(norm(hit))) { seen.add(norm(hit)); hits.push(hit); }
-    });
+  const hits = [];
+  toks.forEach((t, i) => {
+    const hit = arts.get(t); if (!hit) return;
+    if (i > 0 && isDeterminer(toks[i-1])) return;
+    hits.push(hit);
   });
-  return hits.slice(0, 6);
+  return [...new Set(hits)].slice(0, 6);
 }
 /* Починка дефектных эталонов одним пакетным запросом (4.54). До v106 негодный эталон просто
    выбрасывался, и урок худел на задание; починка дешевле потери материала. Упрямые — те, у
@@ -6306,14 +6298,40 @@ function localVerdict(user, correct) {
 /* Существительные эталона, стоящие без артикля и без определителя (4.35). Слово считается
    существительным по записи Ядра/Словаря с непустым полем article, поэтому проверка живёт ровно
    в тех языках, где артикли есть: пустой набор артиклей — пустой ответ и полное молчание. */
+/* Индекс существительных: КЛЮЧ — само слово без артикля, ЗНАЧЕНИЕ — «артикль + слово» (4.55).
+   Артикль лежит в базе двумя способами, и до v107 учитывался только один. Слово из Ядра урока
+   хранит артикль отдельным полем (`article:'die'`), а слово, пришедшее из глоссария задания,
+   тап-перевода или сцены квеста, — ВНУТРИ термина (`term:'die Fachkraft'`, `article:''`),
+   потому что контракт требует словарную форму с артиклем именно в поле term. Индекс строился
+   по полю article, поэтому вся вторая половина словаря была невидима: на прогоне v106 эталон
+   «Fachkraft stoppt.» прошёл проверку, хотя «die Fachkraft» лежала в базе. Ключом к тому же
+   было бы «die fachkraft» — два слова, которые с токеном «fachkraft» не совпадут никогда.
+   Теперь артикль принимается из любого места, а ключ всегда одно слово. */
+function nounIndex(extra){
+  const A = articleSet();
+  const m = new Map();
+  if (!A.size) return m;
+  const put = w => {
+    if (!w || !w.term) return;
+    let term = String(w.term).trim();
+    let art  = String(w.article || '').trim();
+    if (/[\s,;/()]/.test(art)) art = '';                 // пояснение, а не артикль
+    const toks = term.split(/\s+/);
+    if (toks.length > 1 && A.has(norm(toks[0]))) {       // артикль внутри самого термина
+      if (!art) art = toks[0];
+      term = toks.slice(1).join(' ');
+    }
+    if (!art || /\s/.test(term)) return;                 // без артикля или не одно слово — судить не о чем
+    m.set(norm(term), art + ' ' + term);
+  };
+  ((DB && DB.core) || []).forEach(put);
+  ((DB && DB.vocab) || []).forEach(put);
+  (extra || []).forEach(put);
+  return m;
+}
 function bareNounHits(text){
-  const A = articleSet(); if (!A.size) return [];
+  const arts = nounIndex(); if (!arts.size) return [];
   const toks = tokenize(text); if (!toks.length) return [];
-  const arts = new Map();
-  const put = w => { if (!w || !w.term) return;
-    const a = String(w.article||'').trim();
-    if (a && !/[\s,;/()]/.test(a)) arts.set(norm(w.term), a + ' ' + String(w.term).trim()); };
-  ((DB && DB.core) || []).forEach(put); ((DB && DB.vocab) || []).forEach(put);
   const hits = [];
   toks.forEach((t, i) => {
     const hit = arts.get(t); if (!hit) return;          // словарная запись: «артикль + слово как в словаре»
@@ -6361,22 +6379,23 @@ function glossaryGaps(text, glossary, scaffold){
    (der Modus → der Automatikmodus), и именно это звено правило пропустило, объяснив вместо него
    заглавную букву и слитное написание. Код находит опору — словарную запись хвоста — и передаёт
    её проверяльщику фактом, чтобы правилу было от чего оттолкнуться. */
+/* 4.55: тот же индекс, что и у проверки артикля. Прежний перебор смотрел только на поле
+   `article`, поэтому слово, хранящее артикль внутри термина, опорой для разбора составного
+   стать не могло — та же слепота, что и в bareNounHits. */
 function compoundHints(text){
   const toks = tokenize(text); if (!toks.length) return [];
-  const src = [...((DB && DB.core) || []), ...((DB && DB.vocab) || [])];
-  const nouns = src.filter(w => w && w.term && String(w.article||'').trim() && !/[\s,;/()]/.test(String(w.article).trim()));
+  const arts = nounIndex(); if (!arts.size) return [];
   const out = [], O = origBy(text);
   toks.forEach(t => {
     if (t.length < 8) return;
-    if (nouns.some(w => norm(w.term) === t)) return;             // цельное слово, уже в словаре
-    let best = null;
-    nouns.forEach(w => {
-      const tail = norm(w.term);
+    if (arts.has(t)) return;                                     // цельное слово, уже в словаре
+    let bestTail = '', bestVal = '';
+    arts.forEach((val, tail) => {
       if (tail.length < 3 || tail.length >= t.length - 2) return;
       if (!t.endsWith(tail)) return;
-      if (!best || tail.length > norm(best.term).length) best = w;
+      if (tail.length > bestTail.length) { bestTail = tail; bestVal = val; }
     });
-    if (best) out.push((O.get(t) || t) + ': последний компонент — ' + String(best.article).trim() + ' ' + String(best.term).trim()
+    if (bestTail) out.push((O.get(t) || t) + ': последний компонент — ' + bestVal
                          + ', род и артикль составного берутся от него');
   });
   return [...new Set(out)].slice(0, 3);
@@ -6635,10 +6654,24 @@ function drillConstruct(s) {
   // «Собери фразу» (4.28): набор всех слов эталона, перемешанный — опора для сборки.
   // Набор строит ПРИЛОЖЕНИЕ из expected_target (split+shuffle) — логика, не Gemini.
   // Все слова, включая служебные, попадают в набор (иначе фразу не собрать); каждое — с тап-переводом.
-  const bankWords = String(c.expected_target||'').trim().split(/\s+/)
+  /* 4.55 (QUEUE-174): артикль идёт в наборе ОДНОЙ фишкой со своим существительным
+     («Die Fachkraft», а не «Die» + «Fachkraft»). Разрезание по пробелам отрывало артикль от
+     слова — прямо против правила 4.51: артикль и род запоминаются только в связке, порознь в
+     них запоминать нечего. Задание при этом остаётся тем, чем задумано (порядок слов), а не
+     превращается в угадывание артикля. Тап уходит по существительному — карточка уже
+     показывает словарную форму с артиклем, поэтому путь тап-перевода не меняется. */
+  const bankTokens = String(c.expected_target||'').trim().split(/\s+/)
     .map(x=>x.replace(/^[«»"'(]+|[.,!?;:«»"')]+$/g,'')).filter(Boolean);
-  const bankHTML = bankWords.length
-    ? `<div class="note" style="margin:8px 0 4px;line-height:2">🧩 Соберите фразу из слов <span style="opacity:.6">(тап — перевод)</span>:<br>${shuffle(bankWords.slice()).map(word=>`<span class="tapword tapall" data-word="${esc(word)}">${esc(word)}</span>`).join(', ')}</div>` : '';
+  const bankChips = [];
+  for (let bi = 0; bi < bankTokens.length; bi++) {
+    const cur = bankTokens[bi], nxt = bankTokens[bi+1];
+    let glued = false;
+    try { glued = !!nxt && articleSet().has(norm(cur)); } catch(_) {}
+    if (glued) { bankChips.push({ show: cur + ' ' + nxt, tap: nxt }); bi++; }
+    else bankChips.push({ show: cur, tap: cur });
+  }
+  const bankHTML = bankChips.length
+    ? `<div class="note" style="margin:8px 0 4px;line-height:2">🧩 Соберите фразу из слов <span style="opacity:.6">(тап — перевод)</span>:<br>${shuffle(bankChips.slice()).map(ch=>`<span class="tapword tapall" data-word="${esc(ch.tap)}">${esc(ch.show)}</span>`).join(', ')}</div>` : '';
   /* 4.41 (QUEUE-105в): формулировку задаёт приложение. Модель присылала «Переведите фразу на
      немецкий язык», а строкой ниже стояло «Соберите фразу из слов» — два разных упражнения в
      одном задании. Если слова даны, перевод уже сделан за ученика: остаётся порядок слов. */
@@ -7209,7 +7242,16 @@ function tapAllWordsHTML(text) {
    заполняется одним запросом и кэшируется в Словаре навсегда.
    ===================================================================== */
 const TAP_CARD_V = 2;                       // версия схемы карточки; запись старее — дозаполняется на месте
-const stripArtG = x => String(x||'').trim().replace(/^(der|die|das|ein|eine)\s+/i,'');
+/* 4.55: список артиклей брался из кода и был немецким — тот же дефект, что закрыт в 4.35 для
+   проверки ответа. Набор берётся из языка (Ядро + поля article словаря); нет артиклей в языке —
+   ничего не отрезается, что и правильно. */
+const stripArtG = x => {
+  const s = String(x||'').trim();
+  const i = s.indexOf(' ');
+  if (i < 0) return s;
+  try { if (!articleSet().has(norm(s.slice(0, i)))) return s; } catch(_) { return s; }
+  return s.slice(i + 1).trim();
+};
 
 const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в тексте","term":"словарная форма","translit":"[транскрипция буквами native_lang]",'
   + '"translation":"перевод формы из текста на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other",'
