@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v108';
+const APP_VERSION = 'v109';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -639,6 +639,10 @@ const UI_EXTRA = [
     'Развилка — что делаем дальше?',
     'Распознано слов:',
     'Не взято',
+    '— это',
+    'а нужно',
+    'Вы написали',
+    'расхождение:',
     'технический код (есть цифры)',
     'не слово, а строка',
     'слишком короткое',
@@ -5072,7 +5076,26 @@ async function startLesson(code) {
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
         wordErr:{}, firstTryDone:{}, retryPlanned:{},
         _contentBuild: APP_VERSION };
-  fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
+  /* =====================================================================
+     4.56 (v109): КАРТОЧКИ СЛОВ ЧИНЯТСЯ ДО ГЕНЕРАЦИИ, А НЕ ПОСЛЕ.
+     `ensureLessonCards` написана в v99 и всё это время НЕ ВЫЗЫВАЛАСЬ ниоткуда — мёртвый код.
+     Отсюда тянулась вся история с артиклями: у слова без поля `article` (импорт, глоссарий,
+     недоработка генератора Ядра) артикль не появлялся никогда. В запрос на задания слова
+     уходят через `cardForPrompt`, который клеит артикль из этого поля, — модель получала голое
+     «Tastatur» и честно строила «Tastatur leuchtet.». Проверка эталона молчала по той же
+     причине: индекс существительных знает слово, только если артикль где-то записан.
+     Чинить надо на ВХОДЕ: полные карточки — и модель видит артикль, и проверка видит.
+     Порция 2 ждёт починку; порядок шагов урока от этого не меняется, ученик успевает пройти
+     повторение и презентацию, пока идёт фоновая работа.
+     ===================================================================== */
+  (async () => {
+    try {
+      const fixed = await ensureLessonCards(words);
+      if (Array.isArray(fixed) && fixed.length) L.words = fixed;
+      L.known = await ensureKnownArticles(known);
+    } catch(e) { console.warn('ensureLessonCards:', e && e.message); }
+    fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
+  })();
   renderStep();
 }
 
@@ -5200,6 +5223,43 @@ function cardDefect(w, targetLang) {
 
 /* Достройка дефектных карточек. Одним запросом на все сразу: слов обычно единицы, а лишний
    круг к модели стоит дороже, чем разбор ответа. */
+/* 4.56: known_vocab уходит в запрос на задания тем же списком и с той же бедой — существительное
+   без артикля. Чинить весь Словарь незачем: достаточно тех слов, что реально поедут в запрос.
+   Часть речи здесь неизвестна, поэтому спрашиваем только про артикль и только про язык, где он
+   бывает; ответ кладётся в базу, так что второй раз то же слово уже не спросим. */
+async function ensureKnownArticles(known) {
+  const list = Array.isArray(known) ? known : [];
+  if (!DB || !list.length) return list;
+  const tgt = DB.profile.targetLang;
+  if (ARTICLE_LANGS.indexOf(tgt) < 0) return list;
+  const pool = list.slice(-60);
+  const need = pool.filter(w => w && w.term && !w.article && !hasLeadingArticle(w.term)
+                             && !/\s/.test(String(w.term).trim())
+                             && !CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase()));
+  if (!need.length) return list;
+  try {
+    const r = await Gemini.call({
+      task: 'fix_vocab_cards', target_lang: langId(tgt), native_lang: langId(DB.profile.nativeLang),
+      words: need.map(w => ({ term: w.term, translation: w.translation || '' })),
+      rules: 'Для каждого слова определи часть речи и, если это существительное, верни его артикль '
+           + 'в словарной форме. Не существительное — article пустая строка. Слово не трогай, форму не меняй.',
+      schemaHint: '{"cards":[{"term":"то же слово","article":"артикль или пустая строка",'
+                + '"part_of_speech":"часть речи"}]}'
+    });
+    ((r && r.cards) || []).forEach(c => {
+      if (!c || !c.term) return;
+      const w = need.find(x => norm(x.term) === norm(c.term));
+      if (!w) return;
+      if (c.article) w.article = c.article;
+      if (c.part_of_speech) w.part_of_speech = c.part_of_speech;
+      const v = (DB.vocab || []).find(x => norm(x.term) === norm(w.term))
+             || (DB.core  || []).find(x => norm(x.term) === norm(w.term));
+      if (v) { if (c.article) v.article = c.article; if (c.part_of_speech) v.part_of_speech = c.part_of_speech; }
+    });
+    Storage.save(DB);
+  } catch(e) { console.warn('ensureKnownArticles:', e && e.message); }
+  return list;
+}
 async function ensureLessonCards(words) {
   if (!DB || !Array.isArray(words) || !words.length) return words;
   const tgt = DB.profile.targetLang;
@@ -6087,6 +6147,43 @@ function saveErrorRule(rule) {
   else DB.rules.push(rule);
   Storage.save(DB);
 }
+/* =====================================================================
+   4.56 — ОШИБКА ОБЪЯСНЯЕТСЯ, А НЕ КОНСТАТИРУЕТСЯ (билд v109)
+   Разбор ошибки давали только «сборка фразы» и квест — они гоняют ответ через check_answer.
+   Остальные четыре типа заданий печатали верный ответ и «запомните»: на прогоне v108 ответ
+   «Das Tastatur leuchtet.» получил крестик без единого слова о том, что не так род. Крестик
+   без разбора не учит ничему, кроме того, что ученик ошибся, — а он это и так видит.
+   Механика делится по природе ответа: свободную ФРАЗУ разбирает модель (только она знает,
+   почему именно эта фраза неверна), одиночное СЛОВО и выбор варианта разбирает код — там
+   расхождение видно из базы, и запрос добавил бы задержку, не добавив смысла.
+   ===================================================================== */
+async function explainWrong(expected, given, opts) {
+  const o = opts || {};
+  try {
+    const p = DB.profile;
+    return await Gemini.call({
+      task:'check_answer', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      cefr: curCefr(), expected: expected, user_answer: given,
+      rules:'Проверяй по СМЫСЛУ и грамматике, НЕ по точному совпадению строк. Любой грамматически корректный вариант с тем же смыслом — correct=true (синонимы, иной порядок слов, иные но верные конструкции). Равноценные формы (in dem=im, zu dem=zum, an dem=am) — верны. Мелкие опечатки (1-2 буквы) — correct=true. '
+          + (o.focus ? ('Задание проверяет слово «'+o.focus+'» в нужной форме: если оно отсутствует или стоит не в той форме — correct=false. ') : '')
+          + 'Только при реальной смысловой/грамматической ошибке correct=false: в explanation РАЗБОР ИМЕННО ЭТОЙ ошибки на native_lang — назови, что не так (род, падеж, окончание, порядок слов, лишнее или недостающее слово), и почему верно иначе. Общие слова вроде «есть ошибка» запрещены. В rule_title/rule_summary правило под неё, rule_table — полный набор форм.' },
+      '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","note":"мягкая подсказка если ответ верен но есть лучший вариант, иначе пусто","explanation":"разбор именно этой ошибки на родном","correct_form":"верная фраза","correct_translit":"[транскрипция верной фразы родными буквами]","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
+  } catch(e) { console.warn('explainWrong:', e && e.message); return null; }
+}
+/* Разбор одиночного слова — целиком на коде. Что можно сказать честно, не спрашивая модель:
+   где именно разошлись буквы и, если перепутаны два слова словаря, чем они друг от друга
+   отличаются по смыслу. */
+function wordMistakeHTML(given, correct, correctRec) {
+  const g = String(given || '').trim(), c = String(correct || '').trim();
+  if (!g) return '';
+  const other = (DB.vocab || []).concat(DB.core || []).find(w => w && w.term && norm(w.term) === norm(g)
+                 && norm(w.term) !== norm(c));
+  if (other && other.translation)
+    return `<br><span style="color:var(--dim);font-size:13px">📌 «${esc(dictForm(other))}» ${lbl('— это')} «${esc(other.translation)}»${correctRec && correctRec.translation ? `, ${lbl('а нужно')} «${esc(dictForm(correctRec))}» — «${esc(correctRec.translation)}»` : ''}.</span>`;
+  if (editDistance(norm(g), norm(c)) <= Math.max(2, Math.floor(norm(c).length / 3)))
+    return `<br><span style="color:var(--dim);font-size:13px">📌 ${lbl('Вы написали')} «${esc(g)}» — ${lbl('расхождение:')} ${highlightDiff(g, c)}</span>`;
+  return '';
+}
 function showErrorRule(res) {
   const rule = ruleFromCheck(res);
   saveErrorRule(rule);
@@ -6186,9 +6283,12 @@ function drillRecog(s) {
         if (norm(x.dataset.t) === norm(w.term)) x.classList.add('right');
       });
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `${I18N.t('❌ Правильно:')} <b>${esc(w.term)}</b>`
+      /* 4.56: выбран не тот вариант — учащийся обязан узнать, ЧТО он выбрал. Пара «что взято —
+         что нужно» разбирается кодом: оба слова уже лежат в базе с переводом. */
+      $('#fb').innerHTML = `${I18N.t('❌ Правильно:')} <b>${esc(dictForm(w))}</b>`
         + (w.translit ? ` <span style="color:var(--orange)">${esc(w.translit)}</span>` : '')
-        + sayBtn(w.term);
+        + sayBtn(w.term)
+        + wordMistakeHTML(b.dataset.t, w.term, w);
       speak(w.term, DB.profile.targetLang);
       $('#next').disabled = false;
     }
@@ -6477,7 +6577,7 @@ function drillReviewContext(s, rd) {
     $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
     speak(answer, DB.profile.targetLang);
   };
-  $('#check').onclick = () => {
+  $('#check').onclick = async () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
     // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
@@ -6495,21 +6595,36 @@ function drillReviewContext(s, rd) {
       }
       if (remaining.length) extracted = remaining.join(' ');
     }
-    const ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a),norm(answer))<=1
+    let ok = norm(a)===norm(answer) || norm(a)===norm(w.term) || editDistance(norm(a),norm(answer))<=1
             || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1);
+    /* 4.56: локальное сравнение строк — не приговор. Ответ пишется целиком, поэтому верный
+       синоним или иной порядок слов сравнение не признаёт; и наоборот, ошибка в роде («Das
+       Tastatur») до v109 получала крестик без единого слова о том, что не так. Спрашиваем
+       разбор у модели — она же выносит вердикт, если код был строг сверх меры. */
+    let res = null;
+    if (!ok) {
+      $('#check').disabled = true;
+      $('#fb').className = 'feedback ok'; $('#fb').textContent = I18N.t('Проверяю…');
+      res = await explainWrong(fullSentence, a, { focus: answer });
+      $('#check').disabled = false;
+      if (res && res.correct) ok = true;
+    }
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence)
+        + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
+      const why = (res && res.explanation) ? `❌ ${esc(res.explanation)}<br>` : '❌ ';
+      $('#fb').innerHTML = why + `<span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
+      if (res) showErrorRule(res);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
@@ -6565,7 +6680,7 @@ function drillContext(s) {
       speak(answer, DB.profile.targetLang); // QUEUE-10: авто-TTS при показе полного ответа
     }
   };
-  $('#check').onclick = () => {
+  $('#check').onclick = async () => {
     const a = $('#ans').value.trim();
     if (!a && !mustRetype) return;
     // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
@@ -6589,14 +6704,27 @@ function drillContext(s) {
     // rootMatch: ввод содержит корень ответа (первые N букв совпадают)
     const ansRoot = norm(answer).slice(0, Math.max(3, Math.floor(norm(answer).length*0.6)));
     const rootMatch = norm(a).includes(ansRoot) || (extracted && norm(extracted).includes(ansRoot));
-    const ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a),norm(answer))<=1
+    let ok = norm(a)===norm(answer) || norm(a)===norm(dictWord) || editDistance(norm(a),norm(answer))<=1
             || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1)
             || (!grammarKnown && rootMatch);
+    /* 4.56: локальное сравнение строк — не приговор. Ответ пишется целиком, поэтому верный
+       синоним или иной порядок слов сравнение не признаёт; и наоборот, ошибка в роде («Das
+       Tastatur») до v109 получала крестик без единого слова о том, что не так. Спрашиваем
+       разбор у модели — она же выносит вердикт, если код был строг сверх меры. */
+    let res = null;
+    if (!ok) {
+      $('#check').disabled = true;
+      $('#fb').className = 'feedback ok'; $('#fb').textContent = I18N.t('Проверяю…');
+      res = await explainWrong(fullSentence, a, { focus: answer });
+      $('#check').disabled = false;
+      if (res && res.correct) ok = true;
+    }
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       markSeen(dictWord);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence);
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence)
+        + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
@@ -6605,9 +6733,12 @@ function drillContext(s) {
       $('#fb').className='feedback bad';
       // QUEUE-04: при ошибке формы — показываем пояснение если есть
       const formNote = (answer !== dictWord) ? `<br><span style="color:var(--dim);font-size:13px">📌 <span>В этом предложении:</span> <b>${esc(answer)}</b> ${lbl('— форма слова')} «${esc(dictWord)}»</span>` : '';
-      $('#fb').innerHTML = `❌ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
+      /* Сбой связи не всплывает учащемуся: не вышло объяснить — показываем как раньше. */
+      const why = (res && res.explanation) ? `❌ ${esc(res.explanation)}<br>` : '❌ ';
+      $('#fb').innerHTML = why + `<span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
       attachTapAll($('#fb'), L.words);
       speak(fullSentence, DB.profile.targetLang);
+      if (res) showErrorRule(res);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
@@ -6644,7 +6775,11 @@ function drillWrite(s) {
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(w.term); mustRetype = true; }
       $('#fb').className='feedback bad';
-      $('#fb').innerHTML = `❌ Правильно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span><br>🧠 Введите верный вариант вручную, чтобы продолжить.`;
+      /* 4.56: одиночное слово разбирает код — расхождение видно из базы, запрос ничего бы не
+         добавил, кроме задержки. Показываем, ЧТО именно написано не так или какое слово было
+         перепутано, а не только верный ответ. */
+      $('#fb').innerHTML = `❌ Правильно: <b>${esc(dictForm(w))}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`
+        + wordMistakeHTML(a, w.term, w) + `<br>🧠 Введите верный вариант вручную, чтобы продолжить.`;
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
   };
