@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v109';
+const APP_VERSION = 'v110';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -639,6 +639,15 @@ const UI_EXTRA = [
     'Развилка — что делаем дальше?',
     'Распознано слов:',
     'Не взято',
+    'Послушайте текст целиком, потом запишете его по фразам.',
+    'Фраз в тексте:',
+    'Прослушать текст',
+    'Начать запись',
+    'Фраза',
+    'из',
+    'Следующая фраза',
+    'Аудирование:',
+    'фраз записано верно',
     '— это',
     'а нужно',
     'Вы написали',
@@ -5072,7 +5081,7 @@ async function startLesson(code) {
         reviewWords: recapItems.map(w=>({ term:w.term, translation:w.translation||'' })),
         chunk2:{state:'idle',promise:null,err:null},
         lvl, known,
-        errors:{ recognition:0, writing:0, construction:0, quest:0 },
+        errors:{ recognition:0, writing:0, construction:0, quest:0, listening:0 },   // 4.57: аудирование считается отдельно от письма
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
         wordErr:{}, firstTryDone:{}, retryPlanned:{},
         _contentBuild: APP_VERSION };
@@ -5379,11 +5388,13 @@ function bareTargetNouns(sentence, words) {
   const arts = nounIndex(words || []);   // слов урока может ещё не быть в базе — передаём отдельно
   if (!arts.size) return [];
   const toks = tokenize(text);
+  const O = origBy(text);
   const hits = [];
   toks.forEach((t, i) => {
-    const hit = arts.get(t); if (!hit) return;
+    const hit = nounArticleFor(t, arts); if (!hit) return;   // 4.57: в том числе составные
     if (i > 0 && isDeterminer(toks[i-1])) return;
-    hits.push(hit);
+    const orig = O.get(t);
+    hits.push(orig ? (hit.split(/\s+/)[0] + ' ' + orig) : hit);
   });
   return [...new Set(hits)].slice(0, 6);
 }
@@ -5859,17 +5870,63 @@ function dictationMode(cefr) {
   return 'gloss';
 }
 
-/* Выбор фразы: из предложений, собранных в этом уроке, берём ближайшую по длине к целевому
-   диапазону ступени. Ничего не генерируем — озвучка и фразы уже есть. */
-function pickDictationPhrase(mode) {
+/* =====================================================================
+   4.57 — ДИКТАНТ СВЯЗНЫМ ТЕКСТОМ (QUEUE-167; билд v110)
+   Диктант из одной фразы диктантом не был. Школьный диктант — это текст, который читают ПО
+   ПРЕДЛОЖЕНИЮ: слуховая память держит около двух секунд звучания, поэтому «прослушать пять фраз
+   и записать все пять» проверяло бы память, а не язык. Устройство: текст звучит один раз
+   целиком (чтобы понять, о чём речь), затем по фразе — прослушал, написал, проверил, следующая.
+   Внутренний счётчик «фраза 2 из 3»; в уроке задание остаётся ОДНИМ, двадцать вторым, иначе урок
+   раздувается втрое.
+   Объём растёт с уровнем. На время обкатки старт снижен до трёх фраз (решение 12.08.2026):
+   пять заметно длиннее всего остального в уроке, и цену этого надо сначала увидеть на живом
+   прохождении. DICT_LEN — единственное место, где объём меняется.
+   Лексика — только слова урока и ранее освоенные. Проверяется КОДОМ по словарю профиля, не
+   доверяется модели: незнакомое слово превращает диктант в угадывание орфографии.
+   ===================================================================== */
+const DICT_LEN = { A1: 3, A2: 4, B1: 5, B2: 5 };   // обкатка: было задумано 5/6/7-8
+function dictationCount(cefr) {
+  const lv = String(cefr || 'A1').toUpperCase().slice(0, 2);
+  return DICT_LEN[lv] || 5;
+}
+/* Фраза годится, если КАЖДОЕ её знаменательное слово известно: слова этого урока плюс Словарь.
+   Служебные слова и короткие формы не проверяем — они закрыты Ядром с первого дня. */
+function dictationLexOK(phrase) {
+  const known = new Set();
+  (L.words || []).forEach(w => { if (w && w.term) known.add(norm(w.term)); });
+  ((DB && DB.vocab) || []).forEach(w => {
+    if (!w || !w.term) return;
+    known.add(norm(w.term));
+    const t = String(w.term).trim().split(/\s+/);
+    if (t.length > 1) known.add(norm(t[t.length - 1]));   // «die Tür» хранится с артиклем
+  });
+  ((DB && DB.core) || []).forEach(w => { if (w && w.term && w.issued) known.add(norm(w.term)); });
+  const toks = tokenize(phrase);
+  if (!toks.length) return false;
+  return toks.every(tk => tk.length <= 3 || known.has(tk) || isDeterminer(tk));
+}
+/* Текст диктанта: несколько фраз урока подряд. Порядок сохраняем как в уроке — фразы одного
+   урока держат одну тему, поэтому идут связно без отдельной генерации. */
+function pickDictationText(mode, count) {
   const src = (L.constructs || []).map(c => String(c.expected_target || '')).filter(Boolean);
-  if (!src.length) return null;
+  if (!src.length) return [];
   const span = mode === 'short' ? [4, 6] : mode === 'full' ? [7, 10] : [4, 12];
-  const score = p => {
+  const fit = p => {
     const k = p.split(/\s+/).filter(Boolean).length;
     return k < span[0] ? span[0] - k : k > span[1] ? k - span[1] : 0;
   };
-  return src.slice().sort((a, b) => score(a) - score(b))[0];
+  const clean = src.filter(dictationLexOK);
+  /* Все фразы с незнакомой лексикой — диктант не собираем: лучше без задания, чем с угадыванием.
+     Но если чистых мало, берём сколько есть: текст короче задуманного всё равно диктант. */
+  const pool = clean.length ? clean : [];
+  if (!pool.length) return [];
+  const order = new Map(src.map((p, i) => [p, i]));
+  return pool.slice().sort((a, b) => fit(a) - fit(b)).slice(0, count)
+             .sort((a, b) => order.get(a) - order.get(b));
+}
+function pickDictationPhrase(mode) {
+  const t = pickDictationText(mode, 1);
+  return t.length ? t[0] : null;
 }
 
 /* Оценка ответа. Для dictogloss — по доле знаменательных слов эталона: восстанавливается
@@ -5885,76 +5942,98 @@ function checkDictation(input, answer, mode) {
 }
 
 function drillDictation(s, onDone) {
-  const mode = dictationMode(L.lvl);
-  const phrase = pickDictationPhrase(mode);
-  if (!phrase) { L.i++; return renderStep(); }
+  const mode  = dictationMode(L.lvl);
+  const text  = pickDictationText(mode, dictationCount(L.lvl));
+  if (!text.length) { L.i++; return renderStep(); }
   const slow  = (mode === 'gap' || mode === 'short') ? 0.7 : 0.92;
   const limit = (mode === 'gap' || mode === 'short') ? 0 : 2;   // 0 — прослушиваний не ограничиваем
-  let plays = 0;
+  let idx = 0, plays = 0, wrong = 0;
 
-  // A1: прячем одно слово урока — напечатать нужно только его
-  let gap = null, answer = phrase;
-  if (mode === 'gap') {
-    for (const w of (L.words || [])) {
-      const g = makeGapSentence(phrase, w.term);
-      if (g.found) { gap = g; answer = g.answer; break; }
-    }
-    if (!gap) { answer = phrase; }
-  }
   const hintText = mode === 'gloss'
     ? t('Прослушайте и передайте смысл своими словами.')
-    : gap ? t('Прослушайте и впишите пропущенное слово.')
-          : t('Прослушайте и напишите фразу целиком.');
+    : t('Прослушайте и напишите фразу целиком.');
 
-  Screen.show(`
-    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Диктант')}</div>
-    <div class="card">
-      <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
-      <p class="note" style="margin:0 0 10px;color:var(--accent)">🎯 ${esc(hintText)}</p>
-      ${gap ? `<div class="task-text target">${esc(gap.gapped)}</div>` : ''}
-      <button class="btn btn-ghost" id="play" style="margin:6px 0 10px">🔊 ${lbl('Прослушать')}</button>
-      <div class="note" id="plays" style="margin:0 0 8px"></div>
-      <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off"
-        placeholder="${esc(gap ? t('Пропущенное слово') : t('Напишите услышанное'))}"></textarea>
-      <div class="feedback" id="fb"></div>
-      <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-primary" id="check">Проверить</button>
-      </div>
-    </div>`);
-  bindAutoGrow('ans');
+  /* Шаг 0 — весь текст один раз подряд: человек должен понять, о чём речь, прежде чем писать. */
+  const intro = () => {
+    Screen.show(`
+      <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Диктант')}</div>
+      <div class="card">
+        <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
+        <p class="note" style="margin:0 0 10px;color:var(--accent)">🎯 ${lbl('Послушайте текст целиком, потом запишете его по фразам.')}</p>
+        <p class="note" style="margin:0 0 10px">${lbl('Фраз в тексте:')} <b style="color:var(--ink)">${text.length}</b></p>
+        <button class="btn btn-ghost" id="playAll" style="margin:6px 0 10px">🔊 ${lbl('Прослушать текст')}</button>
+        <button class="btn btn-primary" id="go" style="margin-top:6px">${lbl('Начать запись')}</button>
+      </div>`);
+    const playAll = () => speak(text.join(' '), DB.profile.targetLang, slow);
+    $('#playAll').onclick = playAll;
+    playAll();
+    $('#go').onclick = () => phrase();
+  };
 
-  const playsEl = $('#plays');
-  const paint = () => {
-    if (!limit) { playsEl.innerHTML = ''; return; }
-    const left = Math.max(0, limit - plays);
-    playsEl.innerHTML = `${lbl('Осталось прослушиваний:')} ${left}`;
-    if (!left) $('#play').disabled = true;
-  };
-  const play = () => {
-    if (limit && plays >= limit) return;
-    plays++; speak(phrase, DB.profile.targetLang, slow); paint();
-  };
-  $('#play').onclick = play;
-  play();                                     // первое воспроизведение сразу
+  /* Шаг N — одна фраза: прослушал, написал, проверил, дальше. */
+  const phrase = () => {
+    const answer = text[idx];
+    plays = 0;
+    Screen.show(`
+      <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Диктант')}</div>
+      <div class="card">
+        <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
+        <p class="note" style="margin:0 0 4px;color:var(--accent)">🎯 ${esc(hintText)}</p>
+        <p class="note" style="margin:0 0 10px">${lbl('Фраза')} ${idx+1} ${lbl('из')} ${text.length}</p>
+        <button class="btn btn-ghost" id="play" style="margin:6px 0 10px">🔊 ${lbl('Прослушать')}</button>
+        <div class="note" id="plays" style="margin:0 0 8px"></div>
+        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off"
+          placeholder="${esc(t('Напишите услышанное'))}"></textarea>
+        <div class="feedback" id="fb"></div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-primary" id="check">Проверить</button>
+        </div>
+      </div>`);
+    bindAutoGrow('ans');
 
-  $('#check').onclick = () => {
-    const a = $('#ans').value.trim();
-    if (!a) return;
-    const ok = checkDictation(a, answer, mode);
-    const fb = $('#fb');
-    fb.className = 'feedback ' + (ok ? 'ok' : 'bad');
-    fb.innerHTML = ok
-      ? `✅ ${esc(t('Верно!'))} <b>${esc(phrase)}</b>` + sayBtn(phrase)
-      : `❌ ${lbl('Правильно:')} <b>${esc(answer)}</b>` + sayBtn(phrase)
-        + (gap ? '' : `<br><span style="color:var(--dim)">${esc(phrase)}</span>`);
-    if (!ok) { L.errors.writing = (L.errors.writing || 0) + 1; }
-    $('#check').disabled = true;
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
-    btn.textContent = I18N.t('Дальше →');
-    btn.onclick = () => { L.ft.total++; if (ok) L.ft.ok++; onDone(); };
-    fb.after(btn);
+    const playsEl = $('#plays');
+    const paint = () => {
+      if (!limit) { playsEl.innerHTML = ''; return; }
+      const left = Math.max(0, limit - plays);
+      playsEl.innerHTML = `${lbl('Осталось прослушиваний:')} ${left}`;
+      if (!left) $('#play').disabled = true;
+    };
+    const play = () => {
+      if (limit && plays >= limit) return;
+      plays++; speak(answer, DB.profile.targetLang, slow); paint();
+    };
+    $('#play').onclick = play;
+    play();
+    paint();
+
+    $('#check').onclick = () => {
+      const a = $('#ans').value.trim();
+      if (!a) return;
+      const ok = checkDictation(a, answer, mode);
+      const fb = $('#fb');
+      fb.className = 'feedback ' + (ok ? 'ok' : 'bad');
+      fb.innerHTML = ok
+        ? `✅ ${esc(t('Верно!'))} <b>${esc(answer)}</b>` + sayBtn(answer)
+        : `❌ ${lbl('Правильно:')} <b>${esc(answer)}</b>` + sayBtn(answer)
+          + `<br><span style="color:var(--dim);font-size:13px">📌 ${lbl('Вы написали')} «${esc(a)}» — ${lbl('расхождение:')} ${highlightDiff(a, answer)}</span>`;
+      /* 4.57: аудирование считается ОТДЕЛЬНО. Раньше промах на слух шёл в письмо, и метрика
+         показывала проблему с орфографией там, где человек просто не расслышал. */
+      if (!ok) { wrong++; L.errors.listening = (L.errors.listening || 0) + 1; }
+      L.ft.total++; if (ok) L.ft.ok++;
+      $('#check').disabled = true;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
+      const last = (idx + 1 >= text.length);
+      btn.textContent = last ? I18N.t('Дальше →') : I18N.t('Следующая фраза');
+      btn.onclick = () => {
+        if (last) { L.dictation = { total: text.length, wrong }; return onDone(); }
+        idx++; phrase();
+      };
+      fb.after(btn);
+    };
   };
+
+  intro();
 }
 
 function renderStep() {
@@ -6157,6 +6236,18 @@ function saveErrorRule(rule) {
    почему именно эта фраза неверна), одиночное СЛОВО и выбор варианта разбирает код — там
    расхождение видно из базы, и запрос добавил бы задержку, не добавив смысла.
    ===================================================================== */
+/* Что показать в зелёной рамке при верном ответе (4.57). Ученик мог вписать одно пропущенное
+   слово — тогда его «фразы» не существует, и образцом остаётся эталон. Если он написал
+   предложение целиком, показываем именно его: эталон бывает беднее верного ответа, и подсовывать
+   его образцом значит учить ошибке. */
+function shownSentence(given, expected, res) {
+  const g = String(given || '').trim();
+  if (!g) return expected;
+  const words = g.split(/\s+/).filter(Boolean).length;
+  if (words < 2) return expected;               // вписано одно слово — фразы ученика нет
+  if (res && res.correct) return g;             // вердикт модели: ответ верен как написан
+  return (norm(g) === norm(expected)) ? g : expected;
+}
 async function explainWrong(expected, given, opts) {
   const o = opts || {};
   try {
@@ -6455,14 +6546,37 @@ function nounIndex(extra){
   (extra || []).forEach(put);
   return m;
 }
+/* 4.57 (QUEUE-178): составное существительное, которого ещё нет в базе целиком, проверка не
+   видела: «Beschickungstür» и «Fronttür» прошли мимо, хотя «die Tür» лежит в Словаре, и эталон
+   «Ich entriegele Fronttür.» ушёл к ученику без артикля. Род составного берётся от последнего
+   компонента — приложение уже знает это правило и объясняет его в `compoundHints`, только сама
+   проверка им не пользовалась. Ограничения те же, что в разборе составных: слово от 8 букв,
+   хвост от 3 и заметно короче слова; из подходящих берётся самый длинный хвост. */
+function nounArticleFor(token, arts){
+  const t = String(token || '');
+  const own = arts.get(t);
+  if (own) return own;
+  if (t.length < 8) return null;
+  let bestTail = '', bestVal = '';
+  arts.forEach((val, tail) => {
+    if (tail.length < 3 || tail.length >= t.length - 2) return;
+    if (!t.endsWith(tail)) return;
+    if (tail.length > bestTail.length) { bestTail = tail; bestVal = val; }
+  });
+  if (!bestTail) return null;
+  const art = bestVal.split(/\s+/)[0];        // род от последнего компонента, слово — целиком
+  return art + ' ' + t;
+}
 function bareNounHits(text){
   const arts = nounIndex(); if (!arts.size) return [];
   const toks = tokenize(text); if (!toks.length) return [];
+  const O = origBy(text);
   const hits = [];
   toks.forEach((t, i) => {
-    const hit = arts.get(t); if (!hit) return;          // словарная запись: «артикль + слово как в словаре»
+    const hit = nounArticleFor(t, arts); if (!hit) return;   // «артикль + слово как в словаре»
     if (i > 0 && isDeterminer(toks[i-1])) return;
-    hits.push(hit);
+    const orig = O.get(t);
+    hits.push(orig ? (hit.split(/\s+/)[0] + ' ' + orig) : hit);
   });
   return [...new Set(hits)].slice(0, 6);
 }
@@ -6611,11 +6725,12 @@ function drillReviewContext(s, rd) {
     }
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
+      const shown = shownSentence(a, fullSentence, res);   // 4.57 (QUEUE-179)
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence)
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), L.words);
-      speak(fullSentence, DB.profile.targetLang);
+      speak(shown, DB.profile.targetLang);
       $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
@@ -6722,11 +6837,17 @@ function drillContext(s) {
     if (!mustRetype) firstTry(key, ok);
     if (ok) {
       markSeen(dictWord);
+      /* 4.57 (QUEUE-179): образцом показываем фразу УЧЕНИКА, если он написал предложение целиком
+         и оно засчитано. На прогоне v109 ответ «Ich entriegele die Fronttür» был признан более
+         точным, чем эталон, — и тут же под ним стояло «Ich entriegele Fronttür.» без артикля.
+         Эталон уместен только когда вписано одно пропущенное слово: тогда фразы ученика просто
+         нет. То же правило, что в «сборке фразы» с 4.54. */
+      const shown = shownSentence(a, fullSentence, res);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence)
+      $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), L.words);
-      speak(fullSentence, DB.profile.targetLang);
+      speak(shown, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
@@ -7303,11 +7424,12 @@ async function finishLesson() {
   toast('Сохранено ✓');
 
   // --- завершающий экран (5.1): простая фраза, крупные кнопки ---
-  const code = L.code, hintsUsed = L.hints; L = null;
+  const code = L.code, hintsUsed = L.hints, dict = L.dictation || null; L = null;
   Screen.show(`
     <div class="eyebrow">${lbl('Точность:')} ${Math.round(acc*100)}% · ${lbl('подсказок:')} ${hintsUsed}</div>
     <h1>${lbl('Урок')} ${esc(code)} ${lbl('завершён, прогресс сохранён.')}</h1>
     <p class="sub">${diag?.note_native ? '💡 '+esc(diag.note_native) : (note==='REVIEW' ? lbl('Точность ниже 70% — лексика урока добавлена в усиленное повторение, но движемся вперёд.') : lbl('Что дальше?'))}</p>
+    ${dict && dict.total ? `<p class="note" style="margin:2px 0 6px">🎧 ${lbl('Аудирование:')} <b style="color:var(--ink)">${dict.total - dict.wrong}/${dict.total}</b> ${lbl('фраз записано верно')}</p>` : ''}
     ${hard.length?`<div class="chiplist">${hard.map(h=>`<span class="chip warn">⚠️ ${esc(h)}</span>`).join('')}</div><p class="note">Эти слова вернутся в Повторение и Суперквест.</p>`:''}
     <div style="height:8px"></div>
     <button class="btn btn-primary" id="bNext">${next.startsWith('EXAM_')?lbl('Экзамен')+' '+esc(next.replace('EXAM_','')):lbl('Следующий урок')+' '+esc(next)}</button>
