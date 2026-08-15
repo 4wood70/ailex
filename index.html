@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v111';
+const APP_VERSION = 'v112';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -639,6 +639,17 @@ const UI_EXTRA = [
     'Развилка — что делаем дальше?',
     'Распознано слов:',
     'Не взято',
+    'Собираю особенности языка — это один раз…',
+    'Где обычно ошибаются',
+    'Правила',
+    'Особенности языка',
+    'Разобрать подробно',
+    'Разбираю…',
+    'Связь барахлит — попробуйте позже',
+    'Чем этот язык устроен иначе, чем ваш родной, и что будет, если сделать по-родному.',
+    'Пока пусто — особенности собираются при создании профиля.',
+    'Особенность языка',
+    'Понятно, дальше',
     'Послушайте текст целиком, потом запишете его по фразам.',
     'Фраз в тексте:',
     'Прослушать текст',
@@ -2854,7 +2865,17 @@ async function coreBuildScreen(next){
       GrammarCore._failed = true;                         // курс идёт прежним путём: тему выбирает модель
       if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
     }
-  } else if (GrammarCore.needsRebuild()) {
+  }
+  // 4.59 (QUEUE-143): особенности пары — один запрос, тем же экраном. Сбой не критичен:
+  // курс идёт прежним путём, справки соберём при следующем запуске.
+  if (LangFeatures.needsBuild()) {
+    try { await LangFeatures.build(msg => Screen.loader(msg)); }
+    catch(e){
+      LangFeatures._failed = true;
+      if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
+    }
+  }
+  if (GrammarCore.needsRebuild()) {
     // QUEUE-64: карта прежнего поколения (парадигмы разрезаны по родам) — пересобрать один раз.
     // Сбой не критичен: остаётся прежняя карта, пересборку повторим при следующем запуске.
     try { await GrammarCore.rebuild(msg => Screen.loader(msg || 'Обновляю карту грамматики — это один раз…')); }
@@ -4185,11 +4206,138 @@ function showDictionary(letter, irrOnly) {
   });
 }
 
+/* =====================================================================
+   4.59 — ОСОБЕННОСТИ ЯЗЫКА (QUEUE-143; билд v112)
+   Справка об особенности отвечает на «почему так устроено» и «что будет, если сделать иначе», —
+   в отличие от правила, отвечающего на «как». Строится ОТ РАЗНИЦЫ пары: совпадающая черта не
+   поясняется вовсе (русскому про украинские падежи говорить незачем), поэтому набор особенностей
+   — свойство ПАРЫ языков, а не урока, и порождается один раз при создании профиля, вместе с
+   Ядром. Один запрос на профиль вместо запроса на каждый случай; дальше работает без сети.
+   Момент показа выбирает КОД по признакам, которые видит в данных урока (есть ли у слов артикль,
+   составные ли существительные, совпадает ли письменность). Оставить выбор момента модели значило
+   бы повторить ошибку, которую мы ловили пять билдов подряд: правило, живущее только в промпте,
+   рано или поздно нарушается. Особенность, признак которой кодом не выражается, помечается
+   фоновой и показывается на старте уровня.
+   Не более одной справки на урок, полминуты чтения. Дальше живут в Своде правил отдельным
+   разделом: у них другая природа, мешать их с грамматикой в одном списке не стоит.
+   ===================================================================== */
+const LFEAT_TRIGGERS = ['article','gender','compound','script','politeness','case','word_order','terminology','background'];
+const LangFeatures = {
+  _failed: false,
+  list(){ return (DB && Array.isArray(DB.lfeat)) ? DB.lfeat : []; },
+  meta(){ if (!Array.isArray(DB.lfeat)) DB.lfeat = [];
+          if (!DB.lfeatMeta) DB.lfeatMeta = { built:false, shown:[] };
+          return DB.lfeatMeta; },
+  needsBuild(){ return !(this._failed || !DB || !DB.profile) && !this.meta().built; },
+  async build(onStep){
+    const p = DB.profile;
+    onStep && onStep(t('Собираю особенности языка — это один раз…'));
+    const r = await Gemini.call({
+      task:'generate_language_features',
+      target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      triggers: LFEAT_TRIGGERS,
+      rules:'Верни 6-10 особенностей ЦЕЛЕВОГО языка, которые СУЩЕСТВЕННО отличают его от РОДНОГО языка учащегося. '
+        + 'Отличие — обязательное условие: если черта в обоих языках устроена одинаково, её НЕ включай (носителю русского не нужна справка о падежах в украинском). '
+        + 'Каждая справка объясняет ПОЧЕМУ язык так устроен и ЧТО БУДЕТ, если сделать по-родному, а НЕ как образуется форма — форму объясняет свод правил. '
+        + 'Примеры того, о чём стоит писать: род и его отсутствие; обращение по полу и семейному положению; вежливые формы и цена ошибки в них; письменность и направление письма; '
+        + 'отношение языка к терминологии (чеканит своё или заимствует); составные слова; жёсткий или свободный порядок слов. '
+        + 'body — 2-4 фразы, полминуты чтения, без таблиц и списков форм. consequence — одной фразой, что произойдёт при ошибке (от «поймут, но странно» до «прозвучит грубо»). '
+        + 'trigger — ОДНО значение из списка triggers: признак, по которому приложение поймёт, что явление встретилось в уроке. Если признака среди перечисленных нет — ставь background. '
+        + 'Всё на native_lang, кроме примеров на целевом.'
+    }, '{"features":[{"title":"короткое название на родном","body":"2-4 фразы: почему язык так устроен","consequence":"что будет, если сделать по-родному","trigger":"одно из triggers","examples":[{"term":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}]}]}');
+    const raw = (r && Array.isArray(r.features)) ? r.features : [];
+    DB.lfeat = raw.filter(f => f && f.title && f.body).map(f => ({
+      title: String(f.title).trim(), body: String(f.body).trim(),
+      consequence: String(f.consequence || '').trim(),
+      trigger: LFEAT_TRIGGERS.includes(f.trigger) ? f.trigger : 'background',
+      examples: Array.isArray(f.examples) ? f.examples.slice(0, 4) : []
+    })).slice(0, 10);
+    this.meta().built = true;
+    Storage.save(DB);
+  },
+  /* Признаки, которые приложение ВИДИТ в данных урока. Ничего не спрашиваем — только смотрим. */
+  lessonTriggers(words){
+    const set = new Set();
+    const ws = words || [];
+    if (ARTICLE_LANGS.indexOf(DB.profile.targetLang) >= 0) { set.add('article'); set.add('gender'); }
+    ws.forEach(w => {
+      if (!w || !w.term) return;
+      if (String(w.term).length >= 10) set.add('compound');
+      const m = String(w.morph || '') + ' ' + String(w.forms || '');
+      if (/падеж|case|Kasus/i.test(m)) set.add('case');
+    });
+    if (DB.intensive || (DB.vocab || []).some(w => w && w.source === 'import')) set.add('terminology');
+    const scr = c => { const x = LANG_ID[c]; return x ? x[1] : ''; };
+    if (scr(DB.profile.targetLang) && scr(DB.profile.targetLang) !== scr(DB.profile.nativeLang)) set.add('script');
+    return set;
+  },
+  /* Одна справка на урок и только один раз за всё время: повторная не учит, а раздражает. */
+  pickForLesson(words){
+    const shown = new Set(this.meta().shown || []);
+    const trig = this.lessonTriggers(words);
+    const pool = this.list().filter(f => !shown.has(f.title));
+    return pool.find(f => trig.has(f.trigger)) || pool.find(f => f.trigger === 'background') || null;
+  },
+  markShown(f){
+    const m = this.meta();
+    m.shown = [...new Set([...(m.shown || []), f.title])];
+    Storage.save(DB);
+  }
+};
+function langFeatureHTML(f){
+  return `<p style="margin:0 0 8px">${esc(f.body)}</p>`
+    + (f.consequence ? `<p class="note" style="margin:0 0 8px;color:var(--orange)">⚠️ ${esc(f.consequence)}</p>` : '')
+    + ((f.examples || []).length ? `<div style="border-top:1px solid var(--line);padding-top:8px">`
+        + f.examples.map(e => `<div style="padding:3px 0"><b>${esc(e.term || '')}</b>`
+            + (e.translit ? ` <span style="color:var(--orange);font-size:12px">${esc(e.translit)}</span>` : '')
+            + (e.translation ? `<br><small style="color:var(--dim)">${esc(e.translation)}</small>` : '')
+            + (hasTTS(DB.profile.targetLang) && e.term ? sayBtn(e.term) : '') + `</div>`).join('') + `</div>` : '');
+}
+
 /* ---------- Свод правил (раздел 2.3-П) ---------- */
 const RULE_CATS = ['Артикли','Существительные','Глаголы','Времена','Падежи','Предлоги','Порядок слов','Местоимения','Прочее'];
 function ruleCats(g){
   const c = Array.isArray(g.categories) ? g.categories.filter(x=>RULE_CATS.includes(x)) : [];
   return c.length ? c : ['Прочее'];
+}
+/* =====================================================================
+   4.59 — СВОД ПРАВИЛ: РАЗВЁРНУТЫЙ РАЗБОР ПО ЗАПРОСУ (QUEUE-107; билд v112)
+   Свод показывал ту же карточку, что была в уроке, — сводку в две-четыре фразы и таблицу форм.
+   Но в урок человек попадает мимоходом, а в Свод заходит ОСОЗНАННО, за пониманием, и там сводки
+   мало. Разбор запрашивается по кнопке и сохраняется в самой записи правила: один запрос на
+   правило за всё время, дальше открывается без сети. Разбор отвечает на «почему форма такая»
+   (4.36) — вывод, а не называние результата, — и на «где обычно ошибаются».
+   ===================================================================== */
+async function fetchRuleDeep(rule) {
+  const p = DB.profile;
+  const r = await Gemini.call({
+    task: 'explain_rule', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+    cefr: rule.cefr || curCefr(), rule_title: rule.title, rule_summary: rule.summary || '',
+    rules: 'Развёрнутый разбор правила для человека, который зашёл в справочник за пониманием, а не мимоходом. '
+      + 'why — ПОЧЕМУ язык так устроен и откуда берётся форма: показывай ВЫВОД, а не называй результат '
+      + '(«род составного по последнему компоненту: der Modus → der Automatikmodus», а не «здесь мужской род»). '
+      + 'contrast — чем это отличается от родного языка учащегося и где родной сбивает с толку; если различия нет, пустая строка. '
+      + 'pitfalls — 2-4 типичные ошибки с краткой пометкой, почему так выходит. '
+      + 'examples — 4-6 живых примеров: фраза на целевом, транскрипция родными буквами, перевод. '
+      + 'Всё, кроме примеров, на native_lang. Никаких общих слов: если сказать нечего, лучше короче.'
+  }, '{"why":"откуда берётся форма, с выводом","contrast":"чем отличается от родного языка (или пусто)","pitfalls":[{"mistake":"типичная ошибка","why":"почему так выходит"}],"examples":[{"term":"фраза на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
+  if (!r || (!r.why && !Array.isArray(r.examples))) return null;
+  return { why: String(r.why||''), contrast: String(r.contrast||''),
+           pitfalls: Array.isArray(r.pitfalls) ? r.pitfalls.slice(0,4) : [],
+           examples: Array.isArray(r.examples) ? r.examples.slice(0,6) : [] };
+}
+function ruleDeepHTML(d) {
+  return `<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:10px">`
+    + (d.why ? `<p style="margin:0 0 8px">${esc(d.why)}</p>` : '')
+    + (d.contrast ? `<p class="note" style="margin:0 0 8px">🔀 ${esc(d.contrast)}</p>` : '')
+    + ((d.pitfalls||[]).length ? `<p class="note" style="margin:8px 0 4px;color:var(--orange)">${lbl('Где обычно ошибаются')}</p>`
+        + d.pitfalls.map(x=>`<div style="padding:2px 0;font-size:13px">• <b>${esc(x.mistake||'')}</b>${x.why?` — <span style="color:var(--dim)">${esc(x.why)}</span>`:''}</div>`).join('') : '')
+    + ((d.examples||[]).length ? `<div style="margin-top:8px">`
+        + d.examples.map(e=>`<div style="padding:3px 0"><b>${esc(e.term||'')}</b>`
+            + (e.translit?` <span style="color:var(--orange);font-size:12px">${esc(e.translit)}</span>`:'')
+            + (hasTTS(DB.profile.targetLang)&&e.term?sayBtn(e.term):'')
+            + (e.translation?`<br><small style="color:var(--dim)">${esc(e.translation)}</small>`:'')+`</div>`).join('') + `</div>` : '')
+    + `</div>`;
 }
 function showRules(cat) {
   const all = (DB.rules||[]).slice().reverse();
@@ -4199,8 +4347,13 @@ function showRules(cat) {
   const cats = RULE_CATS.filter(c => counts[c]);
   const curCat = (cat && counts[cat]) ? cat : (cats[0] || null);
   const list = curCat ? all.filter(g => ruleCats(g).includes(curCat)) : [];
+  const feats = LangFeatures.list();
   Screen.show(`
     <h1>Свод правил</h1>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="rsec" data-s="rules" style="flex:1;padding:9px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;border:1px solid transparent;background:linear-gradient(135deg,#2F7DF6,#41B8FF);color:#fff">📐 ${lbl('Правила')}</button>
+      ${feats.length?`<button class="rsec" data-s="feat" style="flex:1;padding:9px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)">🌍 ${lbl('Особенности языка')}</button>`:''}
+    </div>
     <p class="sub">${all.length} ${lbl('изученных правил')}${curCat?` · ${lbl('категория')} «${esc(curCat)}»`:''}. ${lbl('Выберите категорию, затем правило.')}</p>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
       ${cats.map(c=>`<button class="rcat" data-c="${esc(c)}"
@@ -4228,10 +4381,62 @@ function showRules(cat) {
     const i = +b.dataset.i, body = document.getElementById('rb'+i);
     const open = body.style.display !== 'none';
     if (open) { body.style.display='none'; b.querySelector('.chev').textContent='▾'; return; }
-    if (!body.dataset.filled) { body.innerHTML = grammarCardHTML(rev[i]); body.dataset.filled='1';
+    if (!body.dataset.filled) {
+      const g = rev[i];
+      body.innerHTML = grammarCardHTML(g)
+        + (g.deep ? ruleDeepHTML(g.deep)
+                  : `<button class="btn btn-ghost rdeep" data-i="${i}" style="margin-top:10px">🔍 ${lbl('Разобрать подробно')}</button>`);
+      body.dataset.filled='1';
+      body.querySelectorAll('.tts[data-t]').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang));
+      const db = body.querySelector('.rdeep');
+      if (db) db.onclick = async () => {
+        db.disabled = true; db.textContent = I18N.t('Разбираю…');
+        let d = null;
+        try { d = await fetchRuleDeep(g); } catch(e) { console.warn('explain_rule:', e && e.message); }
+        if (!d) { db.disabled = false; db.textContent = '🔍 ' + t('Разобрать подробно'); return toast(t('Связь барахлит — попробуйте позже'), true); }
+        /* Разбор сохраняется в самой записи правила: один запрос за всё время, дальше без сети. */
+        const rec = (DB.rules||[]).find(x => norm(x.title) === norm(g.title));
+        if (rec) { rec.deep = d; Storage.save(DB); }
+        g.deep = d;
+        db.outerHTML = ruleDeepHTML(d);
+        body.querySelectorAll('.tts[data-t]').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang));
+      };
+    }
+    body.style.display='block'; b.querySelector('.chev').textContent='▴';
+  });
+  document.querySelectorAll('.rsec').forEach(b => b.onclick = () => { if (b.dataset.s === 'feat') showLangFeatures(); });
+}
+/* Раздел особенностей: та же навигация, другая природа содержимого (почему, а не как). */
+function showLangFeatures() {
+  const feats = LangFeatures.list();
+  Screen.show(`
+    <h1>Свод правил</h1>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="rsec2" data-s="rules" style="flex:1;padding:9px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;border:1px solid var(--line);background:var(--panel2);color:var(--ink)">📐 ${lbl('Правила')}</button>
+      <button class="rsec2" data-s="feat" style="flex:1;padding:9px;border-radius:9px;cursor:pointer;font-family:'Chakra Petch';font-weight:600;font-size:13px;border:1px solid transparent;background:linear-gradient(135deg,#2F7DF6,#41B8FF);color:#fff">🌍 ${lbl('Особенности языка')}</button>
+    </div>
+    <p class="sub">${lbl('Чем этот язык устроен иначе, чем ваш родной, и что будет, если сделать по-родному.')}</p>
+    <div class="card" style="max-height:62vh;overflow-y:auto">
+      ${feats.length ? feats.map((f,idx)=>`
+        <div style="border-bottom:1px solid var(--line);padding:4px 0">
+          <button class="feat-head" data-i="${idx}" style="width:100%;text-align:left;background:none;border:none;color:var(--ink);
+            font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
+            <span style="font-size:17px">🌍</span>
+            <span style="flex:1"><b style="font-size:15px">${esc(f.title)}</b></span>
+            <span class="chev" style="color:var(--faint)">▾</span>
+          </button>
+          <div class="feat-body" id="fb${idx}" style="display:none;padding:4px 2px 12px"></div>
+        </div>`).join('') : `<p class="note">${lbl('Пока пусто — особенности собираются при создании профиля.')}</p>`}
+    </div>`, { back: mainMenu });
+  document.querySelectorAll('.feat-head').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i, body = document.getElementById('fb'+i);
+    const open = body.style.display !== 'none';
+    if (open) { body.style.display='none'; b.querySelector('.chev').textContent='▾'; return; }
+    if (!body.dataset.filled) { body.innerHTML = langFeatureHTML(feats[i]); body.dataset.filled='1';
       body.querySelectorAll('.tts[data-t]').forEach(x=>x.onclick=()=>speak(x.dataset.t, DB.profile.targetLang)); }
     body.style.display='block'; b.querySelector('.chev').textContent='▴';
   });
+  document.querySelectorAll('.rsec2').forEach(b => b.onclick = () => { if (b.dataset.s === 'rules') showRules(); });
 }
 /* ---------- Импорт своего словаря и интенсив (раздел 2.9, версия 4.11) ---------- */
 // Разбор строки: "[Категория] Термин [транскрипция] — перевод" (категория/транскрипция необязательны)
@@ -5063,6 +5268,12 @@ async function startLesson(code) {
   // пункт 12: повторение слов прошлого урока — в контексте со скелетами (предложения из порции 2)
   recapItems.forEach((w,i) => steps.push({ t:'reviewCtx', phase:'Повторение', n:`R${i+1}/7`, w, ri:i }));
   steps.push({ t:'present' });
+  /* 4.59 (QUEUE-143): справка об особенности — после знакомства со словами и ДО первого задания.
+     Не больше одной на урок, и только если признак явления виден в данных этого урока. */
+  try {
+    const _lf = LangFeatures.pickForLesson(words);
+    if (_lf) steps.push({ t:'langFeature', f:_lf });
+  } catch(_) {}
   steps.push({ t:'grammar' });   // отрисуется, если правило догрузилось; иначе пропустится
   /* 4.47: порядок 21 задания задаёт планировщик — перемежение типов и растущие интервалы.
      Квоты и содержание прежние (5 узнаваний, 6 контекстов, 9 сборок), меняется расстановка. */
@@ -6081,6 +6292,7 @@ function renderStep() {
   const s = L.steps[L.i];
   if (s.t==='dictation') return drillDictation(s, () => { L.i++; renderStep(); });
   if (s.t==='present')   return drillPresent();
+  if (s.t==='langFeature') return drillLangFeature(s);
   if (s.t==='ruleRecap') return drillRuleRecap(s);
   if (s.t==='reviewCtx') {                // повторение слова в контексте предложения (пункт 12)
     const go = () => {
@@ -6153,6 +6365,19 @@ function drillPhrases() {
   $('#go').onclick = () => { L.i++; renderStep(); };
 }
 /* ---------- Presentation: таблица новых слов ---------- */
+/* 4.59 (QUEUE-143): справка стоит ПЕРЕД первым заданием — до того, как явление встретится в
+   работе, а не после того, как человек на нём споткнулся. Одна на урок, дальше живёт в Своде. */
+function drillLangFeature(s) {
+  const f = s.f;
+  if (!f) { L.i++; return renderStep(); }
+  Screen.show(`
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Особенность языка')}</div>
+    <h1>${esc(f.title)}</h1>
+    <div class="card">${langFeatureHTML(f)}</div>
+    <button class="btn btn-primary" id="go" style="margin-top:12px">${lbl('Понятно, дальше')}</button>`);
+  $('#go').onclick = () => { LangFeatures.markShown(f); L.i++; renderStep(); };
+  document.querySelectorAll('.tts[data-t]').forEach(x => x.onclick = () => speak(x.dataset.t, DB.profile.targetLang));
+}
 function drillPresent() {
   Screen.show(`
     <div class="eyebrow">${tgtTag()}${esc(L.code)} · Presentation</div>
@@ -7886,12 +8111,86 @@ async function explainElement(term, sentence, popup, reposition) {
   if (reposition) reposition();
 }
 // Подбор слов для must_use на конкретный акт: ротация приоритетных + известных + стартовой служебной лексики.
-function superquestActMustUse() {
-  const pri = pick(L.sp.priority||[], Math.min(3, (L.sp.priority||[]).length));
-  const restPool = (L.sp.knownSample||[]).filter(t=>!pri.includes(t));
-  const rest = pick(restPool, Math.min(4, restPool.length));
-  const func = L.sp.functionalNew||[];
-  return [...new Set([...pri, ...rest, ...func])].slice(0,8);
+/* =====================================================================
+   4.59 — СУПЕРКВЕСТ: ИНТЕРВАЛЫ И ВОЗВРАТ ПОСЛЕ ОШИБКИ (QUEUE-118; билд v112)
+   Механика урока (4.47) — растущие интервалы и возврат к слову после ошибки — в Суперквесте не
+   работала: `must_use` формировался НА АКТ, то есть все 5-7 сцен акта получали один и тот же
+   список, а после ошибки слово не возвращалось вовсе.
+   Три решения, принятые 12.08.2026:
+   • Возврат — не повтором сцены, а требованием слова в ОДНОЙ ИЗ СЛЕДУЮЩИХ сцен. Повторять сцену
+     бессмысленно: текст прочитан, верный ответ показан минуту назад — это проверка памяти на
+     минуту, а не языка. Сюжет идёт вперёд, слово встречается снова в новом окружении.
+   • Интервалы растянуты на ВСЮ историю (15-25 сцен), а не на акт: в 5-7 сценах 1/3/7 не
+     укладывается. `must_use` перестаёт быть свойством акта и становится планом по сценам; акт
+     остаётся делением сюжета, а не лексики.
+   • Возврат ТИХИЙ: ученику ничего не сообщается, Graceful Exit после двух ошибок остаётся.
+     Квест — погружение, а не экзамен; объявленный возврат превратил бы его в проверку.
+   Четвёртое, без развилки: `must_use` — мягкая опора, модель вправе слово не употребить, и тогда
+   любой график превращается в фикцию. Поэтому КОД проверяет по пришедшей сцене, встретилось ли
+   запланированное слово, и если нет — молча переносит его на следующую (то же правило, что и
+   везде с 4.51: обещание в промпте — не гарантия).
+   ===================================================================== */
+const SQ_GAPS = [1, 3, 7];      // растущие интервалы в сценах; после ошибки — SQ_BACK
+const SQ_BACK = 2;              // ошибка: слово возвращается через две сцены, не в той же
+function sqPlan() {
+  if (!L.sqSched) L.sqSched = {};      // слово -> { due: абсолютный номер сцены, stage: ступень }
+  return L.sqSched;
+}
+function sqAbsScene(actIndex, sceneInAct) {
+  const per = L.scenesPerAct || [];
+  let prior = 0;
+  for (let i = 0; i < (actIndex - 1) && i < per.length; i++) prior += per[i];
+  return prior + sceneInAct;
+}
+/* Слова, которые должны прозвучать в ЭТОЙ сцене: подошедшие по плану плюс добор до восьми.
+   Добор нужен, чтобы сцена не оказалась пустой в начале истории, когда план ещё не наполнен. */
+function sqMustUseFor(abs) {
+  const sched = sqPlan();
+  const due = Object.keys(sched).filter(w => sched[w].due <= abs);
+  const pri = pick(L.sp.priority || [], Math.min(2, (L.sp.priority || []).length));
+  const restPool = (L.sp.knownSample || []).filter(t => !due.includes(t) && !pri.includes(t));
+  const rest = pick(restPool, Math.min(3, restPool.length));
+  const func = (abs <= 2) ? (L.sp.functionalNew || []) : [];   // служебная новинка — в начале истории
+  return [...new Set([...due, ...pri, ...rest, ...func])].slice(0, 8);
+}
+/* Слово прозвучало и ответ верен — следующая встреча дальше по лестнице. Ошибка — возврат близко
+   и ступень сбрасывается: интервал имеет смысл только от последнего УСПЕХА. */
+function sqSchedule(word, abs, ok) {
+  const w = String(word || '').trim();
+  if (!w) return;
+  const sched = sqPlan();
+  const cur = sched[w] || { due: abs, stage: -1 };
+  if (ok) {
+    const stage = Math.min(cur.stage + 1, SQ_GAPS.length - 1);
+    sched[w] = { due: abs + SQ_GAPS[stage], stage };
+  } else {
+    sched[w] = { due: abs + SQ_BACK, stage: 0 };
+  }
+}
+/* Проверка исполнения плана: код смотрит, встретилось ли слово в сцене. Не встретилось —
+   переносим на следующую сцену, ученик об этом не знает. */
+function sqSettlePlan(sc, planned, abs) {
+  const sched = sqPlan();
+  const hay = norm([sc && sc.scene_text, sc && sc.expected_target, sc && sc.scaffold].filter(Boolean).join(' '));
+  (planned || []).forEach(w => {
+    const key = norm(w);
+    if (!key) return;
+    const used = hay.indexOf(key) >= 0;
+    if (used) return;                                   // прозвучало — судьбу решит ответ ученика
+    const cur = sched[w];
+    if (cur && cur.due <= abs) sched[w] = { due: abs + 1, stage: cur.stage };
+  });
+}
+/* Итог сцены для плана: двигаем только те запланированные слова, которые в сцене прозвучали. */
+function sqScoreScene(sc, planned, abs, ok) {
+  const hay = norm([sc && sc.scene_text, sc && sc.expected_target, sc && sc.scaffold].filter(Boolean).join(' '));
+  (planned || []).forEach(w => {
+    if (hay.indexOf(norm(w)) < 0) return;
+    sqSchedule(w, abs, ok);
+  });
+}
+function superquestActMustUse() {          // совместимость: первая сцена акта
+  return sqMustUseFor(sqAbsScene(L.actIndex || 1, 1));
 }
 
 async function startSuperLesson() {
@@ -8020,12 +8319,16 @@ async function runSuperquestAct(cfg) {
     const _arc = L.superStory.arc;
     const _priorScenes = (L.scenesPerAct||[]).slice(0, cfg.actIndex-1).reduce((a,b)=>a+b,0);
     const _beatObj = (_arc && Array.isArray(_arc.beats)) ? _arc.beats[_priorScenes + (Q.scene-1)] : null;
+    /* 4.59 (QUEUE-118): список слов на ЭТУ сцену, а не на весь акт. */
+    const _abs = sqAbsScene(cfg.actIndex, Q.scene);
+    const _planned = sqMustUseFor(_abs);
+    L.sqMustUsed = [...new Set([...(L.sqMustUsed||[]), ..._planned])];
     const _hero = _arc ? _arc.hero : null;
     const _tone = _arc ? (_arc.tone||'живой, с юмором') : '';
     try {
       sc = await Gemini.call({
         task:'quest_step', audience: ageBand(p.age), target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:cfg.cefr,
-        topic:cfg.topic, must_use:cfg.mustUse, scene_index:Q.scene, max_scenes:cfg.scenesInAct,
+        topic:cfg.topic, must_use:_planned, scene_index:Q.scene, max_scenes:cfg.scenesInAct,
         act_index:cfg.actIndex, acts_total:cfg.actsTotal,
         branches_used_in_act:Q.branchesUsedInAct, branch_limit_in_act:2,
         vocab_balance:'сюжет важнее повторения: знакомая лексика — опора, новая лексика — для образности и действия; без жёсткой квоты',
@@ -8064,6 +8367,7 @@ async function runSuperquestAct(cfg) {
       return;
     }
     sc = await validateScene(sc, p, cfg.cefr);   // QUEUE-42: согласованность задания (структурно + семантически)
+    sqSettlePlan(sc, _planned, _abs);            // 4.59: чего модель не употребила — переносим на следующую сцену
     /* 4.52: перевод сцены приходил пересказом вместо перевода — часть содержания терялась.
        Проверяем по числу предложений и перезапрашиваем ТОЛЬКО перевод, не пересобирая сцену. */
     if (translationIncomplete(sc.scene_text, sc.native_hint)) {
@@ -8180,6 +8484,7 @@ async function runSuperquestAct(cfg) {
       sceneWrong = true; Q.errors++; L.errors.quest++;
       const qTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
       if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой (счётчик свой на каждый акт)
+        sqScoreScene(sc, _planned, _abs, false);   // 4.59: слова сцены вернутся через две сцены
         firstTry(stepKey, false);
         $('#fb').className='feedback ok';
         $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
@@ -8197,6 +8502,9 @@ async function runSuperquestAct(cfg) {
       $('#ans').value=''; $('#ans').focus();
     };
     function pass(userAns, res) {
+      /* 4.59: успех двигает слова этой сцены дальше по лестнице 1/3/7, ошибка вернёт их через
+         две сцены. Считаем по словам, которые в сцене действительно прозвучали. */
+      sqScoreScene(sc, _planned, _abs, !sceneWrong);
       firstTry(stepKey, !sceneWrong);
       $('#fb').className='feedback ok';
       const shown = (userAns && String(userAns).trim()) ? String(userAns).trim() : correctForm;   // QUEUE-74
