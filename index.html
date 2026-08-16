@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v114';
+const APP_VERSION = 'v115';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -7034,7 +7034,7 @@ function drillReviewContext(s, rd) {
     const card = await fetchWordCard(answer, fullSentence);
     const tr = (card && card.translit) || w.translit || '';
     const tn = (card && card.translation) || w.translation || '';
-    const morphLine = (card && card.morph) ? `<div style="margin-top:4px;color:var(--dim);font-size:12px;line-height:1.4">${esc(card.morph)}</div>` : '';
+    const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
     $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
     speak(answer, DB.profile.targetLang);
   };
@@ -7137,7 +7137,7 @@ function drillContext(s) {
       const card = await fetchWordCard(answer, fullSentence);
       const tr = (card && card.translit) || vEntry.translit || '';
       const tn = (card && card.translation) || vEntry.translation || '';
-      const morphLine = (card && card.morph) ? `<div style="margin-top:4px;color:var(--dim);font-size:12px;line-height:1.4">${esc(card.morph)}</div>` : '';
+      const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
       $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
       speak(answer, DB.profile.targetLang); // QUEUE-10: авто-TTS при показе полного ответа
     }
@@ -7871,7 +7871,7 @@ function tapAllWordsHTML(text) {
    родства словарной формы — код; содержание карточки — Gemini. Карточка
    заполняется одним запросом и кэшируется в Словаре навсегда.
    ===================================================================== */
-const TAP_CARD_V = 2;                       // версия схемы карточки; запись старее — дозаполняется на месте
+const TAP_CARD_V = 3;                       // версия схемы карточки; запись старее — дозаполняется на месте
 /* 4.55: список артиклей брался из кода и был немецким — тот же дефект, что закрыт в 4.35 для
    проверки ответа. Набор берётся из языка (Ядро + поля article словаря); нет артиклей в языке —
    ничего не отрезается, что и правильно. */
@@ -7883,7 +7883,16 @@ const stripArtG = x => {
   return s.slice(i + 1).trim();
 };
 
-const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в тексте","term":"словарная форма","translit":"[транскрипция буквами native_lang]",'
+/* 4.61 (QUEUE-182): у карточки было ОДНО поле транскрипции на ДВЕ формы. Карточка описывает
+   и форму из текста (`schicke`), и словарную (`schicken`), причём словарная жила не полем, а
+   куском свободного текста внутри `morph` («schicken — посылать; здесь: я, настоящее время»).
+   Второму звучанию некуда было лечь, и модель положила в единственную ячейку [шикен] — то есть
+   рядом с формой `schicke` стояла транскрипция ДРУГОГО слова. Требование «translit передаёт
+   звучание surface» в промпте было и снова протекло: правило, живущее только в промпте,
+   нарушается (4.51), а здесь оно ещё и противоречило структуре ответа. Словарная форма выведена
+   в поля контракта, строки печатает приложение, `morph` остаётся только пояснением о форме. */
+const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в тексте","term":"словарная форма","translit":"[транскрипция ФОРМЫ ИЗ ТЕКСТА буквами native_lang]",'
+  + '"term_translit":"[транскрипция СЛОВАРНОЙ формы буквами native_lang]","term_translation":"перевод словарной формы на native_lang",'
   + '"translation":"перевод формы из текста на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other",'
   + '"morph":"одна-две коротких строки о форме на native_lang (вторая — чем вызвано изменение формы, если оно есть) или пусто","forms":"три формы неправильного глагола или пусто","is_irregular":true}';
 
@@ -7893,9 +7902,10 @@ const TAP_CARD_RULES =
   + 'surface — ровно та форма, что стоит в тексте, без изменений. '
   + 'term — словарная форма: существительное с артиклем рода (das Buch), глагол в неопределённой форме (planen), прилагательное в начальной форме. Если форма из текста и есть словарная — повтори её. '
   + 'translation — перевод формы так, как она стоит в предложении («планирует», а не «планировать»). '
-  + 'morph — ОДНА-ДВЕ коротких строки на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). Для глагола: словарная форма с переводом и лицо/время — «planen — планировать; здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer»; ЕСЛИ форма слова из текста отличается от словарной формой окончания или входит в состав именной группы после предлога или другого слова, управляющего формой (Suche nach dem Schlüssel, dem Mechaniker helfen) — ДОБАВЬ в то же поле ещё одной фразой, ЧЕМ вызвано изменение: какое слово рядом (предлог или глагол) требует этой формы — «здесь форма вызвана предлогом nach» / «здесь форма вызвана глаголом helfen, который требует эту форму у зависимого слова». Если изменения нет (форма и без того словарная) — вторую фразу не добавляй. Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
+  + 'term_translation — перевод СЛОВАРНОЙ формы («посылать»), в отличие от translation, который переводит форму из текста («посылаю»). '
+  + 'morph — ОДНА-ДВЕ коротких строки на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). В morph НЕ ПОВТОРЯЙ словарную форму и её перевод: они уже лежат в полях term / term_translit / term_translation, и приложение печатает их отдельной строкой само. Для глагола: только лицо и время — «здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer»; ЕСЛИ форма слова из текста отличается от словарной формой окончания или входит в состав именной группы после предлога или другого слова, управляющего формой (Suche nach dem Schlüssel, dem Mechaniker helfen) — ДОБАВЬ в то же поле ещё одной фразой, ЧЕМ вызвано изменение: какое слово рядом (предлог или глагол) требует этой формы — «здесь форма вызвана предлогом nach» / «здесь форма вызвана глаголом helfen, который требует эту форму у зависимого слова». Если изменения нет (форма и без того словарная) — вторую фразу не добавляй. Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
   + 'forms — ТОЛЬКО для неправильного глагола: три основные формы («fahren – fuhr – ist gefahren»). Для правильного глагола и других частей речи — пустая строка. is_irregular — true только для неправильного глагола. '
-  + 'ТРАНСКРИПЦИЯ (критично): translit — буквами native_lang, без знаков IPA, и передаёт звучание формы surface. Перед выдачей сверь звук за звуком: КАЖДЫЙ согласный слова surface обязан быть отражён в транскрипции. Пропуск согласной — брак: Abenteuer → [абэнтойэр], а НЕ [абэнойэр].';
+  + 'ТРАНСКРИПЦИЯ — ДВА ОТДЕЛЬНЫХ ПОЛЯ (критично): translit передаёт звучание формы surface, term_translit — звучание словарной формы term. Оба буквами native_lang, без знаков IPA. Это РАЗНЫЕ слова с разным звучанием, копировать одно в другое ЗАПРЕЩЕНО: surface «schicke» → translit [шике], term «schicken» → term_translit [шикен]. Совпадают они только тогда, когда совпадают сами формы. Перед выдачей сверь каждое звук за звуком: КАЖДЫЙ согласный слова обязан быть отражён в его транскрипции. Пропуск согласной — брак: Abenteuer → [абэнтойэр], а НЕ [абэнойэр].';
 
 /* QUEUE-76: словарная форма обязана быть родственна тапнутому токену. Это гарантия кода,
    а не просьба к модели: приложение знает, по чему тапнули, и не имеет права показать
@@ -7934,6 +7944,10 @@ function tapNeedsCard(w) {
      штамповалась полной безусловно, поэтому пустая транскрипция закреплялась навсегда: тап по
      «der Zyklus» показывал слово без звучания и в Словарь уходило то же самое. */
   if (!w.translit) return true;
+  /* 4.61: форма из текста отличается от словарной, а звучания словарной нет — карточка неполна:
+     показать словарную форму без транскрипции значит вернуть ровно ту неоднозначность, из-за
+     которой [шикен] стоял рядом с «schicke». */
+  if (w.term && w.surface && norm(stripArtG(w.term)) !== norm(stripArtG(w.surface)) && !w.term_translit) return true;
   return !(w.mv >= TAP_CARD_V);
 }
 
@@ -7946,6 +7960,8 @@ async function fetchWordCard(token, sentence, strict) {
       word: token, sentence: sentence || '',
       rules: TAP_CARD_RULES + (strict === 'translit'
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции. Поле translit ОБЯЗАТЕЛЬНО: буквами native_lang, передаёт звучание формы surface.'
+        : strict === 'termtr'
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции словарной формы. Поля term_translit и term_translation ОБЯЗАТЕЛЬНЫ: term_translit — звучание СЛОВАРНОЙ формы буквами native_lang, отдельно от translit, который передаёт звучание формы из текста.'
         : strict
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал словарную форму, не связанную со словом «'+token+'». «'+token+'» — слово target_lang из sentence; верни term, формой которого «'+token+'» действительно является.'
         : '')
@@ -7955,7 +7971,8 @@ async function fetchWordCard(token, sentence, strict) {
   out.surface = token;                       // гарантия кода: карточка всегда о тапнутом токене
   if (out.term && !tapRelated(token, out.term)) {
     if (!strict) return await fetchWordCard(token, sentence, true);
-    out.term = ''; out.morph = ''; out.forms = ''; out.unverified = true;   // непроверяемое не показываем и не храним
+    out.term = ''; out.morph = ''; out.forms = ''; out.term_translit = ''; out.term_translation = '';
+    out.unverified = true;                 // непроверяемое не показываем и не храним
   }
   /* 4.54 (QUEUE-173): транскрипция — обязательное поле карточки (4.52). Пришла пустой — один
      повтор запроса; не пришла и со второго раза — карточка НЕ помечается полной, и следующий
@@ -7964,12 +7981,21 @@ async function fetchWordCard(token, sentence, strict) {
     const again = await fetchWordCard(token, sentence, 'translit');
     if (again && again.translit) return again;
   }
-  if (out.translit) out.mv = TAP_CARD_V;
+  /* 4.61: транскрипция словарной формы обязательна ровно тогда, когда словарная форма ВООБЩЕ
+     показывается, то есть когда она отличается от формы из текста. Тот же приём, что в 4.54:
+     один повтор, и метка полноты не ставится, пока поле пусто, — иначе неполная запись осядет
+     в Словаре навсегда. */
+  const needTermTr = !!(out.term && norm(stripArtG(out.term)) !== norm(stripArtG(token)));
+  if (needTermTr && !out.term_translit && !strict) {
+    const again = await fetchWordCard(token, sentence, 'termtr');
+    if (again && again.term_translit) return again;
+  }
+  if (out.translit && (!needTermTr || out.term_translit)) out.mv = TAP_CARD_V;
   return out;
 }
 
 function mergeWordCard(w, f) {
-  ['term','surface','translit','translation','part_of_speech','morph','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
+  ['term','surface','translit','term_translit','term_translation','translation','part_of_speech','morph','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
   if (typeof f.is_irregular === 'boolean') w.is_irregular = f.is_irregular;
   if (f.unverified) w.unverified = true; else w.mv = f.mv;
 }
@@ -7981,12 +8007,12 @@ function saveTappedWord(w, tapped) {
     if (!w || !w.term || w.unverified) return;
     if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return;
     const ex = DB.vocab.find(v => norm(v.term) === norm(w.term) || norm(stripArtG(v.term)) === norm(stripArtG(w.term)));
-    const rec = ex || { term:w.term, translation:'', translit:'', emoji:'', part_of_speech:'', is_irregular:false,
+    const rec = ex || { term:w.term, translation:'', translit:'', term_translit:'', term_translation:'', emoji:'', part_of_speech:'', is_irregular:false,
       forms:'', morph:'', lesson: L ? L.code : (TAP_ORIGIN || 'quest'), errors:0, status:'встреченное',
       mnemonic:'', date_added:today(), date_review:today() };
     // старая запись (нет mv) чинится целиком: транскрипция v73 могла потерять согласную
     const repair = !(rec.mv >= TAP_CARD_V);
-    ['translit','translation','part_of_speech','forms','morph'].forEach(k => { if (w[k] && (repair || !rec[k])) rec[k] = w[k]; });
+    ['translit','term_translit','term_translation','translation','part_of_speech','forms','morph'].forEach(k => { if (w[k] && (repair || !rec[k])) rec[k] = w[k]; });
     if (typeof w.is_irregular === 'boolean') rec.is_irregular = w.is_irregular;
     if (rec.translit) rec.mv = TAP_CARD_V;   // 4.54: без транскрипции запись остаётся к починке
     else delete rec.mv;
@@ -8045,12 +8071,34 @@ function attachTapAll(container, _sceneWords) {
    форма → формы неправильного глагола. Заголовок — тапнутый токен; словарная форма
    рядом в скобках. Для существительного, тапнутого в словарной форме, заголовком
    служит форма с артиклем (правило v53), скобка не дублируется. */
+/* 4.61 (QUEUE-182): словарная форма печатается ОТДЕЛЬНОЙ строкой и со СВОЕЙ транскрипцией.
+   Раньше она стояла в скобках рядом с формой из текста — «schicke (schicken)», — а транскрипция
+   на обе была одна, и какой из двух форм принадлежит [шикен], не говорилось нигде. Для человека,
+   который язык только учит, это не мелочь оформления: он запоминает звучание не того слова.
+   Одна функция на оба места показа (подсказка урока и попап тапа) — чтобы правило не разошлось. */
+function dictFormLineHTML(w, tok) {
+  if (!w) return '';
+  const dict = w.term ? String(w.term) : '';
+  const face = String(tok || w.surface || dict || '');
+  const same = !dict || norm(stripArtG(dict)) === norm(stripArtG(face));
+  const parts = [];
+  if (!same) {
+    let line = esc(dict);
+    if (w.term_translit)    line += ` <span style="color:var(--orange)">${esc(w.term_translit)}</span>`;
+    if (w.term_translation) line += ` — ${esc(w.term_translation)}`;
+    parts.push(line);
+  }
+  if (w.morph) parts.push(esc(w.morph));
+  return parts.length
+    ? `<div style="margin-top:5px;color:var(--faint);font-size:12px;line-height:1.45">${parts.join(' · ')}</div>`
+    : '';
+}
 function tapCardRows(w, tok, tts, whyBtn) {
   const dict = w.term ? String(w.term) : '';
   const same = dict && norm(stripArtG(dict)) === norm(stripArtG(tok));
   const head = same ? dict : tok;
-  const paren = (dict && !same) ? ` <span style="color:var(--faint);font-weight:400;font-size:14px">(${esc(dict)})</span>` : '';
-  const morph = w.morph ? `<div style="margin-top:5px;color:var(--faint);font-size:12px;line-height:1.45">${esc(w.morph)}</div>` : '';
+  const paren = '';                       // 4.61: словарная форма ушла в отдельную строку ниже
+  const morph = dictFormLineHTML(w, tok);
   const forms = w.forms ? `<div style="margin-top:3px;color:var(--faint);font-size:12px;line-height:1.45">${w.is_irregular?'⚡ ':''}${esc(w.forms)}</div>` : '';
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:600;font-size:15px">${esc(head)}${paren}</span>
