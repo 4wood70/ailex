@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v113';
+const APP_VERSION = 'v114';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -2293,6 +2293,15 @@ const CLOSED_BATCHES = [
      в приложении выключается сама, без отдельного условия «а есть ли они тут». */
   { part:'articles', count:24, exact:false, capture:'articles',
     hint:'ВСЕ формы артиклей целевого языка: определённые и неопределённые, во всех родах, числах и падежах, а также слитные с предлогами формы, если они в языке есть (нем. im, zum, zur). Каждая форма — отдельным объектом, term строго одно слово. ЕСЛИ АРТИКЛЕЙ В ЦЕЛЕВОМ ЯЗЫКЕ НЕТ — верни "words":[] и ничего не выдумывай.' },
+  /* 4.60 (QUEUE-181): определители — второй закрытый класс языка. До сих пор определителем
+     считалось любое слово Ядра с частью речи pron/part, то есть и личное местоимение тоже:
+     эталон «Spannen Sie Teil» проходил проверку, потому что перед существительным стояло «Sie».
+     Вежливое повелительное «…Sie …» — базовая форма A1, так что дыра открывалась постоянно.
+     Личное местоимение существительное не определяет, а замещает; отличить его от «mein/dieser/
+     kein» по части речи нельзя, а список в коде работал бы для одного языка из 72 — ровно та
+     ошибка, что снята для артиклей в 4.35. Поэтому список отдаёт сам язык. */
+  { part:'determiners', count:40, exact:false, capture:'determiners',
+    hint:'ВСЕ ОПРЕДЕЛИТЕЛИ целевого языка — слова, которые стоят ПЕРЕД существительным и заменяют собой артикль: притяжательные (нем. mein, dein, sein, ihr, unser), указательные (dieser, jener), отрицательные и неопределённые (kein, jeder, alle, viele, einige, manche), вопросительные-определители (welcher, wessen). Во всех родах, числах и падежах; каждая форма — отдельным объектом, term строго одно слово. ЛИЧНЫЕ, ВОЗВРАТНЫЕ И ВОПРОСИТЕЛЬНЫЕ МЕСТОИМЕНИЯ (ich, du, er, sie, wir, Sie, sich, wer, was) СЮДА НЕ ВХОДЯТ — они существительное не определяют, а замещают. ЕСЛИ ТАКИХ СЛОВ В ЦЕЛЕВОМ ЯЗЫКЕ НЕТ — верни "words":[] и ничего не выдумывай.' },
   { part:'irregular_verbs_1', count:100, hint:'неправильные (сильные) глаголы — ПЕРВАЯ сотня по употребимости в живой речи' },
   { part:'irregular_verbs_2', count:100, hint:'неправильные (сильные) глаголы — ВТОРАЯ сотня по употребимости; не повторяй то, что в exclude' }
 ];
@@ -2353,7 +2362,13 @@ const Core = {
   async _batch(o){
     const p = DB.profile;
     const req = { task:'generate_core', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
-                  cefr:o.cefr, class:o.class, count:o.count, exclude:this._exclude(), rules:CORE_RULES };
+                  cefr:o.cefr, class:o.class, count:o.count,
+                  /* 4.60: партия с захватом (артикли, определители) исключений не получает.
+                     exclude отдаёт последние 160 слов Ядра, а служебный костяк грузится ПЕРВЫМ —
+                     то есть модели запрещали бы возвращать ровно те слова, ради списка которых
+                     партия и затевалась, и класс приходил бы дырявым. Повтор не страшен:
+                     _add() дедуплицирует по _known(). */
+                  exclude: (o.capture ? [] : this._exclude()), rules:CORE_RULES };
     if (o.layer) req.layer = o.layer;
     if (o.part)  req.part  = o.part;
     if (o.hint)  req.hint  = o.hint;
@@ -2373,8 +2388,9 @@ const Core = {
         // 4.38 (v81): счётчик вынесен из переводимой строки — узел со вставленным «1/9»
         // не совпал бы ни с одним ключом и остался бы русским на любом языке.
         onStep && onStep(t('Собираю основу языка — служебные слова и неправильные глаголы…') + ' ' + (i+1) + '/' + total);
-        const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:b.exact });
-        if (b.capture === 'articles') this._captureArticles(w);
+        const w = await this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:b.exact, capture:b.capture });
+        if (b.capture === 'articles')    this._captureArticles(w);
+        if (b.capture === 'determiners') this._captureDeterminers(w);
         this._add(w, { klass:'closed', layer:'general', cefr:'A1' });
         Storage.save(DB);
       }
@@ -2422,10 +2438,35 @@ const Core = {
       if (!m.closedDone) return;       // на первой сборке артикли идут общим потоком
       const b = CLOSED_BATCHES.find(x => x.capture === 'articles'); if (!b) return;
       this._artPf = true;
-      this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:false })
+      this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:false, capture:b.capture })
         .then(w => { this._captureArticles(w); this._add(w, { klass:'closed', layer:'general', cefr:'A1' }); Storage.save(DB); })
         .catch(()=>{})                 // не помечаем сделанным — попробуем в следующий заход
         .then(()=>{ this._artPf = false; });
+    } catch(e){}
+  },
+
+  /* Определители языка (4.60): список кладётся в coreMeta.determiners. Пустой список — законный
+     ответ и означает «в этом языке таких слов нет»; тогда определителем остаётся только артикль. */
+  _captureDeterminers(words){
+    const meta = this.meta(), out = [];
+    (words||[]).forEach(w => { const t = String((w && w.term) || '').trim();
+      if (t && !/\s/.test(t) && t.length <= 20) out.push(t); });
+    meta.determiners = [...new Set(out)];
+    meta.determinersDone = true;
+    DET._k = '';                       // набор пересоберётся при следующем обращении
+  },
+  // профиль, созданный до 4.60, определителей не получал: догружаем один раз фоном
+  ensureDeterminers(){
+    try {
+      const m = this.meta();
+      if (m.determinersDone || this._detPf || this._failed || !DB || !DB.profile) return;
+      if (!m.closedDone) return;       // на первой сборке определители идут общим потоком
+      const b = CLOSED_BATCHES.find(x => x.capture === 'determiners'); if (!b) return;
+      this._detPf = true;
+      this._batch({ class:'closed', part:b.part, hint:b.hint, count:b.count, cefr:'A1', exact:false, capture:b.capture })
+        .then(w => { this._captureDeterminers(w); this._add(w, { klass:'closed', layer:'general', cefr:'A1' }); Storage.save(DB); })
+        .catch(()=>{})                 // не помечаем сделанным — попробуем в следующий заход
+        .then(()=>{ this._detPf = false; });
     } catch(e){}
   },
 
@@ -4017,6 +4058,7 @@ function mainMenu() {
   if (Core.needsBuild() || GrammarCore.needsBuild() || GrammarCore.needsRebuild()) return coreBuildScreen(mainMenu);
   Core.maybePrefetch();                                      // следующий уровень — фоном, ожидания не видно
   Core.ensureArticles();                                     // 4.35: артикли языка старым профилям
+  Core.ensureDeterminers();                                  // 4.60: определители языка старым профилям
   Core.purgeBadTranslit();                                   // 4.39: транскрипции чужой письменностью
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
@@ -5224,7 +5266,12 @@ async function startLesson(code) {
   Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…');
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
-  const known = DB.vocab.map(w => w.term).slice(-300);
+  const known = DB.vocab.map(w => w.term).slice(-300);   // строки — список исключений резервного генератора
+  /* 4.60: в запрос на задания известная лексика уходила ТЕМИ ЖЕ голыми строками, а у слова из
+     Ядра артикль лежит отдельным полем и в term его нет. Модель получала «Teil», «Zyklus»,
+     «Fachkraft» — и честно строила «Spannen Sie Teil». Чинить надо на входе: дальше идут
+     записи, из которых словарная форма собирается вместе с артиклем. */
+  const knownRecs = DB.vocab.slice(-300);
   let words;
   // ИНТЕНСИВ: если есть импортированные, ещё не показанные слова — урок учит ИХ (а не генерирует посторонние)
   const importedNew = DB.vocab.filter(w => w.source==='import' && (w.status==='новое') && w.seen!==true);
@@ -5312,7 +5359,7 @@ async function startLesson(code) {
     try {
       const fixed = await ensureLessonCards(words);
       if (Array.isArray(fixed) && fixed.length) L.words = fixed;
-      L.known = await ensureKnownArticles(known);
+      L.known = await ensureKnownArticles(knownRecs);
     } catch(e) { console.warn('ensureLessonCards:', e && e.message); }
     fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
   })();
@@ -5453,9 +5500,20 @@ async function ensureKnownArticles(known) {
   const tgt = DB.profile.targetLang;
   if (ARTICLE_LANGS.indexOf(tgt) < 0) return list;
   const pool = list.slice(-60);
-  const need = pool.filter(w => w && w.term && !w.article && !hasLeadingArticle(w.term)
-                             && !/\s/.test(String(w.term).trim())
-                             && !CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase()));
+  /* 4.60: функция написана в v109 ровно под эту беду и всё это время не делала НИЧЕГО — ей
+     передавали массив строк, а фильтр спрашивал `w.term`, которого у строки нет. Список
+     нуждающихся выходил пустым при любом состоянии Словаря, запрос не уходил ни разу.
+     Второе условие новое: если часть речи уже известна и это не существительное, артикля у
+     слова не бывает — спрашивать нечего. Без него глаголы и прилагательные уходили бы в запрос
+     КАЖДЫЙ урок: ответ «артикля нет» ничего не записывает, и слово навсегда остаётся в списке. */
+  const isNounPos = s => /^(noun|сущест)/.test(s);
+  const need = pool.filter(w => {
+    if (!w || !w.term || w.article) return false;
+    const pos = String(w.part_of_speech || '').toLowerCase();
+    if (pos && !isNounPos(pos)) return false;
+    const t = String(w.term).trim();
+    return !!t && !/\s/.test(t) && !hasLeadingArticle(t);
+  }).slice(0, 30);            // потолок одного запроса: остальное доберётся следующим уроком
   if (!need.length) return list;
   try {
     const r = await Gemini.call({
@@ -5693,7 +5751,7 @@ function fetchLessonChunk2() {
   L.chunk2.promise = (async () => {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
-      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
+      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
       rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
@@ -6715,11 +6773,36 @@ function articleSet(){
     ART._k = key; ART._s = s; return s;
   } catch(e){ return ART._s; }
 }
-// слово перед существительным, снимающее вопрос об артикле: сам артикль либо местоимение/частица
-// закрытого класса Ядра (mein, dieser, kein…). Список опять же берётся из языка, а не из кода.
+/* 4.60 (QUEUE-181): определители — свой закрытый класс Ядра (coreMeta.determiners), рядом с
+   артиклями. Прежний признак «часть речи pron или part» считал определителем и ЛИЧНОЕ
+   местоимение: в «Spannen Sie Teil» перед существительным стояло «Sie», проверка голого
+   существительного считала вопрос снятым и молчала. Форма «…Sie …» — вежливое повелительное,
+   основа A1, так что мимо проверки уходил целый класс эталонов; та же слепота была в сценах
+   Суперквеста (bareNounHits). Личное местоимение существительное не определяет, оно его
+   замещает, — разница грамматическая, а не по части речи. */
+const DET = { _k:'', _s:new Set() };
+function determinerSet(){
+  try {
+    const m = (DB && DB.coreMeta) || {};
+    const arr = Array.isArray(m.determiners) ? m.determiners : null;
+    if (!arr) return null;                  // класс ещё не загружен — решает вызывающий
+    const key = 'd' + arr.length;
+    if (key === DET._k) return DET._s;
+    const s = new Set();
+    arr.forEach(a => { const k = norm(a); if (k && !/\s/.test(k)) s.add(k); });
+    DET._k = key; DET._s = s; return s;
+  } catch(e){ return DET._s; }
+}
+// слово перед существительным, снимающее вопрос об артикле: сам артикль либо определитель
+// закрытого класса Ядра (mein, dieser, kein…). Список берётся из языка, а не из кода.
 function isDeterminer(tok){
   if (!tok) return false;
   if (articleSet().has(tok)) return true;
+  const det = determinerSet();
+  if (det) return det.has(tok);
+  /* Класс ещё не пришёл (профиль создан до 4.60, дозагрузка идёт фоном) — держим прежнее
+     поведение. Оно слишком мягкое, но объявить дефектным законное «mein Teil» хуже: починка
+     тронула бы верный эталон. Окно — до конца одного сеанса, дальше работает список. */
   const core = (DB && Array.isArray(DB.core)) ? DB.core : [];
   const w = core.find(x => norm(x.term) === tok);
   return !!(w && (w.part_of_speech === 'pron' || w.part_of_speech === 'part'));
