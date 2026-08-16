@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v115';
+const APP_VERSION = 'v116';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -7024,6 +7024,7 @@ function drillReviewContext(s, rd) {
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
+  CardCache.warm(answer, fullSentence);   // 4.62: карточка готовится, пока человек печатает
   /* 4.53 (QUEUE-149): подсказка запрашивает карточку РОВНО этой формы через тот же контракт
      translate_word, что и тап-перевод (4.32) — вместо транскрипции словарной карточки w
      (инфинитив), которая для спрягаемой/склонённой формы физически другое слово со своим
@@ -7031,7 +7032,7 @@ function drillReviewContext(s, rd) {
   $('#hint').onclick = async () => {
     L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 …`;
-    const card = await fetchWordCard(answer, fullSentence);
+    const card = await CardCache.load(answer, fullSentence);
     const tr = (card && card.translit) || w.translit || '';
     const tn = (card && card.translation) || w.translation || '';
     const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
@@ -7122,6 +7123,7 @@ function drillContext(s) {
     </div>`);
   bindAutoGrow('ans');
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
+  CardCache.warm(answer, fullSentence);   // 4.62: карточка готовится, пока человек печатает
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
   $('#hint').onclick = async () => {
@@ -7134,7 +7136,7 @@ function drillContext(s) {
          для РОВНО этой формы (answer) через translate_word, а не берётся от словарной карточки
          (item.expected_translit — транскрипция ВСЕЙ фразы-эталона, тоже не форма answer). */
       $('#fb').innerHTML = `💡 …`;
-      const card = await fetchWordCard(answer, fullSentence);
+      const card = await CardCache.load(answer, fullSentence);
       const tr = (card && card.translit) || vEntry.translit || '';
       const tn = (card && card.translation) || vEntry.translation || '';
       const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
@@ -7982,17 +7984,113 @@ async function fetchWordCard(token, sentence, strict) {
     if (again && again.translit) return again;
   }
   /* 4.61: транскрипция словарной формы обязательна ровно тогда, когда словарная форма ВООБЩЕ
-     показывается, то есть когда она отличается от формы из текста. Тот же приём, что в 4.54:
-     один повтор, и метка полноты не ставится, пока поле пусто, — иначе неполная запись осядет
-     в Словаре навсегда. */
+     показывается, то есть когда она отличается от формы из текста. Метка полноты не ставится,
+     пока поле пусто, — иначе неполная запись осядет в Словаре навсегда.
+     4.62: повтор за недостающим полем БОЛЬШЕ НЕ ЗАДЕРЖИВАЕТ ПОКАЗ. Он уходит фоном
+     (CardCache._repair): человеку важнее увидеть подсказку сейчас, а не через второй круг
+     запроса ради строки, которой в этой карточке может и не быть. */
   const needTermTr = !!(out.term && norm(stripArtG(out.term)) !== norm(stripArtG(token)));
-  if (needTermTr && !out.term_translit && !strict) {
-    const again = await fetchWordCard(token, sentence, 'termtr');
-    if (again && again.term_translit) return again;
-  }
   if (out.translit && (!needTermTr || out.term_translit)) out.mv = TAP_CARD_V;
   return out;
 }
+
+/* =====================================================================
+   4.62 (QUEUE-183): ХРАНИЛИЩЕ КАРТОЧЕК ФОРМ.
+   Подсказка 💡 ждала Gemini по 10–13 секунд на КАЖДОЕ нажатие. Причина не в скорости модели,
+   а в том, что карточка формы не хранилась нигде: `fetchWordCard` уходил в сеть при каждом
+   нажатии, включая повторное нажатие на то же самое слово. Сверху ложились ещё два круга —
+   починка транскрипции в `_guarantee` и ожидание при 429 (2 с, потом 4 с).
+
+   Граница возможного здесь жёсткая и её надо помнить: Ядро языка — СПИСОК СЛОВ, а не
+   грамматический движок. Словарную форму, артикль рода, часть речи и формы неправильных
+   глаголов приложение знает локально; вывести из `schicken` форму `schicke`, а тем более её
+   звучание, оно не может — для этого нужна морфология конкретного языка, которой в клиенте
+   для 72 языков не будет никогда. Но спросить КАЖДУЮ форму достаточно ОДИН РАЗ: дальше она
+   лежит в базе, и Словарь постепенно становится хранилищем форм, а не только словарных статей.
+
+   Три уровня, по возрастанию цены: память сеанса → база → сеть. Плюс подгрузка заранее:
+   приложение знает нужную форму в момент отрисовки задания, то есть за десятки секунд до
+   того, как человек потянется к лампочке. */
+const CardCache = {
+  MAX: 600,                                  // потолок записей; вытесняется самое старое
+  _mem: new Map(),
+  _fly: new Map(),                           // запросы в полёте: два нажатия подряд не дают двух запросов
+  _fix: new Set(),                           // фоновая починка на карточку — один раз за сеанс
+  key(tok){
+    const lang = (DB && DB.profile && DB.profile.targetLang) || '';
+    return lang + '|' + norm(stripArtG(tok));
+  },
+  get(tok){
+    const k = this.key(tok);
+    if (this._mem.has(k)) return this._mem.get(k);
+    try {
+      const rec = (DB && DB.cards) ? DB.cards[k] : null;
+      if (rec && rec.translit) { this._mem.set(k, rec); return rec; }
+    } catch(_){}
+    return null;
+  },
+  put(tok, card){
+    if (!card || !card.translit) return card;   // без звучания карточка бесполезна и не кэшируется
+    const k = this.key(tok);
+    this._mem.set(k, card);
+    try {
+      if (!DB.cards) DB.cards = {};
+      DB.cards[k] = { ...card, ts: Date.now() };
+      const keys = Object.keys(DB.cards);
+      if (keys.length > this.MAX) {
+        keys.sort((a,b) => (DB.cards[a].ts||0) - (DB.cards[b].ts||0));
+        keys.slice(0, keys.length - this.MAX).forEach(x => delete DB.cards[x]);
+      }
+      Storage.save(DB);
+    } catch(_){}
+    return card;
+  },
+  /* Форма совпадает со словарной, а в Словаре лежит полная запись — сети здесь делать нечего.
+     Условие нарочно строгое: только при совпадении форм транскрипция записи ГАРАНТИРОВАННО
+     принадлежит словарной форме, иначе можно вернуть звучание чужой формы (ровно 4.61). */
+  fromVocab(tok){
+    try {
+      const t = norm(stripArtG(tok));
+      const rec = (DB.vocab||[]).find(v => v && v.term && norm(stripArtG(v.term)) === t);
+      if (!rec || !rec.translit || !rec.translation || tapNeedsCard(rec)) return null;
+      return { surface: tok, term: rec.term, translit: rec.translit,
+               term_translit: rec.term_translit || rec.translit, term_translation: rec.term_translation || rec.translation,
+               translation: rec.translation, part_of_speech: rec.part_of_speech || '',
+               morph: rec.morph || '', forms: rec.forms || '', is_irregular: !!rec.is_irregular, mv: TAP_CARD_V };
+    } catch(_){ return null; }
+  },
+  // неполную карточку показываем сразу, а недостающее дозаполняем фоном к следующему разу
+  _repair(card, tok, sentence){
+    try {
+      if (!card || card.mv >= TAP_CARD_V || card.unverified) return;
+      const k = this.key(tok);
+      if (this._fix.has(k)) return;
+      this._fix.add(k);
+      fetchWordCard(tok, sentence, 'termtr')
+        .then(c => { if (c && c.mv >= TAP_CARD_V) this.put(tok, c); })
+        .catch(()=>{});
+    } catch(_){}
+  },
+  async load(tok, sentence){
+    const hit = this.get(tok);
+    if (hit) { this._repair(hit, tok, sentence); return hit; }
+    const k = this.key(tok);
+    if (this._fly.has(k)) return await this._fly.get(k);
+    const pr = (async () => {
+      const loc = this.fromVocab(tok);
+      if (loc) return this.put(tok, loc);
+      const card = await fetchWordCard(tok, sentence);
+      if (card) { this.put(tok, card); this._repair(card, tok, sentence); }
+      return card;
+    })();
+    this._fly.set(k, pr);
+    try { return await pr; } finally { this._fly.delete(k); }
+  },
+  // подгрузка заранее: вызывается при отрисовке задания, ответа не ждёт и ошибок не показывает
+  warm(tok, sentence){
+    try { if (tok && !this.get(tok)) this.load(tok, sentence).catch(()=>{}); } catch(_){}
+  }
+};
 
 function mergeWordCard(w, f) {
   ['term','surface','translit','term_translit','term_translation','translation','part_of_speech','morph','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
@@ -8047,13 +8145,18 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   // мгновенно, без запроса к Gemini и без записи в Словарь. Контекстное значение — по 📘.
   const inCore = (typeof Core!=='undefined' && Core.list) ? Core.list().find(w => tapMatch(w, term)) : null;
   if (inCore && (inCore.translit || inCore.translation)) { showTapPopup(inCore, anchorEl, ctx, term); return; }
-  // 5. Запрашиваем Gemini — показать нечего, ждём под лоадером
+  /* 4.62: 5. Кэш карточек форм — тап по уже разобранной форме отвечает мгновенно и без сети.
+     Уровень стоит ПОСЛЕ Ядра и Словаря, потому что те дают словарную статью, а здесь лежит
+     разбор конкретной формы из текста — то, что вывести локально нельзя. */
+  const cached = CardCache.get(term);
+  if (cached) { showTapPopup(cached, anchorEl, ctx, term); CardCache._repair(cached, term, ctx); return; }
+  // 6. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
   loading.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:60;display:flex;justify-content:center;pointer-events:none';
   loading.innerHTML = `<div style="pointer-events:auto;width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:16px 16px 0 0;padding:12px 16px;display:flex;align-items:center;gap:8px;box-shadow:0 -4px 24px rgba(0,0,0,.4)"><span style="color:var(--faint);font-size:14px">🔍 ${esc(term)}…</span></div>`;
   document.body.appendChild(loading);
-  const w = await fetchWordCard(term, ctx);
+  const w = await CardCache.load(term, ctx);
   loading.remove();
   if (!w) { showTapPopup({ term:'', surface:term, translit:'', translation:'?' }, anchorEl, ctx, term); return; }
   saveTappedWord(w, term);
@@ -8173,7 +8276,7 @@ function showTapPopup(w, anchorEl, ctx, tapped) {
   // карточка дозаполняется в фоне и обновляется на месте; экран не блокируется.
   if (tapNeedsCard(w)) {
     (async () => {
-      const fresh = await fetchWordCard(tok, ctx);
+      const fresh = await CardCache.load(tok, ctx);
       if (!fresh) return;
       mergeWordCard(w, fresh);
       saveTappedWord(w, tok);
