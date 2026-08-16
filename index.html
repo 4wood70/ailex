@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v116';
+const APP_VERSION = 'v117';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1876,15 +1876,28 @@ const Gemini = {
     try { Storage.save(DB); } catch(_) {}
     return out;
   },
-  async call(contract, schema) {
+  /* 4.63 (QUEUE-184): СХЕМА ОТВЕТА КАК ТРЕБОВАНИЕ, А НЕ ПРОСЬБА.
+     Схема ответа всё это время была текстом внутри промпта — то есть пожеланием. Разделение
+     транскрипций (4.61) показало предел такого способа: поле `term_translation` модель приняла,
+     а `term_translit` просто НЕ ПРИСЛАЛА, и единственную транскрипцию снова повесила на
+     словарную форму. Необязательное поле можно не заполнить, и никакая настойчивость
+     формулировки этого не меняет. `responseSchema` переносит требование на уровень API:
+     перечисленные в `required` поля обязаны быть в ответе. Откат обязателен — сломать
+     подсказку из-за схемы нельзя: API не принял (400) — отключаем на весь сеанс и повторяем
+     прежним способом. */
+  noSchema: false,
+  async call(contract, schema, opts) {
     const key = Storage.getKey();
     if (!key) throw new Error('NO_KEY');
+    const useSchema = !!(opts && opts.responseSchema) && !this.noSchema;
     const body = {
       systemInstruction: { parts: [{ text: this.SYSTEM }] },
       contents: [{ role:'user', parts: [{ text:
         'ЗАДАНИЕ (строгий контракт):\n' + JSON.stringify(contract) +
         '\n\nСХЕМА ОТВЕТА (верни ровно такой JSON):\n' + schema }] }],
-      generationConfig: { temperature: 0.7, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
+      generationConfig: Object.assign(
+        { temperature: 0.7, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+        useSchema ? { responseSchema: opts.responseSchema } : {})
     };
     const sleep = ms => new Promise(res => setTimeout(res, ms));
     let lastErr = null;
@@ -1896,6 +1909,13 @@ const Gemini = {
         try {
           const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
             { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          if (r.status === 400 && useSchema) {
+            /* 4.63: 400 при отправленной схеме — это отказ от схемы, а НЕ плохой ключ. Разница
+               принципиальна: прежняя ветка объявила бы ключ негодным и показала бы человеку
+               ошибку доступа там, где доступ в порядке. */
+            this.noSchema = true;
+            return await this.call(contract, schema, null);
+          }
           if (r.status === 400 || r.status === 403) { const j = await r.json().catch(()=>null); throw new Error('KEY:'+(j?.error?.message||r.status)); }
           if (r.status === 429) {                       // превышен лимит запросов
             lastErr = new Error('HTTP 429 ('+m+')');
@@ -7033,7 +7053,7 @@ function drillReviewContext(s, rd) {
     L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 …`;
     const card = await CardCache.load(answer, fullSentence);
-    const tr = (card && card.translit) || w.translit || '';
+    const tr = formTranslitOf(card, answer) || (card ? '' : (w.translit || ''));
     const tn = (card && card.translation) || w.translation || '';
     const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
     $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
@@ -7137,7 +7157,7 @@ function drillContext(s) {
          (item.expected_translit — транскрипция ВСЕЙ фразы-эталона, тоже не форма answer). */
       $('#fb').innerHTML = `💡 …`;
       const card = await CardCache.load(answer, fullSentence);
-      const tr = (card && card.translit) || vEntry.translit || '';
+      const tr = formTranslitOf(card, answer) || (card ? '' : (vEntry.translit || ''));
       const tn = (card && card.translation) || vEntry.translation || '';
       const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
       $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
@@ -7898,6 +7918,26 @@ const TAP_CARD_SCHEMA = '{"surface":"форма ровно как в текст�
   + '"translation":"перевод формы из текста на native_lang","part_of_speech":"noun|verb|adj|adv|pron|prep|conj|part|other",'
   + '"morph":"одна-две коротких строки о форме на native_lang (вторая — чем вызвано изменение формы, если оно есть) или пусто","forms":"три формы неправильного глагола или пусто","is_irregular":true}';
 
+/* 4.63: те же поля, но как требование API. required перечисляет ровно то, без чего карточку
+   показывать нельзя: обе транскрипции, обе формы, оба перевода. morph, forms и is_irregular
+   остаются необязательными — они законно бывают пустыми (служебное слово, правильный глагол). */
+const TAP_CARD_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    surface:         { type:'STRING' },
+    term:            { type:'STRING' },
+    translit:        { type:'STRING' },
+    term_translit:   { type:'STRING' },
+    translation:     { type:'STRING' },
+    term_translation:{ type:'STRING' },
+    part_of_speech:  { type:'STRING' },
+    morph:           { type:'STRING' },
+    forms:           { type:'STRING' },
+    is_irregular:    { type:'BOOLEAN' }
+  },
+  required: ['surface','term','translit','term_translit','translation','term_translation']
+};
+
 const TAP_CARD_RULES =
     'КОНТЕКСТ (критично): слово word стоит в предложении sentence и является словом target_lang. Разбирай его ТОЛЬКО как слово target_lang в этом предложении. '
   + 'ЗАПРЕЩЕНО читать его как слово другого языка, даже если написание совпадает: нем. «plant» — форма глагола planen («планирует»), а НЕ английское plant («растение»). Если sentence пуст — всё равно считай word словом target_lang. '
@@ -7967,7 +8007,7 @@ async function fetchWordCard(token, sentence, strict) {
         : strict
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал словарную форму, не связанную со словом «'+token+'». «'+token+'» — слово target_lang из sentence; верни term, формой которого «'+token+'» действительно является.'
         : '')
-    }, TAP_CARD_SCHEMA);
+    }, TAP_CARD_SCHEMA, { responseSchema: TAP_CARD_RESPONSE_SCHEMA });
   } catch(e) { return null; }
   if (!out || typeof out !== 'object') return null;
   out.surface = token;                       // гарантия кода: карточка всегда о тапнутом токене
@@ -8015,7 +8055,7 @@ const CardCache = {
   MAX: 600,                                  // потолок записей; вытесняется самое старое
   _mem: new Map(),
   _fly: new Map(),                           // запросы в полёте: два нажатия подряд не дают двух запросов
-  _fix: new Set(),                           // фоновая починка на карточку — один раз за сеанс
+  _fix: new Map(),                           // починка на карточку — одна за сеанс, обещание переиспользуется
   key(tok){
     const lang = (DB && DB.profile && DB.profile.targetLang) || '';
     return lang + '|' + norm(stripArtG(tok));
@@ -8059,29 +8099,32 @@ const CardCache = {
                morph: rec.morph || '', forms: rec.forms || '', is_irregular: !!rec.is_irregular, mv: TAP_CARD_V };
     } catch(_){ return null; }
   },
-  // неполную карточку показываем сразу, а недостающее дозаполняем фоном к следующему разу
+  /* Дозапрос недостающего поля. 4.63: обещание сохраняется навсегда — и чтобы не спрашивать
+     дважды, и чтобы показ мог его ДОЖДАТЬСЯ. В 4.62 починка была отправлена в фон ради
+     скорости, и первое нажатие показывало полуфабрикат; теперь ждать почти нечего — подгрузка
+     началась при отрисовке задания, за десятки секунд до нажатия. */
   _repair(card, tok, sentence){
-    try {
-      if (!card || card.mv >= TAP_CARD_V || card.unverified) return;
-      const k = this.key(tok);
-      if (this._fix.has(k)) return;
-      this._fix.add(k);
-      fetchWordCard(tok, sentence, 'termtr')
-        .then(c => { if (c && c.mv >= TAP_CARD_V) this.put(tok, c); })
-        .catch(()=>{});
-    } catch(_){}
+    if (!card || card.mv >= TAP_CARD_V || card.unverified) return null;
+    const k = this.key(tok);
+    if (this._fix.has(k)) return this._fix.get(k);
+    const pr = fetchWordCard(tok, sentence, 'termtr')
+      .then(c => (c && c.mv >= TAP_CARD_V) ? this.put(tok, c) : null)
+      .catch(() => null);
+    this._fix.set(k, pr);
+    return pr;
   },
   async load(tok, sentence){
     const hit = this.get(tok);
-    if (hit) { this._repair(hit, tok, sentence); return hit; }
+    if (hit) return (hit.mv >= TAP_CARD_V) ? hit : ((await this._repair(hit, tok, sentence)) || hit);
     const k = this.key(tok);
     if (this._fly.has(k)) return await this._fly.get(k);
     const pr = (async () => {
       const loc = this.fromVocab(tok);
       if (loc) return this.put(tok, loc);
       const card = await fetchWordCard(tok, sentence);
-      if (card) { this.put(tok, card); this._repair(card, tok, sentence); }
-      return card;
+      if (!card) return card;
+      this.put(tok, card);
+      return (await this._repair(card, tok, sentence)) || card;
     })();
     this._fly.set(k, pr);
     try { return await pr; } finally { this._fly.delete(k); }
@@ -8149,7 +8192,7 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
      Уровень стоит ПОСЛЕ Ядра и Словаря, потому что те дают словарную статью, а здесь лежит
      разбор конкретной формы из текста — то, что вывести локально нельзя. */
   const cached = CardCache.get(term);
-  if (cached) { showTapPopup(cached, anchorEl, ctx, term); CardCache._repair(cached, term, ctx); return; }
+  if (cached) { showTapPopup(cached, anchorEl, ctx, term); return; }   // неполную дочинит сам попап (QUEUE-77)
   // 6. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
@@ -8174,6 +8217,19 @@ function attachTapAll(container, _sceneWords) {
    форма → формы неправильного глагола. Заголовок — тапнутый токен; словарная форма
    рядом в скобках. Для существительного, тапнутого в словарной форме, заголовком
    служит форма с артиклем (правило v53), скобка не дублируется. */
+/* 4.63 (QUEUE-184): транскрипция формы показывается ТОЛЬКО когда известно, какой форме она
+   принадлежит. Признак прямой: карточка описывает две формы, и если словарная отличается от
+   формы из текста, а её звучания в карточке нет, то единственная присланная транскрипция
+   неатрибутируема — практика показывает, что модель вешает её на словарную форму. Показать её
+   рядом с формой из текста значит научить человека звучанию ЧУЖОГО слова: «schicke [шикен]».
+   Пустое место честнее — оно ничему не учит, тогда как неверная подпись учит неверному. */
+function formTranslitOf(w, tok) {
+  if (!w || !w.translit) return '';
+  const dict = String(w.term || ''), face = String(tok || w.surface || '');
+  if (dict && face && norm(stripArtG(dict)) !== norm(stripArtG(face)) && !w.term_translit) return '';
+  return w.translit;
+}
+
 /* 4.61 (QUEUE-182): словарная форма печатается ОТДЕЛЬНОЙ строкой и со СВОЕЙ транскрипцией.
    Раньше она стояла в скобках рядом с формой из текста — «schicke (schicken)», — а транскрипция
    на обе была одна, и какой из двух форм принадлежит [шикен], не говорилось нигде. Для человека,
@@ -8206,7 +8262,7 @@ function tapCardRows(w, tok, tts, whyBtn) {
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:600;font-size:15px">${esc(head)}${paren}</span>
       ${tts}
-      <span style="color:var(--orange);font-size:13px;flex:1">${esc(w.translit||'')}</span>
+      <span style="color:var(--orange);font-size:13px;flex:1">${esc(formTranslitOf(w, tok))}</span>
       ${whyBtn}
       <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0">✕</button>
     </div>
