@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v120';
+const APP_VERSION = 'v121';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -4164,6 +4164,7 @@ function mainMenu() {
   Core.ensureArticles();                                     // 4.35: артикли языка старым профилям
   Core.ensureDeterminers();                                  // 4.60: определители языка старым профилям
   Core.purgeBadTranslit();                                   // 4.39: транскрипции чужой письменностью
+  TranslitAudit.run();                                       // 4.66: транскрипции, записанные прежним путём
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
   const next = DB.nextStage;
@@ -5671,21 +5672,38 @@ async function ensureLessonCards(words) {
       task: 'fix_vocab_cards',
       target_lang: langId(tgt), native_lang: langId(DB.profile.nativeLang),
       words: bad.map(w => ({ term: w.term, translation: w.translation || '' })),
-      rules: 'Для каждого слова верни СЛОВАРНУЮ форму и её грамматику. Существительное — с артиклем '
+      rules: 'ПОЛЕ source ОБЯЗАТЕЛЬНО: верни в нём слово РОВНО как оно дано во входном списке, символ в символ, '
+           + 'даже если сама словарная форма отличается. По нему приложение связывает ответ с запросом; '
+           + 'карточку без source или с source не из списка приложение отбрасывает. '
+           + 'Для каждого слова верни СЛОВАРНУЮ форму и её грамматику. Существительное — с артиклем '
            + 'и формой множественного числа. Глагол — в инфинитиве, плюс основные формы. '
            + 'Если пришла НЕ словарная форма (спряжённый глагол, слово с окончанием) — верни словарную. '
            + 'part_of_speech: noun|verb|adjective|adverb|pronoun|numeral|article|preposition|conjunction|particle. '
            + 'Служебные слова (артикли, предлоги, союзы, частицы) помечай честно — приложение их удалит.',
-      schemaHint: '{"cards":[{"term":"словарная форма","article":"артикль или пустая строка",'
+      schemaHint: '{"cards":[{"source":"слово РОВНО как во входном списке","term":"словарная форма","article":"артикль или пустая строка",'
                 + '"plural":"мн. число или пустая строка","forms":"формы через запятую или пустая строка",'
                 + '"translation":"перевод","translit":"транскрипция письменностью родного языка",'
                 + '"part_of_speech":"часть речи"}]}'
     });
     const cards = (r && r.cards) || [];
+    /* 4.66 (QUEUE-188): КАРТОЧКА ПРИВЯЗЫВАЕТСЯ ПО ИСХОДНОМУ СЛОВУ, А НЕ ПО ДОГАДКЕ.
+       Здесь стоял позиционный запас: `bad.find(... === c.term) || bad.shift()`. Функция просит
+       модель вернуть СЛОВАРНУЮ форму испорченного слова, то есть `term` законно отличается от
+       отправленного — сопоставление по совпадению термина обязано промахиваться ровно в тех
+       случаях, ради которых функция и существует. Тогда срабатывал `shift()` и содержимое
+       карточки уходило ПРОИЗВОЛЬНОМУ слову очереди: чужая транскрипция, чужой перевод и даже
+       `v.term` — слово получало чужое имя. Причём совпавшие карточки очередь не расходовали,
+       поэтому она сползала. Наружу это выглядело как «Startbedingung [ЛА-дэр]» — звучание от
+       «Laderstatus», — а внутри запись Словаря портилась навсегда и всплывала снова в
+       повторении, диктанте и тапе. Живёт с v109, с момента первого вызова функции.
+       Теперь связь — тождество: модель возвращает исходное слово полем `source`. Непривязанная
+       карточка отбрасывается: потерять починку одного слова не страшно, испортить другое — да. */
+    let dropped = 0;
     cards.forEach(c => {
       if (!c || !c.term) return;
-      const old = bad.find(w => norm(w.term) === norm(c.term)) || bad.shift();
-      if (!old) return;
+      const old = bad.find(w => norm(w.term) === norm(c.source))
+               || bad.find(w => norm(w.term) === norm(c.term));
+      if (!old) { dropped++; return; }
       const v = (DB.vocab || []).find(x => norm(x.term) === norm(old.term))
              || (DB.core  || []).find(x => norm(x.term) === norm(old.term)) || old;
       v.term = c.term;
@@ -5696,8 +5714,10 @@ async function ensureLessonCards(words) {
       if (c.translit)    v.translit = c.translit;
       if (c.part_of_speech) v.part_of_speech = c.part_of_speech;
       v.is_conjugated = false;
+      v.tv = TRANSLIT_TRUST;                 // 4.66: транскрипция привязана к своему слову
       Object.assign(old, v);
     });
+    if (dropped) console.warn('[AILEX] карточек без привязки к запросу отброшено:', dropped);
     Storage.save(DB);
   } catch (e) {
     /* Нет сети или лимит — урок идёт на том, что есть, починка случится в следующий раз. */
@@ -5821,7 +5841,8 @@ async function repairTargets(items, words) {
     if (!c || !c.expected_target) return;
     const hits = bareTargetNouns(c.expected_target, words);
     const unk  = unknownTargetWords(c.expected_target, words);
-    if (hits.length || unk.length) bad.push({ i, hits, unk });
+    const gap  = symmetryGap(c);          // 4.66: условие заметно шире эталона — смысл потерян
+    if (hits.length || unk.length || gap) bad.push({ i, hits, unk, gap });
   });
   if (!bad.length) return list;
   try {
@@ -5831,7 +5852,7 @@ async function repairTargets(items, words) {
       cefr: (L && L.lvl) || curCefr(),
       items: bad.map(b => ({ id: b.i, prompt_native: list[b.i].prompt_native || '',
                              expected_target: list[b.i].expected_target,
-                             bare_nouns: b.hits, unchecked_words: b.unk })),
+                             bare_nouns: b.hits, unchecked_words: b.unk, meaning_gap: !!b.gap })),
       rules: 'ДВЕ ПРОВЕРКИ по каждому пункту, обе обязательны. '
            + '(1) АРТИКЛИ. В bare_nouns — существительные, у которых код нашёл отсутствие артикля и другого определителя '
            + '(каждое со словарным артиклем). В unchecked_words — слова, которых нет в словаре приложения: про них код судить не может, '
@@ -5841,6 +5862,9 @@ async function repairTargets(items, words) {
            + '(2) СООТВЕТСТВИЕ УСЛОВИЮ. expected_target обязан говорить ровно то, что сказано в prompt_native: каждое смысловое слово условия '
            + 'присутствует в эталоне и наоборот. Если эталон говорит о другом (в задании «оператор», а в эталоне Prüfer — экзаменатор), '
            + 'ИСПРАВЬ ЭТАЛОН под условие, подобрав верное слово; prompt_native не трогай — он показан ученику как задание. '
+           + 'Пункт с meaning_gap=true код пометил особо: в условии заметно больше знаменательных слов, чем в эталоне, '
+           + 'то есть часть смысла в эталон не попала («Система начинает работу» → «Das System beginnt», слова «работу» нет). '
+           + 'Проверь такой пункт первым и дополни эталон недостающим смыслом. '
            + 'Больше НИЧЕГО не меняй: уровень, длина и построение фразы остаются прежними. Если пункт в порядке — верни его без изменений. '
            + 'expected_translit — транскрипция ИТОГОВОЙ фразы буквами native_lang.'
     }, '{"items":[{"id":0,"expected_target":"эталон — исправленный или прежний, если был в порядке","expected_translit":"[транскрипция всей фразы]"}]}');
@@ -5865,7 +5889,7 @@ function fetchLessonChunk2() {
       rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. ОТДЕЛЯЕМЫЕ ПРИСТАВКИ И СОСТАВНЫЕ ГЛАГОЛЫ (критично, 4.65): если глагол в эталоне РАСПАДАЕТСЯ на части («ausführen» → «führt … aus»), в glossary идут ОБЕ части ОТДЕЛЬНЫМИ объектами, каждая со своей транскрипцией: «führt» и «aus». Положить вместо них словарную форму «ausführen» НЕЛЬЗЯ: в тексте такого слова нет, ученик тапнет по «führt» и не найдёт ничего. У приставки в переводе поясни её роль («aus — отделяемая приставка глагола ausführen»). Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"слово из эталона В ТОЙ ФОРМЕ, как оно там стоит","translit":"[транскрипция этой формы]","translation":"перевод"}] — КАЖДОЕ слово эталона, включая служебные}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
-    let constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,DRILL_POOL);
+    let constructs = dedupeDrills((r2.items||[]).filter(i=>i.prompt_native && i.expected_target)).slice(0,DRILL_POOL);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     constructs = dropLeaky(constructs);                       // 4.41: условие без целевых слов
     constructs = await validateDrillLevel(constructs, lvl);   // QUEUE-66: вторая линия обороны по уровню
@@ -5878,13 +5902,18 @@ function fetchLessonChunk2() {
        если дефект остался, выбрасывается. Выбрасывать сразу означало терять задание из-за
        одного пропущенного артикля. */
     const beforeFix = constructs.length;
+    // 4.66 (QUEUE-190): пары «условие ↔ эталон» с потерей смысла repairTargets берёт сам
     constructs = await repairTargets(constructs, words);
     constructs = constructs.filter(c => !targetDefect(c && c.expected_target, words));
     if (constructs.length < beforeFix) console.warn('эталонов отбраковано:', beforeFix - constructs.length);
     /* 4.54 (QUEUE-173): транскрипция эталона — опора подсказки. Поле приходит через раз,
        и подсказка молча показывала фразу без звучания. Недостающие добираем одним пакетом. */
+    /* 4.66 (QUEUE-189): добор ПОСЛЕ отбраковки — иначе добирали бы до числа, которое тут же
+       уменьшится. Транскрипция и глоссарий доливаются уже на итоговый состав. */
+    constructs = await topUpDrills(dedupeDrills(constructs), words, lvl, DRILL_POOL);
     await fillMissingTranslit(constructs);
     await fillGlossaryGaps(constructs);      // 4.65: тап по любому слову эталона отвечает локально
+    if (constructs.length < DRILL_POOL) console.warn('[AILEX] пул неполон:', constructs.length, 'из', DRILL_POOL, '— заданий будет меньше, повторов не будет');
     L.constructs = constructs;
     // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
     const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
@@ -6263,16 +6292,76 @@ const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20] };
    сборка берёт 0..8, контекст — 9..14. Если фраз пришло меньше — работает прежний круг по
    остатку (материал беднее, но урок идёт). */
 const DRILL_POOL = 15;
+/* 4.66: ядро правил задания вынесено, чтобы ДОБОР шёл ровно по тем же правилам, что основной
+   запрос: иначе добранные фразы жили бы по другим требованиям, и дефект пришёл бы с той стороны. */
+const DRILL_CORE_RULES = 'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА: expected_target обязан быть предложением, которое носитель признает правильным; глагол в нужном лице и числе, существительное со своим артиклем. СИММЕТРИЯ: prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово условия обязано быть в эталоне и наоборот. ЧИСТОЕ УСЛОВИЕ: prompt_native строго на native_lang, без единого слова target_lang. GLOSSARY — КАЖДОЕ слово эталона в той форме, в какой оно стоит, включая служебные, каждое: слово + транскрипция родными буквами + перевод; у разделившегося глагола обе части отдельными объектами.';
+const DRILL_ITEM_SCHEMA = '{"items":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталонная фраза на целевом","expected_translit":"[транскрипция всей фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"слово из эталона в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}';
 const CONTEXT_OFFSET = 9;
 function drillItemAt(kind, i) {
   const arr = (L && L.constructs) || [];
   if (!arr.length) return null;
   const want = (kind === 'context') ? CONTEXT_OFFSET + i : i;
-  return arr[want % arr.length];
+  /* 4.66: БЕЗ остатка по длине. Прежде здесь стоял `% arr.length`, и короткий пул превращался
+     в повтор одних и тех же фраз в разных типах заданий. Нет фразы — задание пропускается
+     (renderStep идёт дальше), и это честно: лучше меньше заданий, чем то же самое трижды. */
+  return arr[want] || null;
 }
 /* 4.54 (QUEUE-173): транскрипция эталона добирается пакетом. Подсказка 💡 показывает фразу
    целиком, и без транскрипции она остаётся набором незнакомых букв — то самое, ради чего
    транскрипция в приложении и заведена. */
+/* ============================================================
+   4.66 (QUEUE-188): ОДНОРАЗОВАЯ ПЕРЕПРОВЕРКА ТРАНСКРИПЦИЙ.
+   Записи, испорченные позиционным запасом (см. ensureLessonCards), по признакам не отличить:
+   транскрипция на месте, письменность верная, просто не от того слова — ни одна локальная
+   проверка такого не поймает. Поэтому доверие помечается явно: запись, прошедшая через
+   исправленный путь, получает `tv`. Непомеченные перепроверяются пачками в фоне из главного
+   меню, как артикли (4.35) и определители (4.60); механизм самозавершается, когда помечены все.
+   Только транскрипция и часть речи: термин и перевод здесь не трогаем — их порча заметна
+   человеку сразу, а лишнее переписывание словарной статьи ради подозрения вредит больше. */
+const TRANSLIT_TRUST = 1;                    // версия доверия; поднять, если найдётся новый путь порчи
+const TranslitAudit = {
+  _pf: false, _done: false,
+  pending(){
+    try {
+      const all = [...(DB.vocab||[]), ...(DB.core||[])];
+      return all.filter(w => w && w.term && w.translit && !(w.tv >= TRANSLIT_TRUST)
+                          && !/\s/.test(String(w.term).trim()));
+    } catch(_) { return []; }
+  },
+  run(){
+    try {
+      if (this._pf || this._done || !DB || !DB.profile || !Storage.getKey()) return;
+      const need = this.pending();
+      if (!need.length) { this._done = true; return; }
+      const batch = need.slice(0, 40);
+      this._pf = true;
+      const p = DB.profile;
+      Gemini.call({
+        task: 'verify_translit', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+        words: batch.map(w => ({ term: w.term })),
+        rules: 'Для КАЖДОГО слова верни транскрипцию буквами native_lang и часть речи. Поле source '
+             + 'ОБЯЗАТЕЛЬНО и содержит слово РОВНО как дано, символ в символ: по нему приложение '
+             + 'связывает ответ с запросом, карточка без source отбрасывается. Транскрипция относится '
+             + 'ИМЕННО к этому слову; КАЖДЫЙ его согласный обязан быть отражён. IPA ЗАПРЕЩЁН.'
+      }, '{"words":[{"source":"слово ровно как дано","translit":"[транскрипция]","part_of_speech":"часть речи"}]}')
+      .then(r => {
+        let fixed = 0;
+        ((r && r.words) || []).forEach(c => {
+          if (!c || !c.source) return;
+          const w = batch.find(x => norm(x.term) === norm(c.source));
+          if (!w) return;
+          if (c.translit && !isBadTranslit(c.translit, p.nativeLang)) w.translit = c.translit;
+          if (c.part_of_speech) w.part_of_speech = c.part_of_speech;
+          w.tv = TRANSLIT_TRUST; fixed++;
+        });
+        if (fixed) { Storage.save(DB); console.log('[AILEX] транскрипций перепроверено:', fixed, 'осталось:', Math.max(0, need.length - fixed)); }
+      })
+      .catch(()=>{})                          // не помечаем — вернёмся при следующем заходе в меню
+      .then(()=>{ this._pf = false; });
+    } catch(e){}
+  }
+};
+
 async function fillMissingTranslit(items) {
   const list = Array.isArray(items) ? items : [];
   const miss = list.filter(c => c && c.expected_target && !c.expected_translit);
@@ -6354,6 +6443,76 @@ async function fillGlossaryGaps(items) {
     });
   } catch(e) { console.warn('fillGlossaryGaps:', e && e.message); }
   return list;
+}
+
+/* ============================================================
+   4.66 (QUEUE-189): ПУЛ ЗАДАНИЙ ДОБИРАЕТСЯ, А НЕ ЗАВОРАЧИВАЕТСЯ.
+   Раздача берёт фразы по смещению: сборка — 0–8, слово в контексте — 9–14, и разметка верна.
+   Но взятие шло через остаток по длине массива (`arr[want % arr.length]`), поставленный как
+   страховка от выхода за границы. Стоит модели вернуть меньше пятнадцати объектов — а с полными
+   глоссариями ответ большой, и это происходит легко, — как индексы контекстных заданий
+   заворачиваются на начало: при десяти пришедших фразах контекст просит 9…14 и получает
+   9, 0, 1, 2, 3, 4. Первые пять фраз показываются ДВАЖДЫ, в двух разных типах заданий.
+   Ученик видит одно и то же предложение три раза за урок и справедливо считает это издевательством.
+   Правило шире случая: НЕХВАТКА МАТЕРИАЛА ДОЛЖНА БЫТЬ ЗАМЕЧЕНА, А НЕ ЗАМАСКИРОВАНА. Модуль не
+   давал упасть и тем прятал дыру — то же, что делал `bad.shift()` в 4.66. Теперь: одинаковые
+   эталоны выбрасываются до раздачи, недостающее добирается одним запросом, а если после добора
+   фраз всё равно меньше — заданий будет меньше. Урок из двадцати разных лучше урока из двадцати
+   двух, где три одинаковых. */
+function dedupeDrills(items) {
+  const seen = new Set(), out = [];
+  (items || []).forEach(it => {
+    const k = norm(String((it && it.expected_target) || ''));
+    if (!k || seen.has(k)) return;
+    seen.add(k); out.push(it);
+  });
+  return out;
+}
+async function topUpDrills(items, words, lvl, need) {
+  const have = Array.isArray(items) ? items.slice() : [];
+  const miss = need - have.length;
+  if (miss <= 0) return have;
+  console.warn('[AILEX] фраз в пуле:', have.length, 'из', need, '— добираем', miss);
+  try {
+    const p = DB.profile;
+    const r = await Gemini.call({
+      task: 'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      cefr: lvl, topic: p.interests, lesson_words: (words || []).map(cardForPrompt),
+      known_vocab: ((L && L.known) || []).slice(-60).map(dictForm), count: miss,
+      avoid_sentences: have.map(i => String(i.expected_target || '')),
+      rules: 'ДОБОР: верни РОВНО ' + miss + ' НОВЫХ заданий по тем же правилам. Ни одна фраза не должна '
+           + 'повторять перечисленные в avoid_sentences и не должна повторять другую из твоего же ответа: '
+           + 'ученик увидит их в одном уроке подряд. ' + DRILL_CORE_RULES + lessonThemeBlock() + taskLevelBlock(lvl)
+    }, DRILL_ITEM_SCHEMA);
+    const add = (r && r.items || []).filter(i => i && i.prompt_native && i.expected_target);
+    return dedupeDrills([...have, ...add]).slice(0, need);
+  } catch(e) { console.warn('topUpDrills:', e && e.message); return have; }
+}
+
+/* 4.66 (QUEUE-190): УСЛОВИЕ И ЭТАЛОН СВЕРЯЮТСЯ ПО ОБЪЁМУ СМЫСЛА.
+   Требование симметрии («каждое смысловое слово задания обязано быть в эталоне и наоборот»)
+   стоит в правилах, и проверки под ним не было. Наружу это вышло так: условие «Система начинает
+   работу», эталон «Das System beginnt» — слова «работу» в эталоне нет вовсе, и ученик, собрав
+   всё предложенное, получает не то, что у него просили. Сравнить смысл двух языков код не может,
+   но грубое несоответствие ОБЪЁМА видно и без понимания: если в условии заметно больше знаменательных
+   слов, чем в эталоне, что-то потеряно. Признак намеренно грубый — он ловит пропажу целого слова
+   и молчит на порядке слов и служебных частях, где языки законно расходятся. Дальше решает модель:
+   подозрительные пары уходят в тот же `repairTargets`, который чинит эталоны. */
+function symmetryGap(item) {
+  /* Считать все слова подряд нельзя: артикли и определители целевого языка добивают счёт до
+     родного, и пропажа целого слова исчезает в этой прибавке — «Система начинает работу» и
+     «Das System beginnt» дают по три слова каждое. Поэтому с целевой стороны исключается
+     закрытый класс (артикли, определители, местоимения, предлоги, союзы, частицы), который
+     приложение уже знает по Ядру, а с родной — короткие служебные слова: устройства родного
+     языка приложение не описывает, и это единственная доступная грубая мера. */
+  const nat = tokenize(String((item && item.prompt_native) || '')).filter(w => w.length > 2);
+  const tgt = tokenize(String((item && item.expected_target) || '')).filter(w => {
+    if (isDeterminer(w)) return false;
+    const c = ((DB && DB.core) || []).find(x => norm(x.term) === w);
+    return !(c && CLOSED_POS.has(String(c.part_of_speech || '').toLowerCase()));
+  });
+  if (nat.length < 3 || !tgt.length) return false;    // на коротких парах мера не работает
+  return nat.length - tgt.length >= 1;
 }
 
 function interleaveTypes(quota) {
