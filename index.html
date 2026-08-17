@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v117';
+const APP_VERSION = 'v118';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1900,6 +1900,11 @@ const Gemini = {
         useSchema ? { responseSchema: opts.responseSchema } : {})
     };
     const sleep = ms => new Promise(res => setTimeout(res, ms));
+    /* 4.64 (QUEUE-185): у запросов НЕ БЫЛО таймаута — ни у одного, нигде. Зависшее соединение
+       не завершается никогда: fetch не разрешается, ожидающий его экран стоит вечно. Именно так
+       подсказка оставалась на «💡 …» до конца задания. Ограничение общее, а не для подсказки:
+       незавершаемое ожидание опасно в любом месте приложения. */
+    const REQ_TIMEOUT = 20000;
     let lastErr = null;
     // сначала пробуем запомненную рабочую модель, затем остальные
     const order = this.preferred ? [this.preferred, ...this.MODELS.filter(m=>m!==this.preferred)] : this.MODELS.slice();
@@ -1907,8 +1912,14 @@ const Gemini = {
       // до 3 попыток на модель: при 429 (лимит запросов) ждём и повторяем ту же модель
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
-            { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          const killer = ac ? setTimeout(() => { try { ac.abort(); } catch(_){} }, REQ_TIMEOUT) : null;
+          let r;
+          try {
+            r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
+              Object.assign({ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) },
+                            ac ? { signal: ac.signal } : {}));
+          } finally { if (killer) clearTimeout(killer); }
           if (r.status === 400 && useSchema) {
             /* 4.63: 400 при отправленной схеме — это отказ от схемы, а НЕ плохой ключ. Разница
                принципиальна: прежняя ветка объявила бы ключ негодным и показала бы человеку
@@ -5808,9 +5819,10 @@ function fetchLessonChunk2() {
           task:'generate_review_sentences', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
           review_words: L.reviewWords.map(w=>({ word:w.term, meaning:w.translation||'' })), count: L.reviewWords.length,
           rules:'Для КАЖДОГО объекта из review_words верни короткое естественное предложение на целевом языке, СОДЕРЖАЩЕЕ слово word в ЗНАЧЕНИИ meaning. КРИТИЧНО (QUEUE-40): у слова может быть несколько значений — используй ИМЕННО meaning, и весь смысл предложения обязан соответствовать этому значению (если meaning = «патрон (токарный)» — предложение про станок/деталь, НЕ про корм для собаки; если meaning = «корм» — про животное). Предложение строго по уровню CEFR. word — то слово из review_words, к которому относится предложение. '
+            + 'GLOSSARY — ВСЕ СЛОВА ПРЕДЛОЖЕНИЯ (критично, 4.64): в glossary помести КАЖДОЕ слово из sentence РОВНО В ТОЙ ФОРМЕ, в какой оно там стоит («schicke», а НЕ «schicken»), включая служебные (артикли, предлоги, союзы), каждое: слово + транскрипция родными буквами + перевод. Транскрипция относится ИМЕННО к этой форме. Приложение показывает её ученику как подсказку и как перевод по тапу, поэтому пропуск слова оставляет ученика без подсказки. '
             + 'ПЕРЕВОД ПОЛНЫЙ И ТОЧНЫЙ (критично, 4.53): translation обязан передавать ВЕСЬ смысл sentence — модальность (must/должен, can/может, want/хочет), время, отрицание, каждое смысловое слово. Терять модальный глагол ЗАПРЕЩЕНО: «Das Baby muss weinen» переводится «Младенец должен плакать», а НЕ «Младенец плачет» — это разные предложения с разным смыслом. Проверь перед ответом: если убрать из sentence модальный/вспомогательный глагол, изменится ли translation — если нет, перевод неполный, исправь.'
         },
-        '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной, полностью передающий смысл — включая модальность и время"}]}');
+        '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной, полностью передающий смысл — включая модальность и время","glossary":[{"term":"слово из sentence в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}');
         L.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
       } catch(_) { L.reviewDrills = []; }
     }
@@ -7044,19 +7056,17 @@ function drillReviewContext(s, rd) {
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
-  CardCache.warm(answer, fullSentence);   // 4.62: карточка готовится, пока человек печатает
-  /* 4.53 (QUEUE-149): подсказка запрашивает карточку РОВНО этой формы через тот же контракт
-     translate_word, что и тап-перевод (4.32) — вместо транскрипции словарной карточки w
-     (инфинитив), которая для спрягаемой/склонённой формы физически другое слово со своим
-     звучанием («werde» показывался с транскрипцией «werden» — [вэрдэн] не читается как «werde»). */
+  /* 4.64 (QUEUE-185): карточка нужной формы приходит вместе с заданием — в глоссарии
+     предложения, где транскрипция стоит при самой форме. Запрос в сеть остаётся только для
+     уроков, собранных билдом без этого поля. */
   $('#hint').onclick = async () => {
     L.hints++; $('#fb').className='feedback ok';
-    $('#fb').innerHTML = `💡 …`;
+    // 4.64: глоссарий предложения + запись Словаря — всё локально, сети здесь делать нечего
+    const local = localFormCard(answer, rd.glossary, w) || CardCache.get(answer);
+    if (local) { $('#fb').innerHTML = wordHintHTML(answer, local, w); speak(answer, DB.profile.targetLang); return; }
+    $('#fb').innerHTML = `💡 …`;                       // урок собран старым билдом — глоссария нет
     const card = await CardCache.load(answer, fullSentence);
-    const tr = formTranslitOf(card, answer) || (card ? '' : (w.translit || ''));
-    const tn = (card && card.translation) || w.translation || '';
-    const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
-    $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
+    $('#fb').innerHTML = wordHintHTML(answer, card, w);
     speak(answer, DB.profile.targetLang);
   };
   $('#check').onclick = async () => {
@@ -7143,25 +7153,26 @@ function drillContext(s) {
     </div>`);
   bindAutoGrow('ans');
   attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
-  CardCache.warm(answer, fullSentence);   // 4.62: карточка готовится, пока человек печатает
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
   $('#hint').onclick = async () => {
     L.hints++; hintLevel++;
     $('#fb').className = 'feedback ok';
+    /* 4.64 (QUEUE-185): глоссарий эталона приходит вместе с заданием (4.28) и содержит КАЖДОЕ
+       его слово в той форме, в какой оно стоит, — значит транскрипция нужной формы лежит
+       локально с самого начала. Сеть остаётся только для уроков, собранных до 4.64. */
+    const local = localFormCard(answer, item.glossary, vEntry) || CardCache.get(answer);
     if (hintLevel === 1) {
-      $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(vEntry.translit||'')}</span>`;
+      const tr1 = formTranslitOf(local, answer) || '';
+      $('#fb').innerHTML = `💡 <b>${esc(wordSkeleton(answer, Math.min(2, answer.length)))}</b> <span style="color:var(--orange)">${esc(tr1)}</span>`;
+    } else if (local) {
+      $('#fb').innerHTML = wordHintHTML(answer, local, vEntry);
+      speak(answer, DB.profile.targetLang); // QUEUE-10: авто-TTS при показе полного ответа
     } else {
-      /* 4.53 (QUEUE-149): та же замена, что в drillReviewContext — транскрипция запрашивается
-         для РОВНО этой формы (answer) через translate_word, а не берётся от словарной карточки
-         (item.expected_translit — транскрипция ВСЕЙ фразы-эталона, тоже не форма answer). */
       $('#fb').innerHTML = `💡 …`;
       const card = await CardCache.load(answer, fullSentence);
-      const tr = formTranslitOf(card, answer) || (card ? '' : (vEntry.translit || ''));
-      const tn = (card && card.translation) || vEntry.translation || '';
-      const morphLine = dictFormLineHTML(card, answer);   // 4.61: словарная форма со своей транскрипцией
-      $('#fb').innerHTML = `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>` + sayBtn(answer) + ` — ${esc(tn)}` + morphLine;
-      speak(answer, DB.profile.targetLang); // QUEUE-10: авто-TTS при показе полного ответа
+      $('#fb').innerHTML = wordHintHTML(answer, card, vEntry);
+      speak(answer, DB.profile.targetLang);
     }
   };
   $('#check').onclick = async () => {
@@ -8217,6 +8228,48 @@ function attachTapAll(container, _sceneWords) {
    форма → формы неправильного глагола. Заголовок — тапнутый токен; словарная форма
    рядом в скобках. Для существительного, тапнутого в словарной форме, заголовком
    служит форма с артиклем (правило v53), скобка не дублируется. */
+/* =====================================================================
+   4.64 (QUEUE-185): ПОДСКАЗКА СОБИРАЕТСЯ ИЗ ПАКЕТА УРОКА, А НЕ ИЗ СЕТИ.
+   Вокруг запроса карточки выросли кэш, подгрузка заранее, схема ответа и починка — и всё это
+   ради данных, которые УЖЕ ПРИХОДЯТ вместе с заданием. Контракт заданий на построение с 4.28
+   требует glossary: каждое слово эталона с транскрипцией и переводом, в той форме, в какой оно
+   в эталоне стоит. Контракт предложений повторения его не требовал — и подсказка именно в
+   этих заданиях уходила в сеть за одним словом в момент нажатия. Поле добавлено в тот же
+   запрос, который и так отправляется при сборке урока; лишнего обращения не появилось.
+
+   Побочная выгода важнее скорости: в глоссарии транскрипция стоит ПРИ САМОЙ ФОРМЕ, поэтому
+   вопрос принадлежности (4.61, 4.63) здесь не возникает вовсе — его снимает структура данных,
+   а не проверка. Сеть остаётся только там, где форма заранее неизвестна: тап по слову в тексте. */
+function glossaryHit(glossary, form){
+  const f = norm(stripArtG(form));
+  return (glossary||[]).find(g => g && g.term && norm(stripArtG(g.term)) === f) || null;
+}
+function localFormCard(form, glossary, rec){
+  const g = glossaryHit(glossary, form);
+  const dict = (rec && rec.term) ? String(rec.term) : '';
+  const sameForm = !!dict && norm(stripArtG(dict)) === norm(stripArtG(form));
+  if (!g && !sameForm) return null;          // звучание формы взять неоткуда — пусть решает сеть
+  /* Транскрипция словарной формы: своё поле, если оно есть (4.61); иначе транскрипция записи
+     годится лишь тогда, когда запись описывает саму словарную форму, а не какую-то другую. */
+  const recIsDict = !!rec && (!rec.surface || norm(stripArtG(rec.surface)) === norm(stripArtG(dict)));
+  return {
+    surface: form,
+    translit: g ? (g.translit || '') : (rec.translit || ''),
+    translation: (g && g.translation) || (rec && rec.translation) || '',
+    term: dict,
+    term_translit: (rec && rec.term_translit) || (recIsDict && rec ? (rec.translit || '') : ''),
+    term_translation: (rec && (rec.term_translation || rec.translation)) || '',
+    morph: '', mv: TAP_CARD_V,
+    translitAttributed: true                 // форма и её звучание пришли одной парой
+  };
+}
+function wordHintHTML(answer, card, rec){
+  const tr = formTranslitOf(card, answer) || '';
+  const tn = (card && card.translation) || (rec && rec.translation) || '';
+  return `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>`
+       + sayBtn(answer) + ` — ${esc(tn)}` + dictFormLineHTML(card, answer);
+}
+
 /* 4.63 (QUEUE-184): транскрипция формы показывается ТОЛЬКО когда известно, какой форме она
    принадлежит. Признак прямой: карточка описывает две формы, и если словарная отличается от
    формы из текста, а её звучания в карточке нет, то единственная присланная транскрипция
@@ -8225,6 +8278,7 @@ function attachTapAll(container, _sceneWords) {
    Пустое место честнее — оно ничему не учит, тогда как неверная подпись учит неверному. */
 function formTranslitOf(w, tok) {
   if (!w || !w.translit) return '';
+  if (w.translitAttributed) return w.translit;   // 4.64: пара «форма + звучание» пришла из глоссария
   const dict = String(w.term || ''), face = String(tok || w.surface || '');
   if (dict && face && norm(stripArtG(dict)) !== norm(stripArtG(face)) && !w.term_translit) return '';
   return w.translit;
