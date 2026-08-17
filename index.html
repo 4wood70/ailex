@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v119';
+const APP_VERSION = 'v120';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -307,6 +307,19 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.65: подсказка о раскладке целевого языка. */
+    'Нужна клавиатура изучаемого языка',
+    'Ответ набран не той письменностью — похоже, клавиатуры изучаемого языка на устройстве нет. Добавить её можно из самой клавиатуры: нажмите и удерживайте запятую или значок глобуса, затем «Языки» и «Добавить клавиатуру». Переключаться потом не нужно — Gboard печатает на нескольких языках сразу.',
+    'Понятно',
+    /* 4.65: панель навыков в главном меню. */
+    'Навыки',
+    'Чтение',
+    'Письмо',
+    'Письмо со слуха',
+    'Речь',
+    'реплик',
+    'нет данных',
+    'Речь и письмо со слуха — тренировка, в оценку курса не входят.',
     /* 4.52: перезапуск урока и список встреченных слов. */
     'Начать урок заново?',
     'Пройденные задания этого урока будут сброшены, урок соберётся с нуля.',
@@ -2264,6 +2277,66 @@ function masteryPercent() {
   if (!scored.length) return 0;
   return Math.round(scored.reduce((s,x)=>s+(x.accuracy_first_try||0),0)/scored.length*100);
 }
+/* 4.65 (QUEUE-168): ПАНЕЛЬ НАВЫКОВ — четыре канала вместо одной цифры.
+   Общая точность смешивает разные умения: можно свободно читать и вдвое хуже писать со слуха,
+   а по общему проценту этого не видно — человек не понимает, над чем работать. Каналы:
+   чтение (узнавание и понимание), письмо (производство фразы набором), письмо со слуха
+   (диктант), речь (разговор).
+   РЕЧЬ НЕ ОЦЕНИВАЕТСЯ ДОЛЕЙ ВЕРНОГО — только объёмом практики. Распознавание речи
+   систематически ошибается на неносителях, то есть на всех наших учащихся; процент измерял бы
+   качество микрофона и акцент, а не владение языком, и штрафовал бы за то, в чём человек не
+   виноват. Диктант, в отличие от речи, измеряется честно (сравнение с эталоном без погрешности
+   распознавания), но в общий балл и в прохождение курса не входит: обратная связь без
+   последствий. Записи, сделанные до 4.65, поля `skills` не имеют и в подсчёт просто не входят —
+   панель наполняется по мере занятий, доучитывать историю нечем и незачем. */
+function skillStats() {
+  const a = (DB && DB.analytics) || [];
+  const out = { reading:null, writing:null, listening:null, speaking:0 };
+  if (!a.length) return out;
+  const lvl = currentLevel();
+  const ofLevel = a.filter(x => {
+    if (String(x.lesson||'') === 'DIALOGUE') return true;      // разговор к уровню не привязан
+    const pp = parseCode(String(x.lesson||'').replace('SUPER_','').replace('EXAM_',''));
+    return pp && pp.lvl === lvl;
+  });
+  const set = ofLevel.length ? ofLevel : a;
+  const sum = { reading:{ok:0,total:0}, writing:{ok:0,total:0}, listening:{ok:0,total:0} };
+  set.forEach(x => {
+    const s = x && x.skills; if (!s) return;
+    ['reading','writing','listening'].forEach(k => {
+      const v = s[k]; if (!v || !v.total) return;
+      sum[k].ok += (v.ok||0); sum[k].total += v.total;
+    });
+    if (typeof s.speaking === 'number') out.speaking += s.speaking;
+  });
+  ['reading','writing','listening'].forEach(k => {
+    if (sum[k].total) out[k] = Math.round(sum[k].ok / sum[k].total * 100);
+  });
+  return out;
+}
+function skillPanelHTML() {
+  const s = skillStats();
+  const rows = [
+    ['📖', 'Чтение', s.reading],
+    ['✍️', 'Письмо', s.writing],
+    ['🎧', 'Письмо со слуха', s.listening],
+    ['🗣', 'Речь', null]
+  ];
+  const dash = lbl('нет данных');
+  const body = rows.map(([ic, name, val]) => {
+    const right = (name === 'Речь')
+      ? (s.speaking ? `<b style="color:var(--ink)">${s.speaking}</b> ${lbl('реплик')}` : dash)
+      : (val === null ? dash : `<b style="color:var(--ink)">${val}%</b>`);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">
+      <span>${ic} ${lbl(name)}</span><span>${right}</span></div>`;
+  }).join('');
+  return `<div style="margin:8px 0 2px;font-size:12.5px;color:var(--dim)">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${lbl('Навыки')}</div>
+    ${body}
+    <div style="font-size:11px;margin-top:3px;opacity:.8">${lbl('Речь и письмо со слуха — тренировка, в оценку курса не входят.')}</div>
+  </div>`;
+}
+
 /* Прогресс по текущему уровню CEFR = доля пройденных уроков уровня (4.8).
    Уровень = 2 подуровня × LESSONS_PER_SUB уроков (по умолчанию 25+25 = 50). */
 function currentLevel() {
@@ -4136,6 +4209,7 @@ function mainMenu() {
           <span><span>Слов в словаре:</span> <b style="color:var(--ink)">${words}</b></span>
           <span><span>Освоено:</span> <b style="color:var(--ink)">${mastered}</b></span>
         </div>
+        ${skillPanelHTML()}
         ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
       </div>
     </div>
@@ -5047,7 +5121,7 @@ function showA0Dictation(word, pool, lessonN, total, progress, onDone) {
 
   if (typed) {
     $('#check').onclick = () => {
-      const a = $('#ans').value.trim();
+      const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
       if (!a) return;
       const ok = normDict(a) === normDict(term);
       const fb = $('#fb');
@@ -5371,6 +5445,11 @@ async function startLesson(code) {
         chunk2:{state:'idle',promise:null,err:null},
         lvl, known,
         errors:{ recognition:0, writing:0, construction:0, quest:0, listening:0 },   // 4.57: аудирование считается отдельно от письма
+        /* 4.65 (QUEUE-168): попытки по каналам навыка. Ошибки считались и раньше, но без числа
+           попыток из них нельзя получить долю — панель навыков показывала бы «сколько ошибся»,
+           а человеку нужно «насколько владеет». Речь здесь не участвует: её нельзя мерить
+           точностью распознавания (см. skillStats). */
+        skill:{ reading:{ok:0,total:0}, writing:{ok:0,total:0}, listening:{ok:0,total:0} },
         ft:{ ok:0, total:0 }, hints:0, t0: Date.now(),
         wordErr:{}, firstTryDone:{}, retryPlanned:{},
         _contentBuild: APP_VERSION };
@@ -5783,9 +5862,9 @@ function fetchLessonChunk2() {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
       topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. GLOSSARY — ВСЕ СЛОВА ЭТАЛОНА (критично, 4.28): в glossary помести КАЖДОЕ слово из expected_target — не только ключевые и не только новые, но и служебные (артикли der/die/das, предлоги für/bei/mit, союзы und/oder), каждое: слово на целевом + транскрипция родными буквами + перевод. Приложение перемешивает эти слова в набор-опору, и тап по любому слову набора обязан находить перевод мгновенно. ОТДЕЛЯЕМЫЕ ПРИСТАВКИ И СОСТАВНЫЕ ГЛАГОЛЫ (критично, 4.65): если глагол в эталоне РАСПАДАЕТСЯ на части («ausführen» → «führt … aus»), в glossary идут ОБЕ части ОТДЕЛЬНЫМИ объектами, каждая со своей транскрипцией: «führt» и «aus». Положить вместо них словарную форму «ausführen» НЕЛЬЗЯ: в тексте такого слова нет, ученик тапнет по «führt» и не найдёт ничего. У приставки в переводе поясни её роль («aus — отделяемая приставка глагола ausführen»). Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
-    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"новое слово из эталона","translit":"[транскрипция]","translation":"перевод"}]}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
+    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","expected_translit":"[транскрипция всей эталонной фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"слово из эталона В ТОЙ ФОРМЕ, как оно там стоит","translit":"[транскрипция этой формы]","translation":"перевод"}] — КАЖДОЕ слово эталона, включая служебные}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки}');
     let constructs = (r2.items||[]).filter(i=>i.prompt_native && i.expected_target).slice(0,DRILL_POOL);
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     constructs = dropLeaky(constructs);                       // 4.41: условие без целевых слов
@@ -5805,6 +5884,7 @@ function fetchLessonChunk2() {
     /* 4.54 (QUEUE-173): транскрипция эталона — опора подсказки. Поле приходит через раз,
        и подсказка молча показывала фразу без звучания. Недостающие добираем одним пакетом. */
     await fillMissingTranslit(constructs);
+    await fillGlossaryGaps(constructs);      // 4.65: тап по любому слову эталона отвечает локально
     L.constructs = constructs;
     // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
     const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
@@ -5910,10 +5990,99 @@ async function ensureMnemonic(v) {
   delete v._mnemoPending;
 }
 
-function firstTry(stepKey, ok) {
+/* 4.65 (QUEUE-155): поле ответа объявляет ЯЗЫК вводимого текста. Прежде ни одно поле ответа
+   этого не делало, и клавиатура правила ввод по родному языку: русская автозамена калечила
+   немецкие слова прямо при наборе. Раскладку страница переключить не может — Android такого
+   права не даёт ни в браузере, ни в TWA, — но объявить язык и отключить проверку орфографии
+   может, и этого хватает, чтобы ввод перестали портить. */
+function langTag() {
+  try { return String((DB && DB.profile && DB.profile.targetLang) || 'und').slice(0, 12); }
+  catch(_) { return 'und'; }
+}
+
+/* 4.65 (QUEUE-155): ПОДСКАЗКА О РАСКЛАДКЕ — ПО ФАКТУ, А НЕ ЗАРАНЕЕ.
+   Когда письменности родного и целевого языка расходятся (иврит, греческий, хинди, японский),
+   человек без добавленной клавиатуры физически не может набрать ответ и отправляет текст своей
+   письменностью. Признак прямой и виден коду — гадать до первой попытки незачем. Показывать
+   всем подряд нельзя: русскому, учащему украинский, кириллица уже есть, и напоминание будет
+   шумом, а таких пар у нас большинство. Путь ведём через саму клавиатуру, а не через системные
+   настройки: у Samsung, Xiaomi и «чистого» Android они называются по-разному, а долгое нажатие
+   на запятую в Gboard работает везде одинаково. Показывается ОДИН раз за профиль.
+   Своя экранная клавиатура отклонена: для японского, китайского и корейского ввод идёт через
+   преобразование (кана → кандзи, пиньинь → ханьцзы), а не набор букв, — кнопками это не
+   решается, и запасной путь всё равно понадобился бы. */
+const SCRIPT_RANGES = {
+  Latin:      /[A-Za-z\u00C0-\u024F]/,
+  Cyrillic:   /[\u0400-\u04FF]/,
+  Greek:      /[\u0370-\u03FF]/,
+  Hebrew:     /[\u0590-\u05FF]/,
+  Arabic:     /[\u0600-\u06FF\u0750-\u077F]/,
+  Devanagari: /[\u0900-\u097F]/,
+  Bengali:    /[\u0980-\u09FF]/,
+  Gujarati:   /[\u0A80-\u0AFF]/,
+  Tamil:      /[\u0B80-\u0BFF]/,
+  Telugu:     /[\u0C00-\u0C7F]/,
+  Kannada:    /[\u0C80-\u0CFF]/,
+  Malayalam:  /[\u0D00-\u0D7F]/,
+  Sinhala:    /[\u0D80-\u0DFF]/,
+  Thai:       /[\u0E00-\u0E7F]/,
+  Lao:        /[\u0E80-\u0EFF]/,
+  Myanmar:    /[\u1000-\u109F]/,
+  Georgian:   /[\u10A0-\u10FF\u1C90-\u1CBF]/,
+  Armenian:   /[\u0530-\u058F]/,
+  Ethiopic:   /[\u1200-\u137F]/,
+  Khmer:      /[\u1780-\u17FF]/,
+  Hangul:     /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/,
+  Han:        /[\u4E00-\u9FFF\u3400-\u4DBF]/,
+  Hiragana:   /[\u3040-\u309F]/,
+  Katakana:   /[\u30A0-\u30FF]/
+};
+// Письменность языка приложение уже знает: LANG_ID хранит её вторым полем (4.49).
+function scriptsOfLang(code) {
+  try {
+    const raw = String((LANG_ID[String(code)] || [])[1] || '');
+    return Object.keys(SCRIPT_RANGES).filter(k => raw.indexOf(k) >= 0);
+  } catch(_) { return []; }
+}
+function hasAnyScript(text, names) {
+  return (names || []).some(k => SCRIPT_RANGES[k] && SCRIPT_RANGES[k].test(String(text || '')));
+}
+function wrongScriptForTarget(text) {
+  try {
+    const s = String(text || '').replace(/[\s\d.,!?;:()"'\u00AB\u00BB_\-\u2013\u2014]/g, '');
+    if (s.length < 3) return false;
+    const tgt = scriptsOfLang(DB.profile.targetLang), nat = scriptsOfLang(DB.profile.nativeLang);
+    if (!tgt.length || !nat.length) return false;
+    if (tgt.some(x => nat.indexOf(x) >= 0)) return false;   // письменности пересекаются — вопроса нет
+    if (hasAnyScript(s, tgt)) return false;                 // целевая письменность есть — набрал
+    return hasAnyScript(s, nat);                            // набрано своей — раскладки нет
+  } catch(_) { return false; }
+}
+function maybeKeyboardTip(text) {
+  try {
+    if (!DB || !DB.profile || DB.profile.kbTipShown) return;
+    if (!wrongScriptForTarget(text)) return;
+    DB.profile.kbTipShown = true; Storage.save(DB);
+    askConfirm(t('Нужна клавиатура изучаемого языка'),
+      t('Ответ набран не той письменностью — похоже, клавиатуры изучаемого языка на устройстве нет. Добавить её можно из самой клавиатуры: нажмите и удерживайте запятую или значок глобуса, затем «Языки» и «Добавить клавиатуру». Переключаться потом не нужно — Gboard печатает на нескольких языках сразу.'),
+      () => {}, t('Понятно'));
+  } catch(_){}
+}
+
+function firstTry(stepKey, ok, channel) {
   if (L.firstTryDone[stepKey]) return;
   L.firstTryDone[stepKey] = true;
   L.ft.total++; if (ok) L.ft.ok++;
+  noteSkill(channel, ok);                   // 4.65: та же попытка в разрезе канала навыка
+}
+/* Канал навыка: чтение — узнавание и понимание, письмо — производство фразы набором,
+   письмо со слуха — диктант. Вызов без канала (нашлось задание, которое его не передаёт)
+   молча ничего не портит: общая точность считается по-прежнему. */
+function noteSkill(channel, ok) {
+  try {
+    if (!channel || !L || !L.skill || !L.skill[channel]) return;
+    L.skill[channel].total++; if (ok) L.skill[channel].ok++;
+  } catch(_){}
 }
 
 /* ---------- Незавершённые занятия: хранилище эпизодов (спека 4.29) ----------
@@ -6124,6 +6293,69 @@ async function fillMissingTranslit(items) {
   } catch(e) { console.warn('fillMissingTranslit:', e && e.message); }
   return list;
 }
+/* ============================================================
+   4.65 (QUEUE-187): ПОЛНОТА ГЛОССАРИЯ ЗАДАНИЯ ПРОВЕРЯЕТСЯ КОДОМ.
+   Требование «в glossary — КАЖДОЕ слово эталона» стоит в правилах с 4.28, а проверки не было:
+   для сцен Суперквеста полноту считает `glossaryGaps` (4.36), для заданий урока — никто. Схема
+   ответа вдобавок говорила противоположное правилам («новое слово из эталона»), то есть контракт
+   противоречил сам себе, и модель была вправе выбрать любое прочтение.
+   Практический случай: «ausführen» — глагол с отделяемой приставкой, в эталоне он распадается на
+   «führt … aus», а в глоссарий уходил словарной формой. Ни «führt», ни «aus» в списке не было,
+   и тап по ним проваливался в сеть — где упирался в лимит запросов или в таймаут.
+   Приём тот же, что у `fillMissingTranslit`: код находит дыры, недостающее добирается ОДНИМ
+   пакетным запросом при сборке урока. Запроса нет, если дыр нет; сбой урок не рушит. */
+function glossaryMissing(item) {
+  const text = String((item && item.expected_target) || '');
+  if (!text) return [];
+  const have = new Set();
+  (Array.isArray(item.glossary) ? item.glossary : []).forEach(g => {
+    /* Запись глоссария может быть многословной («der Mensch»): покрытыми считаются ВСЕ её слова,
+       включая артикль. Раньше здесь стоял stripArtG, и артикль записи терялся — код объявлял
+       «der» и «die» отсутствующими, хотя ученик их видит. */
+    tokenize(String((g && g.term) || '')).forEach(x => have.add(x));
+  });
+  const out = [];
+  tokenize(text).forEach(tk => {
+    if (!tk || tk.length < 2 || have.has(tk)) return;      // односимвольное не тапается
+    if (out.indexOf(tk) < 0) out.push(tk);
+  });
+  return out;
+}
+async function fillGlossaryGaps(items) {
+  const list = Array.isArray(items) ? items : [];
+  const holes = [];
+  list.forEach((it, i) => {
+    const miss = glossaryMissing(it);
+    if (miss.length) holes.push({ i, sentence: it.expected_target, words: miss });
+  });
+  if (!holes.length) return list;
+  console.log('[AILEX] слов вне глоссария:', holes.reduce((s,h)=>s+h.words.length,0));
+  try {
+    const p = DB.profile;
+    const r = await Gemini.call({
+      task: 'fill_glossary', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      items: holes.map((h, k) => ({ id: k, sentence: h.sentence, words: h.words })),
+      rules: 'По каждому объекту: в sentence перечислены слова (words), которых нет в глоссарии, '
+           + 'а ученику они показаны и он может по ним тапнуть. Верни для КАЖДОГО слова транскрипцию '
+           + 'буквами native_lang и перевод. term возвращай РОВНО В ТОЙ ФОРМЕ, в какой слово дано в words — '
+           + 'словарную форму подставлять НЕЛЬЗЯ, ученик видит именно эту. Транскрипция относится к этой же форме. '
+           + 'Перевод — по смыслу В ЭТОМ предложении. Если слово — часть составного или разделившегося глагола '
+           + '(«führt … aus» от «ausführen»), так и поясни в переводе: «выполняет (от ausführen)», '
+           + '«отделяемая приставка глагола ausführen». Если слово служебное (артикль, предлог, союз) — '
+           + 'назови его роль вместо буквального перевода. IPA запрещён.'
+    }, '{"items":[{"id":0,"glossary":[{"term":"слово в той же форме","translit":"[транскрипция этой формы]","translation":"перевод в этом предложении"}]}]}');
+    ((r && r.items) || []).forEach(f => {
+      const k = Number(f && f.id);
+      if (!Number.isInteger(k) || !holes[k]) return;
+      const it = list[holes[k].i]; if (!it) return;
+      const add = (Array.isArray(f.glossary) ? f.glossary : []).filter(g => g && g.term && (g.translit || g.translation));
+      if (!add.length) return;
+      it.glossary = [...(Array.isArray(it.glossary) ? it.glossary : []), ...add];
+    });
+  } catch(e) { console.warn('fillGlossaryGaps:', e && e.message); }
+  return list;
+}
+
 function interleaveTypes(quota) {
   const want = [];
   for (const t of Object.keys(quota)) {
@@ -6322,7 +6554,7 @@ function drillDictation(s, onDone) {
         <p class="note" style="margin:0 0 10px">${lbl('Фраза')} ${idx+1} ${lbl('из')} ${text.length}</p>
         <button class="btn btn-ghost" id="play" style="margin:6px 0 10px">🔊 ${lbl('Прослушать')}</button>
         <div class="note" id="plays" style="margin:0 0 8px"></div>
-        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off"
+        <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off"
           placeholder="${esc(t('Напишите услышанное'))}"></textarea>
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
@@ -6347,7 +6579,7 @@ function drillDictation(s, onDone) {
     paint();
 
     $('#check').onclick = () => {
-      const a = $('#ans').value.trim();
+      const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
       if (!a) return;
       const ok = checkDictation(a, answer, mode);
       const fb = $('#fb');
@@ -6360,6 +6592,7 @@ function drillDictation(s, onDone) {
          показывала проблему с орфографией там, где человек просто не расслышал. */
       if (!ok) { wrong++; L.errors.listening = (L.errors.listening || 0) + 1; }
       L.ft.total++; if (ok) L.ft.ok++;
+      noteSkill('listening', ok);           // 4.65: письмо со слуха — свой канал
       $('#check').disabled = true;
       const btn = document.createElement('button');
       btn.className = 'btn btn-primary'; btn.style.marginTop = '14px';
@@ -6710,7 +6943,7 @@ function drillRecog(s) {
     </div>`);
   document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
     const ok = norm(b.dataset.t) === norm(w.term);
-    firstTry(key, ok);
+    firstTry(key, ok, 'reading');
     if (ok) {
       b.classList.add('right');
       document.querySelectorAll('.opt').forEach(x=>x.disabled=true);
@@ -7046,7 +7279,7 @@ function drillReviewContext(s, rd) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${w.translation?` — «${esc(w.translation)}»`:''}.</p>
       <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${rd.translation?`<p class="note">${esc(rd.translation)}</p>`:''}
-      <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
+      <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -7070,7 +7303,7 @@ function drillReviewContext(s, rd) {
     speak(answer, DB.profile.targetLang);
   };
   $('#check').onclick = async () => {
-    const a = $('#ans').value.trim();
+    const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
     if (!a && !mustRetype) return;
     // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
     // Путь 2: ввод — полное предложение → вычитаем каркас, остаток сравниваем с answer
@@ -7101,7 +7334,7 @@ function drillReviewContext(s, rd) {
       $('#check').disabled = false;
       if (res && res.correct) ok = true;
     }
-    if (!mustRetype) firstTry(key, ok);
+    if (!mustRetype) firstTry(key, ok, 'writing');
     if (ok) {
       const shown = shownSentence(a, fullSentence, res);   // 4.57 (QUEUE-179)
       $('#fb').className='feedback ok';
@@ -7144,7 +7377,7 @@ function drillContext(s) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)"><span>🎯 Напишите предложение, подставив пропущенное слово</span>${vEntry.translation?` — «${esc(vEntry.translation)}»`:''}.</p>
       <div class="task-text target">${tapAllWordsHTML(gap.gapped)}</div>
       ${sentTranslation ? `<p class="note" style="margin:4px 0 8px;opacity:.75">📝 ${esc(sentTranslation)}</p>` : ''}
-      <textarea id="ans" class="ans-grow" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
+      <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -7176,7 +7409,7 @@ function drillContext(s) {
     }
   };
   $('#check').onclick = async () => {
-    const a = $('#ans').value.trim();
+    const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
     if (!a && !mustRetype) return;
     // Путь 1: ввод совпадает с answer напрямую (одно слово или словосочетание)
     // Путь 2: ввод — полное предложение → вычитаем каркас, остаток сравниваем с answer (4.20)
@@ -7214,7 +7447,7 @@ function drillContext(s) {
       $('#check').disabled = false;
       if (res && res.correct) ok = true;
     }
-    if (!mustRetype) firstTry(key, ok);
+    if (!mustRetype) firstTry(key, ok, 'writing');
     if (ok) {
       markSeen(dictWord);
       /* 4.57 (QUEUE-179): образцом показываем фразу УЧЕНИКА, если он написал предложение целиком
@@ -7266,7 +7499,7 @@ function drillWrite(s) {
   $('#check').onclick = () => {
     const a = $('#ans').value;
     const ok = norm(a) === norm(w.term);
-    if (!mustRetype) firstTry(key, ok);
+    if (!mustRetype) firstTry(key, ok, 'writing');
     if (ok) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
@@ -7345,7 +7578,7 @@ function drillConstruct(s) {
       <p class="note" style="margin:0 0 6px;color:var(--accent)">🎯 ${esc(instruction)}</p>
       <div class="task-text">«${esc(c.prompt_native)}»</div>
       ${bankHTML}
-      <textarea id="ans" class="ans-grow" placeholder="${esc(t('Ваш ответ на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
+      <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="${esc(t('Ваш ответ на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
@@ -7362,7 +7595,7 @@ function drillConstruct(s) {
     $('#fb').innerHTML = `💡 Полный ответ: <b>${esc(correctForm)}</b>${tr}` + sayBtn(correctForm) + `<br><span style="font-size:13px">${esc(c.prompt_native||'')}</span>`;
     speak(correctForm, DB.profile.targetLang); }; // QUEUE-10: авто-TTS при показе полного ответа
   $('#check').onclick = async () => {
-    const a = $('#ans').value.trim();
+    const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
     if (!a) return;
     if (mustRetype) {
       const v = localVerdict(a, correctForm);
@@ -7372,10 +7605,10 @@ function drillConstruct(s) {
     }
     // 1) локальная человечная проверка (без сети): точное / опечатка / только артикль
     const v = localVerdict(a, correctForm);
-    if (v && v.kind==='exact') { firstTry(key, true); return passOK(null, a); }
-    if (v && v.kind==='typo') { firstTry(key, true);
+    if (v && v.kind==='exact') { firstTry(key, true, 'writing'); return passOK(null, a); }
+    if (v && v.kind==='typo') { firstTry(key, true, 'writing');
       return passOK({ note:`Верно, маленькая опечатка: правильно «${v.detail.exp}», вы написали «${v.detail.got}».` }); }
-    if (v && v.kind==='article') { firstTry(key, true); if (c.focus_word) noteWordError(c.focus_word);
+    if (v && v.kind==='article') { firstTry(key, true, 'writing'); if (c.focus_word) noteWordError(c.focus_word);
       return passOK({ note:`Почти верно — обратите внимание на артикль: «${v.detail}».`, articleSlip:true }); }
     // 2) смысл/синонимы — через Gemini
     $('#check').disabled = true; $('#fb').className='feedback ok'; $('#fb').textContent=I18N.t('Проверяю…');
@@ -7387,9 +7620,9 @@ function drillConstruct(s) {
         '{"correct":true,"error_type":"spelling|article|word_order|verb_conjugation|vocabulary_gap|none","note":"мягкая подсказка если ответ верен но есть лучший вариант, иначе пусто","explanation":"короткий разбор именно этой ошибки на родном","correct_form":"верная фраза","correct_translit":"[транскрипция верной фразы родными буквами]","rule_title":"короткое название правила под эту ошибку (на родном)","rule_summary":"правило целиком, 2-4 фразы на родном","rule_categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"rule_table":[{"form":"форма на целевом","translit":"[транскрипция]","translation":"перевод"}]}');
     } catch(e){}
     $('#check').disabled = false;
-    if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true); return passOK(null); }
-    if (res.correct) { firstTry(key, true); return passOK(res, a); }
-    firstTry(key, false);
+    if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true, 'writing'); return passOK(null); }
+    if (res.correct) { firstTry(key, true, 'writing'); return passOK(res, a); }
+    firstTry(key, false, 'writing');
     L.errors.construction++; if (c.focus_word) { noteWordError(c.focus_word); scheduleRetry(c.focus_word); }
     correctForm = (res && res.correct_form) || c.expected_target;
     const cTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
@@ -7607,7 +7840,7 @@ async function runQuest(cfg) {
               : tapAllWordsHTML(part)
           ).join('')}
         </div>`:''}
-        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
+        <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
         ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
@@ -7625,7 +7858,7 @@ async function runQuest(cfg) {
     speak(sc.scene_text, p.targetLang);
 
     $('#check').onclick = async () => {
-      const a = $('#ans').value.trim(); if (!a) return;
+      const a = $('#ans').value.trim(); if (!a) return; maybeKeyboardTip(a);   // 4.65: письменность ответа
       if (mustRetype) {
         /* 4.35: сверка была строкой в строку, и повтор запирался намертво, если эталон беднее
            верного ответа (артикль). Теперь тот же человечный вердикт, что и в уроке. */
@@ -7796,6 +8029,7 @@ async function finishLesson() {
   // --- листы «Прогресс» и «Аналитика» ---
   DB.progress.push({ code:L.code, date:today(), words:L.words.map(w=>w.term).join(', '), next, note });
   DB.analytics.push({ lesson:L.code, date:today(), accuracy_first_try:acc, errors_by_type:L.errors,
+    skills:L.skill,                       // 4.65: попытки по каналам навыка
     hard_words:hard, duration_sec: Math.round((Date.now()-L.t0)/1000), hints_used:L.hints,
     delta_accuracy: prev==null ? '' : ((acc-prev)>=0?'+':'')+ (acc-prev).toFixed(2) });
   DB.nextStage = next;
@@ -8598,7 +8832,8 @@ async function startSuperLesson() {
         actsTotal: acts, scenesPerAct, topicMode,
         superStory: { summary:'', arc:null },
         errors:{recognition:0,writing:0,construction:0,quest:0},
-        ft:{ok:0,total:0}, hints:0, t0:Date.now(), wordErr:{}, firstTryDone:{} };
+        ft:{ok:0,total:0}, skill:{ reading:{ok:0,total:0}, writing:{ok:0,total:0}, listening:{ok:0,total:0} },
+        hints:0, t0:Date.now(), wordErr:{}, firstTryDone:{} };
   // СЮЖЕТНЫЙ ДВИЖОК (раздел 6, ред. 4.21): один раз строим скелет истории-новеллы на весь суперквест
   Screen.loader('Готовлю историю…');
   try {
@@ -8790,7 +9025,7 @@ async function runSuperquestAct(cfg) {
               : tapAllWordsHTML(part)
           ).join('')}
         </div>`:''}
-        <textarea id="ans" class="ans-grow" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
+        <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
         ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
@@ -8808,7 +9043,7 @@ async function runSuperquestAct(cfg) {
     speak(sc.scene_text, p.targetLang);
 
     $('#check').onclick = async () => {
-      const a = $('#ans').value.trim(); if (!a) return;
+      const a = $('#ans').value.trim(); if (!a) return; maybeKeyboardTip(a);   // 4.65: письменность ответа
       if (mustRetype) {
         /* 4.35: сверка была строкой в строку, и повтор запирался намертво, если эталон беднее
            верного ответа (артикль). Теперь тот же человечный вердикт, что и в уроке. */
@@ -8840,7 +9075,7 @@ async function runSuperquestAct(cfg) {
       const qTr = (res && res.correct_translit) ? ` <span style="color:var(--orange)">${esc(res.correct_translit)}</span>` : '';
       if (Q.errors >= 2) { // Graceful Exit: напарник даёт ответ с мнемоникой (счётчик свой на каждый акт)
         sqScoreScene(sc, _planned, _abs, false);   // 4.59: слова сцены вернутся через две сцены
-        firstTry(stepKey, false);
+        firstTry(stepKey, false, 'writing');
         $('#fb').className='feedback ok';
         $('#fb').innerHTML = `${lbl('🤝 Я подскажу как напарник:')} <b>${esc(res?.correct_form||correctForm)}</b>${qTr}` + sayBtn(res?.correct_form||correctForm) + `<br>🧠 ${esc(res?.explanation||t('Запомните эту конструкцию — она встретится снова.'))}`;
         speak(res?.correct_form||correctForm, p.targetLang);
@@ -8860,7 +9095,7 @@ async function runSuperquestAct(cfg) {
       /* 4.59: успех двигает слова этой сцены дальше по лестнице 1/3/7, ошибка вернёт их через
          две сцены. Считаем по словам, которые в сцене действительно прозвучали. */
       sqScoreScene(sc, _planned, _abs, !sceneWrong);
-      firstTry(stepKey, !sceneWrong);
+      firstTry(stepKey, !sceneWrong, 'writing');
       $('#fb').className='feedback ok';
       const shown = (userAns && String(userAns).trim()) ? String(userAns).trim() : correctForm;   // QUEUE-74
       const note = (res && res.note) ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
@@ -8935,6 +9170,7 @@ async function finishSuper() {
     DB.reviewQueue = DB.reviewQueue.filter(x=>x!==v.term); if (v.status==='на закреплении') v.status='новое'; if (v.status!=='освоено' && !SRS.onLadder(v)) SRS.initLearned(v); }});
   DB.progress.push({ code:L.code, date:today(), words:hard.join(', '), next:DB.nextStage, note:'PASS' });
   DB.analytics.push({ lesson:L.code, date:today(), accuracy_first_try:acc, errors_by_type:L.errors,
+    skills:L.skill,                       // 4.65: попытки по каналам навыка
     hard_words:hard, duration_sec:Math.round((Date.now()-L.t0)/1000), hints_used:L.hints, delta_accuracy:'' });
   Storage.save(DB); toast('Сохранено ✓');
   LessonCache.clearSuper(L.code);   // Суперквест пройден — снимок больше не нужен
@@ -9150,7 +9386,11 @@ function startDialogue() {
       // прежде здесь стоял masteryPercent()/100 || 0.8 — выдуманное число, которое попадало
       // и в среднюю точность, и в сравнение «лучше/хуже прошлого раза» следующего урока.
       // Запись остаётся ради факта занятия (серия, активность), поле accuracy_first_try отсутствует.
-      DB.analytics.push({ lesson:'DIALOGUE', date:today(), turns:turns,
+      /* 4.65: речь учитывается ОБЪЁМОМ практики, а не долей верного. Оценивать нечем:
+         распознавание систематически ошибается на неносителях, то есть на всех учащихся, и
+         любая цифра мерила бы микрофон, а не язык. Поле accuracy_first_try по-прежнему
+         отсутствует, поэтому в среднюю точность разговор не входит (QUEUE-62). */
+      DB.analytics.push({ lesson:'DIALOGUE', date:today(), turns:turns, skills:{ speaking:turns },
         errors_by_type:{dialogue:0}, hard_words:[], duration_sec:0, hints_used:0, delta_accuracy:'' });
       Storage.save(DB); toast('Сохранено ✓');
     }
