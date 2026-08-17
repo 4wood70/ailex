@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v118';
+const APP_VERSION = 'v119';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -7055,7 +7055,7 @@ function drillReviewContext(s, rd) {
     </div>`);
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
-  attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
+  attachTapAll(document, tapWordsFor(rd.glossary));   // 4.28: тап-перевод слов фразы
   /* 4.64 (QUEUE-185): карточка нужной формы приходит вместе с заданием — в глоссарии
      предложения, где транскрипция стоит при самой форме. Запрос в сеть остаётся только для
      уроков, собранных билдом без этого поля. */
@@ -7107,7 +7107,7 @@ function drillReviewContext(s, rd) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
-      attachTapAll($('#fb'), L.words);
+      attachTapAll($('#fb'), tapWordsFor(rd.glossary));
       speak(shown, DB.profile.targetLang);
       $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
@@ -7115,7 +7115,7 @@ function drillReviewContext(s, rd) {
       $('#fb').className='feedback bad';
       const why = (res && res.explanation) ? `❌ ${esc(res.explanation)}<br>` : '❌ ';
       $('#fb').innerHTML = why + `<span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
-      attachTapAll($('#fb'), L.words);
+      attachTapAll($('#fb'), tapWordsFor(rd.glossary));
       speak(fullSentence, DB.profile.targetLang);
       if (res) showErrorRule(res);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
@@ -7152,7 +7152,7 @@ function drillContext(s) {
       </div>
     </div>`);
   bindAutoGrow('ans');
-  attachTapAll(document, L.words);   // 4.28: тап-перевод слов фразы
+  attachTapAll(document, tapWordsFor(item.glossary));   // 4.28: тап-перевод слов фразы
   // двухуровневая лампочка: 1-й тап → скелет+транскрипция, 2-й тап → полное слово+перевод
   let hintLevel = 0;
   $('#hint').onclick = async () => {
@@ -7226,7 +7226,7 @@ function drillContext(s) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
-      attachTapAll($('#fb'), L.words);
+      attachTapAll($('#fb'), tapWordsFor(item.glossary));
       speak(shown, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
@@ -7237,7 +7237,7 @@ function drillContext(s) {
       /* Сбой связи не всплывает учащемуся: не вышло объяснить — показываем как раньше. */
       const why = (res && res.explanation) ? `❌ ${esc(res.explanation)}<br>` : '❌ ';
       $('#fb').innerHTML = why + `<span class="target">${tapAllWordsHTML(fullSentence)}</span>` + sayBtn(fullSentence) + formNote + `<br><span>🧠 Запомните и напишите предложение целиком.</span>`;
-      attachTapAll($('#fb'), L.words);
+      attachTapAll($('#fb'), tapWordsFor(item.glossary));
       speak(fullSentence, DB.profile.targetLang);
       if (res) showErrorRule(res);
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
@@ -8215,6 +8215,17 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   if (!w) { showTapPopup({ term:'', surface:term, translit:'', translation:'?' }, anchorEl, ctx, term); return; }
   saveTappedWord(w, term);
   showTapPopup(w, anchorEl, ctx, term);
+}
+
+/* 4.64 (QUEUE-186): слова задания для тапа — СНАЧАЛА глоссарий этого задания, потом слова
+   урока. Порядок не косметический: тап ищет по списку сверху вниз, и в глоссарии лежит слово
+   в той форме, в какой оно стоит в тексте, со своим звучанием. Глоссарий передавался только
+   в «собери фразу» (4.28), поэтому там тап отвечал мгновенно, а в заданиях с пропуском тап по
+   слову, которого нет ни в Ядре, ни в Словаре, уходил в сеть: «das» открывался сразу, «Seil»
+   не открывался вовсе. Данные всё это время лежали в том же объекте задания. */
+function tapWordsFor(glossary){
+  const g = Array.isArray(glossary) ? glossary.filter(x => x && x.term) : [];
+  return [...g, ...((typeof L !== 'undefined' && L && L.words) || [])];
 }
 
 // Подключить тап-обработчики на все .tapall в контейнере
