@@ -260,7 +260,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v121';
+const APP_VERSION = 'v122';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -311,15 +311,6 @@ const UI_EXTRA = [
     'Нужна клавиатура изучаемого языка',
     'Ответ набран не той письменностью — похоже, клавиатуры изучаемого языка на устройстве нет. Добавить её можно из самой клавиатуры: нажмите и удерживайте запятую или значок глобуса, затем «Языки» и «Добавить клавиатуру». Переключаться потом не нужно — Gboard печатает на нескольких языках сразу.',
     'Понятно',
-    /* 4.65: панель навыков в главном меню. */
-    'Навыки',
-    'Чтение',
-    'Письмо',
-    'Письмо со слуха',
-    'Речь',
-    'реплик',
-    'нет данных',
-    'Речь и письмо со слуха — тренировка, в оценку курса не входят.',
     /* 4.52: перезапуск урока и список встреченных слов. */
     'Начать урок заново?',
     'Пройденные задания этого урока будут сброшены, урок соберётся с нуля.',
@@ -2289,6 +2280,14 @@ function masteryPercent() {
    распознавания), но в общий балл и в прохождение курса не входит: обратная связь без
    последствий. Записи, сделанные до 4.65, поля `skills` не имеют и в подсчёт просто не входят —
    панель наполняется по мере занятий, доучитывать историю нечем и незачем. */
+/* 4.67: ПОКАЗ ПАНЕЛИ СНЯТ С ГЛАВНОЙ СТРАНИЦЫ, СБОР ОСТАВЛЕН.
+   Решение владельца после первого же взгляда на живой экран: приложение учит языку, а не ведёт
+   статистику владения им; четыре строки поверх процента уровня, точности, числа слов и освоенных
+   создавали больше шума, чем пользы, и человек всё равно понимает по прохождению уровня, где у
+   него слабо. Данные при этом продолжают копиться в `DB.analytics.skills` — они почти ничего не
+   стоят и понадобятся, когда встанет вопрос, почему ученик буксует: по ним можно будет менять
+   долю заданий на слух, не спрашивая человека. Функция ниже — читатель этих данных, она
+   намеренно оставлена без вызова. */
 function skillStats() {
   const a = (DB && DB.analytics) || [];
   const out = { reading:null, writing:null, listening:null, speaking:0 };
@@ -2313,28 +2312,6 @@ function skillStats() {
     if (sum[k].total) out[k] = Math.round(sum[k].ok / sum[k].total * 100);
   });
   return out;
-}
-function skillPanelHTML() {
-  const s = skillStats();
-  const rows = [
-    ['📖', 'Чтение', s.reading],
-    ['✍️', 'Письмо', s.writing],
-    ['🎧', 'Письмо со слуха', s.listening],
-    ['🗣', 'Речь', null]
-  ];
-  const dash = lbl('нет данных');
-  const body = rows.map(([ic, name, val]) => {
-    const right = (name === 'Речь')
-      ? (s.speaking ? `<b style="color:var(--ink)">${s.speaking}</b> ${lbl('реплик')}` : dash)
-      : (val === null ? dash : `<b style="color:var(--ink)">${val}%</b>`);
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 0">
-      <span>${ic} ${lbl(name)}</span><span>${right}</span></div>`;
-  }).join('');
-  return `<div style="margin:8px 0 2px;font-size:12.5px;color:var(--dim)">
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${lbl('Навыки')}</div>
-    ${body}
-    <div style="font-size:11px;margin-top:3px;opacity:.8">${lbl('Речь и письмо со слуха — тренировка, в оценку курса не входят.')}</div>
-  </div>`;
 }
 
 /* Прогресс по текущему уровню CEFR = доля пройденных уроков уровня (4.8).
@@ -4171,7 +4148,6 @@ function mainMenu() {
   const isA0   = next.startsWith('A0.');
   const isExam = next.startsWith('EXAM_');
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
-  const interests = String(p.interests||'').split(/[,;·]/).map(s=>s.trim()).filter(Boolean).slice(0,3);
   const segs = 10, lit = Math.round(lp.pct/100*segs);
   // --- незавершённые занятия (4.29, ред. QUEUE-63): по одному слоту на вид, без срока годности ---
   Episodes.sweepDone();   // снять снимки уже пройденных занятий (в т.ч. сирот от старой схемы хранения)
@@ -4210,8 +4186,7 @@ function mainMenu() {
           <span><span>Слов в словаре:</span> <b style="color:var(--ink)">${words}</b></span>
           <span><span>Освоено:</span> <b style="color:var(--ink)">${mastered}</b></span>
         </div>
-        ${skillPanelHTML()}
-        ${interests.length?`<div class="chiplist">${interests.map(i=>`<span class="chip">› ${esc(i)}</span>`).join('')}</div>`:''}
+        <!-- 4.67: панель навыков и чипы интересов с главной страницы сняты — см. skillStats() -->
       </div>
     </div>
     <div class="menu-list">
@@ -5933,6 +5908,10 @@ function fetchLessonChunk2() {
         },
         '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной, полностью передающий смысл — включая модальность и время","glossary":[{"term":"слово из sentence в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}');
         L.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
+        /* 4.67: та же проверка полноты, что у заданий на построение. В v120 её вызвали только
+           для них, хотя глоссарий предложений повторения появился тем же билдом (4.64) — и
+           подсказка в R-заданиях осталась без звучания там, где слово в глоссарий не попало. */
+        await fillGlossaryGaps(L.reviewDrills, 'sentence');
       } catch(_) { L.reviewDrills = []; }
     }
     try {
@@ -6324,7 +6303,15 @@ const TranslitAudit = {
   pending(){
     try {
       const all = [...(DB.vocab||[]), ...(DB.core||[])];
-      return all.filter(w => w && w.term && w.translit && !(w.tv >= TRANSLIT_TRUST)
+      /* 4.67: условие `w.translit &&` отбирало только записи, У КОТОРЫХ транскрипция есть, —
+         то есть проверка обходила стороной ровно те, где её нет. А пустой она становится
+         законным путём: `purgeBadTranslit` (4.39) вычищает транскрипции чужой письменностью и
+         оставляет пустое место, заполнить которое некому. Отдельно про служебные слова: тап их
+         не чинит (`tapNeedsCard` считает, что Ядро описало закрытый класс полностью), но Ядро
+         могло прийти без звучания — значит чинить их должен именно этот проход, иначе не чинит
+         никто. Проверять то, что есть, и не замечать того, чего нет, — та же слепота, что была
+         у `ensureKnownArticles` (4.60). */
+      return all.filter(w => w && w.term && !(w.tv >= TRANSLIT_TRUST)
                           && !/\s/.test(String(w.term).trim()));
     } catch(_) { return []; }
   },
@@ -6393,15 +6380,21 @@ async function fillMissingTranslit(items) {
    и тап по ним проваливался в сеть — где упирался в лимит запросов или в таймаут.
    Приём тот же, что у `fillMissingTranslit`: код находит дыры, недостающее добирается ОДНИМ
    пакетным запросом при сборке урока. Запроса нет, если дыр нет; сбой урок не рушит. */
-function glossaryMissing(item) {
-  const text = String((item && item.expected_target) || '');
+function glossaryMissing(item, textField) {
+  const text = String((item && item[textField || 'expected_target']) || '');
   if (!text) return [];
   const have = new Set();
   (Array.isArray(item.glossary) ? item.glossary : []).forEach(g => {
     /* Запись глоссария может быть многословной («der Mensch»): покрытыми считаются ВСЕ её слова,
        включая артикль. Раньше здесь стоял stripArtG, и артикль записи терялся — код объявлял
-       «der» и «die» отсутствующими, хотя ученик их видит. */
-    tokenize(String((g && g.term) || '')).forEach(x => have.add(x));
+       «der» и «die» отсутствующими, хотя ученик их видит.
+       4.67: ПУСТАЯ ЗАПИСЬ НЕ СЧИТАЕТСЯ ПОКРЫТИЕМ. Проверка v120 смотрела только, есть ли слово
+       в списке, и не смотрела, заполнены ли поля. Наружу это вышло как «entriegele» без
+       транскрипции: слово в глоссарии было, звучания в нём не было, и подсказка честно показала
+       пустоту вместо того, чтобы дозапросить. Присутствие имени — не то же самое, что наличие
+       данных; ровно та же подмена, что «функция вызвана» вместо «функция сработала». */
+    if (!g || !g.translit || !g.translation) return;
+    tokenize(String(g.term || '')).forEach(x => have.add(x));
   });
   const out = [];
   tokenize(text).forEach(tk => {
@@ -6410,12 +6403,13 @@ function glossaryMissing(item) {
   });
   return out;
 }
-async function fillGlossaryGaps(items) {
+async function fillGlossaryGaps(items, textField) {
   const list = Array.isArray(items) ? items : [];
+  const key = textField || 'expected_target';        // 4.67: у предложений повторения поле `sentence`
   const holes = [];
   list.forEach((it, i) => {
-    const miss = glossaryMissing(it);
-    if (miss.length) holes.push({ i, sentence: it.expected_target, words: miss });
+    const miss = glossaryMissing(it, key);
+    if (miss.length) holes.push({ i, sentence: it[key], words: miss });
   });
   if (!holes.length) return list;
   console.log('[AILEX] слов вне глоссария:', holes.reduce((s,h)=>s+h.words.length,0));
@@ -6801,7 +6795,14 @@ function renderStep() {
   if (s.t==='write')     return drillWrite(s);
   if (s.t==='construct') {               // построение фраз из порции 2
     if (s.c) return drillConstruct(s);
-    if (L.constructs && L.constructs.length) { s.c = drillItemAt('construct', s.ci); return drillConstruct(s); }
+    /* 4.66: пул может быть короче числа слотов — с v121 `drillItemAt` честно отдаёт null вместо
+       заворачивания по остатку длины. Пропуск шага, как в drillContext: без этой проверки
+       drillConstruct падал на пустом объекте, отрисовка обрывалась и урок «не продолжался». */
+    if (L.constructs && L.constructs.length) {
+      s.c = drillItemAt('construct', s.ci);
+      if (!s.c) { L.i++; return renderStep(); }
+      return drillConstruct(s);
+    }
     return ensureChunk2().then(ok => { if (!ok) return; s.c = drillItemAt('construct', s.ci); if (s.c) drillConstruct(s); else { L.i++; renderStep(); } });
   }
   if (s.t==='quest')     return runQuest({
