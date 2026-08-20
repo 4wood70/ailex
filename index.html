@@ -143,6 +143,32 @@ textarea.ans-grow{resize:none;overflow:hidden;min-height:52px;line-height:1.45}
 .opt:active{transform:scale(.99)}
 .opt.right{border-color:var(--ok);background:rgba(61,214,140,.10)}
 .opt.wrong{border-color:var(--err);background:rgba(255,92,108,.10)}
+/* 4.68: развилка квеста — не варианты ответа, а ДВА ПУТИ СЮЖЕТА. Прежде она рисовалась теми же
+   серыми карточками, что и варианты ответа на вопрос, и владелец, тестируя собственное
+   приложение, принял её за незакрытое задание и решил, что кнопка «Дальше» пропала. Раз автор не
+   опознал развилку, человек со стороны не опознает тем более. Два пути — два цвета палитры,
+   чтобы выбор читался как выбор направления, а не как «угадай верное». */
+.opt.branch{position:relative;border:none;background:transparent;border-radius:999px;
+  padding:14px 20px;font-weight:600;margin-top:9px;isolation:isolate}
+.opt.branch b,.opt.branch small{position:relative;z-index:2}
+.opt.branch small{display:block;font-weight:400;font-size:12px;opacity:.85;margin-top:2px}
+/* Искра по контуру: конический градиент крутится под пилюлей, наружу торчит только тонкая дуга —
+   заливка сверху перекрывает всё, кроме полутора пикселей канта. Тот же приём, что у мерцания
+   звёзд на главном экране: движение едва заметное, но взгляд цепляет и кнопка читается как
+   действие, а не как карточка с текстом. */
+.opt.branch::before{content:'';position:absolute;inset:0;border-radius:inherit;z-index:0;
+  background:conic-gradient(from 0deg,transparent 0 62%,var(--bc) 76%,#fff 80%,var(--bc) 84%,transparent 96%);
+  animation:branchspark 3.4s linear infinite;opacity:.9}
+.opt.branch::after{content:'';position:absolute;inset:1.5px;border-radius:inherit;z-index:1;
+  background:var(--bf);backdrop-filter:blur(2px)}
+.opt.branch-a{--bc:var(--cyan);--bf:rgba(47,125,246,.16)}
+.opt.branch-b{--bc:var(--orange);--bf:rgba(255,138,60,.16)}
+.opt.branch-b::before{animation-delay:-1.7s}          /* искры расходятся, а не бегут синхронно */
+.opt.branch:active{transform:scale(.985)}
+@keyframes branchspark{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  .opt.branch::before{animation:none;background:var(--bc);opacity:.55}
+}
 /* Lang picker */
 .lang-opt:last-child{border-bottom:none!important}
 .lang-opt:active{background:rgba(65,184,255,.08)}
@@ -260,7 +286,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v122';
+const APP_VERSION = 'v123';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -641,6 +667,7 @@ const UI_EXTRA = [
     'Разбор ·',
     'Разбор завершён, прогресс сохранён.',
     'Развилка — что делаем дальше?',
+    'Выберите продолжение — история пойдёт по нему.',
     'Распознано слов:',
     'Не взято',
     'Собираю особенности языка — это один раз…',
@@ -6433,7 +6460,15 @@ async function fillGlossaryGaps(items, textField) {
       const it = list[holes[k].i]; if (!it) return;
       const add = (Array.isArray(f.glossary) ? f.glossary : []).filter(g => g && g.term && (g.translit || g.translation));
       if (!add.length) return;
-      it.glossary = [...(Array.isArray(it.glossary) ? it.glossary : []), ...add];
+      /* 4.68: заменяем запись с тем же словом, а не кладём рядом — иначе в списке остаются две,
+         и любой поиск «по первому совпадению» вернёт старую пустую. */
+      const cur = Array.isArray(it.glossary) ? it.glossary.slice() : [];
+      add.forEach(g => {
+        const k = norm(stripArtG(String(g.term || '')));
+        const at = cur.findIndex(x => x && norm(stripArtG(String(x.term || ''))) === k);
+        if (at >= 0) cur[at] = g; else cur.push(g);
+      });
+      it.glossary = cur;
     });
   } catch(e) { console.warn('fillGlossaryGaps:', e && e.message); }
   return list;
@@ -7827,6 +7862,9 @@ function questScenes(lvl){ return ({A1:8, A2:9, B1:11, B2:13, C1:15, C2:15})[lvl
 // Семантическая (Gemini-валидатор): отвечает ли expected_target на prompt_for_user по смыслу.
 // Графичный fallback: при любом сбое валидатора возвращаем исходную сцену — поток не блокируется.
 async function validateScene(sc, p, cefr) {
+  /* 4.68 (QUEUE-193): артикли в глоссарии сцены — до всякого показа и одинаково для квеста
+     урока и Суперквеста: обе ветки идут через эту функцию. */
+  sc = fixSceneGlossary(sc);
   if (!sc || !sc.expected_target || !sc.prompt_for_user) return sc; // финальная сцена без задания — нечего проверять
   // 0) QUEUE-72: эталон в формулировке задания — списать вместо ответа. Запрет живёт в промпте
   //    с v55 (levelPromptBlock) и всё равно протекает, поэтому чистит код, до всех проверок.
@@ -8077,8 +8115,9 @@ async function runQuest(cfg) {
       { const _qh = document.getElementById('qhint'); if (_qh) _qh.style.display='none'; }
       if (sc.is_branch && !isFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
         Q.branchesUsed++;
-        $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
-          sc.choices.slice(0,2).map(c=>`<button class="opt" style="margin-top:8px;text-align:left" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<br><span style='font-size:12px;color:var(--dim)'>${esc(c.label_native)}</span>`:''}</button>`).join('');
+        $('#fb').innerHTML += `<div style="margin-top:12px;font-weight:600">${lbl('Развилка — что делаем дальше?')}</div>`
+          + `<div style="font-size:12.5px;color:var(--dim);margin:2px 0 8px">${lbl('Выберите продолжение — история пойдёт по нему.')}</div>`
+          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
@@ -8645,9 +8684,31 @@ function attachTapAll(container, _sceneWords) {
    Побочная выгода важнее скорости: в глоссарии транскрипция стоит ПРИ САМОЙ ФОРМЕ, поэтому
    вопрос принадлежности (4.61, 4.63) здесь не возникает вовсе — его снимает структура данных,
    а не проверка. Сеть остаётся только там, где форма заранее неизвестна: тап по слову в тексте. */
+/* 4.68 (QUEUE-193): АРТИКЛИ В ГЛОССАРИИ СЦЕНЫ ПРОСТАВЛЯЕТ КОД.
+   Правило «в answer_glossary и encountered_words существительное идёт с артиклем в словарной
+   форме» стоит в промпте сцены с 4.31 — и снова оказалось просьбой: строки «Используйте» и
+   «Значения», а с ними попап тапа, показывали «Werkstück» вместо «das Werkstück». Показательно,
+   что в самом тексте сцены артикль стоял верно: язык модель знает, не выполняется именно
+   требование к форме ответа. Артикль при этом лежит в Ядре своим полем, то есть приложению
+   известен — `dictForm` его и приклеивает. Проверка стоит на входе, до показа, и одинакова для
+   квеста урока и Суперквеста. */
+function fixSceneGlossary(sc){
+  try {
+    ['answer_glossary','encountered_words'].forEach(k => {
+      if (!Array.isArray(sc && sc[k])) return;
+      sc[k].forEach(g => { if (g && g.term) g.term = dictForm(String(g.term)); });
+    });
+  } catch(_){}
+  return sc;
+}
 function glossaryHit(glossary, form){
   const f = norm(stripArtG(form));
-  return (glossary||[]).find(g => g && g.term && norm(stripArtG(g.term)) === f) || null;
+  const all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === f);
+  /* 4.68: заполненная запись побеждает заглушку. Дозаливка (4.65) дописывает добранное в КОНЕЦ
+     списка, а поиск брал первое совпадение — то есть находил ту самую пустую запись, ради
+     которой запрос и делался. Дыру заполняли, заглушку не убирали, и на экран шла пустота:
+     «entriegele» и «Speicher» без транскрипции. */
+  return all.find(g => g.translit && g.translation) || all.find(g => g.translit) || all[0] || null;
 }
 function localFormCard(form, glossary, rec){
   const g = glossaryHit(glossary, form);
@@ -9264,8 +9325,9 @@ async function runSuperquestAct(cfg) {
       { const _qh = document.getElementById('qhint'); if (_qh) _qh.style.display='none'; }
       if (sc.is_branch && !isActFinal && !isWholeFinal && Array.isArray(sc.choices) && sc.choices.length>=2) {
         Q.branchesUsedInAct++;
-        $('#fb').innerHTML += `<div style="margin-top:10px">Развилка — что делаем дальше?</div>` +
-          sc.choices.slice(0,2).map(c=>`<button class="opt" style="margin-top:8px;text-align:left" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<br><span style='font-size:12px;color:var(--dim)'>${esc(c.label_native)}</span>`:''}</button>`).join('');
+        $('#fb').innerHTML += `<div style="margin-top:12px;font-weight:600">${lbl('Развилка — что делаем дальше?')}</div>`
+          + `<div style="font-size:12.5px;color:var(--dim);margin:2px 0 8px">${lbl('Выберите продолжение — история пойдёт по нему.')}</div>`
+          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
