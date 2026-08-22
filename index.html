@@ -156,13 +156,21 @@ textarea.ans-grow{resize:none;overflow:hidden;min-height:52px;line-height:1.45}
    заливка сверху перекрывает всё, кроме полутора пикселей канта. Тот же приём, что у мерцания
    звёзд на главном экране: движение едва заметное, но взгляд цепляет и кнопка читается как
    действие, а не как карточка с текстом. */
+.opt.branch{background:var(--bf);border:1.5px solid color-mix(in srgb,var(--bc) 45%,transparent)}
+/* 4.70: светится ТОЛЬКО кант. Прежде конический градиент крутился под всей пилюлей и наружу
+   вылезал не тонкий след, а весь диск — заливка ездила поперёк кнопки, и та выглядела
+   вращающейся вокруг невидимой оси. Теперь вращающийся слой вырезан маской в рамку шириной
+   полтора пикселя: сама кнопка и её заливка неподвижны, по периметру пробегает искра. */
 .opt.branch::before{content:'';position:absolute;inset:0;border-radius:inherit;z-index:0;
-  background:conic-gradient(from 0deg,transparent 0 62%,var(--bc) 76%,#fff 80%,var(--bc) 84%,transparent 96%);
-  animation:branchspark 3.4s linear infinite;opacity:.9}
-.opt.branch::after{content:'';position:absolute;inset:1.5px;border-radius:inherit;z-index:1;
-  background:var(--bf);backdrop-filter:blur(2px)}
-.opt.branch-a{--bc:var(--cyan);--bf:rgba(47,125,246,.16)}
-.opt.branch-b{--bc:var(--orange);--bf:rgba(255,138,60,.16)}
+  padding:1.5px;
+  background:conic-gradient(from 0deg,transparent 0 70%,var(--bc) 82%,#fff 86%,var(--bc) 90%,transparent 98%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  mask-composite:exclude;
+  animation:branchspark 3.4s linear infinite}
+.opt.branch-a{--bc:var(--cyan);--bf:rgba(47,125,246,.14)}
+.opt.branch-b{--bc:var(--orange);--bf:rgba(255,138,60,.14)}
 .opt.branch-b::before{animation-delay:-1.7s}          /* искры расходятся, а не бегут синхронно */
 .opt.branch:active{transform:scale(.985)}
 @keyframes branchspark{to{transform:rotate(360deg)}}
@@ -286,7 +294,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v124';
+const APP_VERSION = 'v125';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -333,6 +341,11 @@ function hasKey(){ try { return !!(typeof Storage !== 'undefined' && Storage.get
    там, где ключа ещё нет — на экранах до профиля; здесь же перечислены остальные надписи
    приложения, для которых запасной вариант — русский исходник. */
 const UI_EXTRA = [
+    /* 4.70: скорость диктанта. */
+    'Скорость:',
+    /* 4.70: неудачный разбор слова. */
+    'Не удалось получить разбор',
+    'Нажмите слово ещё раз, чтобы повторить.',
     /* 4.65: подсказка о раскладке целевого языка. */
     'Нужна клавиатура изучаемого языка',
     'Ответ набран не той письменностью — похоже, клавиатуры изучаемого языка на устройстве нет. Добавить её можно из самой клавиатуры: нажмите и удерживайте запятую или значок глобуса, затем «Языки» и «Добавить клавиатуру». Переключаться потом не нужно — Gboard печатает на нескольких языках сразу.',
@@ -4325,7 +4338,7 @@ function showDictionary(letter, irrOnly) {
             font-family:'Inter';padding:11px 2px;cursor:pointer;display:flex;align-items:center;gap:10px">
             <span class="emoji">${esc(w.emoji||'•')}</span>
             <span style="flex:1"><b style="font-size:15px">${esc(dictForm(w))}</b>
-              <small style="display:block;color:var(--dim);font-size:12px">${esc(w.translit||'')} · ${esc(w.translation||'')}${(w.source==='import'&&(w.status==='новое'||w.status==='изучается'))?' · 📌 к изучению':''}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
+              <small style="display:block;color:var(--dim);font-size:12px">${esc(showTranslit(w.translit))} · ${esc(w.translation||'')}${(w.source==='import'&&(w.status==='новое'||w.status==='изучается'))?' · 📌 к изучению':''}${w.errors>=2?' · ⚠️ трудное':''}</small></span>
             <span class="chev" style="color:var(--faint)">▾</span>
           </button>
           <div class="dword-body" id="dw${i}" style="display:none;padding:0 2px 12px"></div>
@@ -4342,7 +4355,7 @@ function showDictionary(letter, irrOnly) {
       const _forms = w.forms || w.irregular_forms || '';
       body.innerHTML = `
         <div class="vocab-row" style="border:none">
-          <span class="w"><b>${esc(dictForm(w))}</b> <span class="tr">${esc(w.translit||'')}</span>
+          <span class="w"><b>${esc(dictForm(w))}</b> <span class="tr">${esc(showTranslit(w.translit))}</span>
             <small>${esc(w.translation||'')}</small>
             ${_forms?`<small style="display:block;margin-top:2px;color:var(--accent2,#9ED7FF)">📋 ${esc(_forms)}</small>`:''}
             ${w.mnemonic?`<small style="color:var(--violet)">🧠 ${esc(w.mnemonic)}</small>`:''}
@@ -6716,6 +6729,14 @@ function checkDictation(input, answer, mode) {
   return hit / keys.length >= 0.7;
 }
 
+// глоссарии всех заданий урока: диктант читает фразы этого же урока, разбор для них уже есть
+function dictationGloss(){
+  try {
+    const a = (L && L.constructs || []).reduce((r,c)=>r.concat(c && c.glossary || []), []);
+    const b = (L && L.reviewDrills || []).reduce((r,c)=>r.concat(c && c.glossary || []), []);
+    return [...a, ...b];
+  } catch(_) { return []; }
+}
 function drillDictation(s, onDone) {
   const mode  = dictationMode(L.lvl);
   const text  = pickDictationText(mode, dictationCount(L.lvl));
@@ -6755,6 +6776,7 @@ function drillDictation(s, onDone) {
         <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎧 ${lbl('на слух')}</span></div>
         <p class="note" style="margin:0 0 4px;color:var(--accent)">🎯 ${esc(hintText)}</p>
         <p class="note" style="margin:0 0 10px">${lbl('Фраза')} ${idx+1} ${lbl('из')} ${text.length}</p>
+        <div class="note" id="dictRate" style="margin:0 0 4px;color:var(--orange);font-size:12.5px"></div>
         <button class="btn btn-ghost" id="play" style="margin:6px 0 10px">🔊 ${lbl('Прослушать')}</button>
         <div class="note" id="plays" style="margin:0 0 8px"></div>
         <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off"
@@ -6773,10 +6795,24 @@ function drillDictation(s, onDone) {
       playsEl.innerHTML = `${lbl('Осталось прослушиваний:')} ${left}`;
       if (!left) $('#play').disabled = true;
     };
+    /* 4.70 (QUEUE-204): ТЕМП ЗАДАЁТ САМ ЧЕЛОВЕК, ПОВТОРАМИ.
+       Уровень для этого не годится: разбирает на слух не «уровень», а конкретный человек в
+       конкретной фразе. Кто не расслышал — нажимает ещё раз, и становится медленнее; пять
+       ступеней по 10%, шестое нажатие возвращает к обычной скорости и круг повторяется.
+       Ниже пятой ступени не опускаемся: там слово рассыпается, и тренируется разбор звуков,
+       а не понимание речи. Счётчик сбрасывается на новой фразе — она снова звучит нормально. */
+    const STEPS = 5, STEP = 0.10;
+    const rateFor = n => slow * (1 - STEP * (n % STEPS));   // 100→90→80→70→60, шестое нажатие снова 100
     const play = () => {
       if (limit && plays >= limit) return;
-      plays++; speak(answer, DB.profile.targetLang, slow); paint();
+      const r = rateFor(plays);
+      plays++;
+      speak(answer, DB.profile.targetLang, r);
+      paint();
+      const pct = Math.round(r / slow * 100);
+      if (rateEl) rateEl.innerHTML = pct < 100 ? `${lbl('Скорость:')} ${pct}%` : '';
     };
+    const rateEl = document.getElementById('dictRate');
     $('#play').onclick = play;
     play();
     paint();
@@ -6787,10 +6823,17 @@ function drillDictation(s, onDone) {
       const ok = checkDictation(a, answer, mode);
       const fb = $('#fb');
       fb.className = 'feedback ' + (ok ? 'ok' : 'bad');
+      /* 4.70 (QUEUE-205): слова эталона тапаются. Разметка тут стояла и раньше, а обработчик
+         к ней не подключался: вид говорил «меня можно нажать», нажатие не делало ничего.
+         Момент разбора ошибки — как раз тот, когда перевод и звучание нужнее всего: человек
+         не расслышал слово и именно сейчас хочет понять, что это было. */
       fb.innerHTML = ok
-        ? `✅ ${esc(t('Верно!'))} <b>${esc(answer)}</b>` + sayBtn(answer)
-        : `❌ ${lbl('Правильно:')} <b>${esc(answer)}</b>` + sayBtn(answer)
+        ? `✅ ${esc(t('Верно!'))} <b class="tapall">${esc(answer)}</b>` + sayBtn(answer)
+        : `❌ ${lbl('Правильно:')} <b class="tapall">${esc(answer)}</b>` + sayBtn(answer)
           + `<br><span style="color:var(--dim);font-size:13px">📌 ${lbl('Вы написали')} «${esc(a)}» — ${lbl('расхождение:')} ${highlightDiff(a, answer)}</span>`;
+      /* Слова эталона диктанта уже разобраны в глоссариях заданий этого урока — берём оттуда,
+         в сеть идём только за тем, чего в уроке не было. */
+      attachTapAll(fb, tapWordsFor(dictationGloss()));
       /* 4.57: аудирование считается ОТДЕЛЬНО. Раньше промах на слух шёл в письмо, и метрика
          показывала проблему с орфографией там, где человек просто не расслышал. */
       if (!ok) { wrong++; L.errors.listening = (L.errors.listening || 0) + 1; }
@@ -6920,7 +6963,7 @@ function drillPresent() {
       ${L.words.map(w=>{ const _d = dictForm(w); return `
         <div class="vocab-row">
           <span class="emoji">${esc(w.emoji||'•')}</span>
-          <span class="w"><b>${esc(_d)}</b><span class="tr">${esc(w.translit||'')}</span>
+          <span class="w"><b>${esc(_d)}</b><span class="tr">${esc(showTranslit(w.translit))}</span>
             <small>${esc(w.translation)}${w.is_irregular&&(w.forms||w.irregular_forms)?' · ⚠️ '+esc(w.forms||w.irregular_forms):''}</small></span>
           ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(_d)}">🔊</button>`:''}
         </div>`;}).join('')}
@@ -7158,7 +7201,7 @@ function drillRecog(s) {
       b.classList.add('right');
       document.querySelectorAll('.opt').forEach(x=>x.disabled=true);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
+      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
       $('#next').disabled = false;
     } else {
@@ -7174,7 +7217,7 @@ function drillRecog(s) {
       /* 4.56: выбран не тот вариант — учащийся обязан узнать, ЧТО он выбрал. Пара «что взято —
          что нужно» разбирается кодом: оба слова уже лежат в базе с переводом. */
       $('#fb').innerHTML = `${I18N.t('❌ Правильно:')} <b>${esc(dictForm(w))}</b>`
-        + (w.translit ? ` <span style="color:var(--orange)">${esc(w.translit)}</span>` : '')
+        + (w.translit ? ` <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` : '')
         + sayBtn(w.term)
         + wordMistakeHTML(b.dataset.t, w.term, w);
       speak(w.term, DB.profile.targetLang);
@@ -7697,7 +7740,7 @@ function drillWrite(s) {
     <div class="eyebrow">${tgtTag()}${esc(L.code)} · Writing</div>
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">✍️ письмо</span></div>
-      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}${hard?` <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span>`:''}</div>
+      <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)}${hard?` <span style="color:var(--orange);font-size:14px">${esc(showTranslit(w.translit))}</span>`:''}</div>
       <input type="text" id="ans" placeholder="${esc(t('Напишите слово на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
@@ -7705,14 +7748,14 @@ function drillWrite(s) {
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
-  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 <span style="color:var(--orange)">${esc(w.translit||'')}</span> · первая буква: <b>${esc(w.term[0])}</b>`; };
+  $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok'; $('#fb').innerHTML=`💡 <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span> · первая буква: <b>${esc(w.term[0])}</b>`; };
   $('#check').onclick = () => {
     const a = $('#ans').value;
     const ok = norm(a) === norm(w.term);
     if (!mustRetype) firstTry(key, ok, 'writing');
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>` + sayBtn(w.term);
+      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше');
       $('#check').onclick = () => { L.i++; renderStep(); };
@@ -7722,7 +7765,7 @@ function drillWrite(s) {
       /* 4.56: одиночное слово разбирает код — расхождение видно из базы, запрос ничего бы не
          добавил, кроме задержки. Показываем, ЧТО именно написано не так или какое слово было
          перепутано, а не только верный ответ. */
-      $('#fb').innerHTML = `❌ Правильно: <b>${esc(dictForm(w))}</b> <span style="color:var(--orange)">${esc(w.translit||'')}</span>`
+      $('#fb').innerHTML = `❌ Правильно: <b>${esc(dictForm(w))}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>`
         + wordMistakeHTML(a, w.term, w) + `<br>🧠 Введите верный вариант вручную, чтобы продолжить.`;
       $('#ans').value=''; autoGrow($('#ans')); $('#ans').focus();
     }
@@ -7880,7 +7923,10 @@ async function validateScene(sc, p, cefr, mustUse) {
   /* 4.68 (QUEUE-193): артикли в глоссарии сцены — до всякого показа и одинаково для квеста
      урока и Суперквеста: обе ветки идут через эту функцию. */
   sc = fixSceneGlossary(sc);
+  await fillSceneWords(sc);                     // 4.70: тап по слову сцены отвечает локально
+  sc = await fixPromptLanguage(sc, p);              // 4.70: условие — на родном языке
   sc = stripMustUseFromPrompt(sc, mustUse || []);   // 4.69: условие не называет требуемые слова
+  if (personMismatch(sc, sc && sc._hero)) console.warn('[AILEX] лицо в условии и каркасе расходится');
   if (!sc || !sc.expected_target || !sc.prompt_for_user) return sc; // финальная сцена без задания — нечего проверять
   // 0) QUEUE-72: эталон в формулировке задания — списать вместо ответа. Запрет живёт в промпте
   //    с v55 (levelPromptBlock) и всё равно протекает, поэтому чистит код, до всех проверок.
@@ -8045,7 +8091,7 @@ async function runQuest(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b class="tapall" style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
         ${sc.scaffold?`<div id="questScaffold" style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
@@ -8055,7 +8101,7 @@ async function runQuest(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b class="tapall">${esc(g.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(g.translit))}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -8404,8 +8450,13 @@ const TAP_CARD_RULES =
   + 'surface — ровно та форма, что стоит в тексте, без изменений. '
   + 'term — словарная форма: существительное с артиклем рода (das Buch), глагол в неопределённой форме (planen), прилагательное в начальной форме. Если форма из текста и есть словарная — повтори её. '
   + 'translation — перевод формы так, как она стоит в предложении («планирует», а не «планировать»). '
+  + 'ЗНАЧЕНИЕ ВЫБИРАЕТСЯ ПО РОЛИ СЛОВА В ЭТОМ ПРЕДЛОЖЕНИИ (критично, 4.70). Слово, взятое отдельно, часто допускает несколько прочтений — выбирай то, которое верно ЗДЕСЬ. '
+  + 'ЛИЦО определяется подлежащим: «Er fährt» → «едет», а НЕ «еду»; «Er will» → «хочет», а НЕ «хочу». Форма, совпадающая у разных лиц, сама по себе ничего не решает — смотри, кто в предложении действует. '
+  + 'ПЕРЕХОДНОСТЬ определяется тем, есть ли у глагола дополнение: «Die Maschine stoppt» → «останавливается» (сама), «Ich stoppe die Maschine» → «останавливаю» (её). '
+  + 'У СУЩЕСТВИТЕЛЬНОГО значение выбирается по обстановке предложения: «der Lauf» у станка — «прогон, проход», а не «бег». Общее словарное значение, не подходящее к этой сцене, — ошибка. '
   + 'term_translation — перевод СЛОВАРНОЙ формы («посылать»), в отличие от translation, который переводит форму из текста («посылаю»). '
-  + 'morph — ОДНА-ДВЕ коротких строки на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). В morph НЕ ПОВТОРЯЙ словарную форму и её перевод: они уже лежат в полях term / term_translit / term_translation, и приложение печатает их отдельной строкой само. Для глагола: только лицо и время — «здесь: он/она/оно, настоящее время». Для существительного: множественное число — «мн. ч.: die Abenteuer»; ЕСЛИ форма слова из текста отличается от словарной формой окончания или входит в состав именной группы после предлога или другого слова, управляющего формой (Suche nach dem Schlüssel, dem Mechaniker helfen) — ДОБАВЬ в то же поле ещё одной фразой, ЧЕМ вызвано изменение: какое слово рядом (предлог или глагол) требует этой формы — «здесь форма вызвана предлогом nach» / «здесь форма вызвана глаголом helfen, который требует эту форму у зависимого слова». Если изменения нет (форма и без того словарная) — вторую фразу не добавляй. Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто. '
+  + 'morph — ОДНА-ДВЕ коротких строки на native_lang об этой форме, простыми словами, БЕЗ лингвистических терминов (запрещены «падеж», «спряжение», «инфинитив», «аккузатив»). В morph НЕ ПОВТОРЯЙ словарную форму и её перевод: они уже лежат в полях term / term_translit / term_translation, и приложение печатает их отдельной строкой само. Для глагола: лицо и время — «здесь: он/она/оно, настоящее время». ЕСЛИ форма отличается от словарной НЕ ТОЛЬКО окончанием, а изменением внутри основы (нем. fahren → fährt, nehmen → nimmt, sehen → sieht) — НАЗОВИ ЭТО ПРЯМО той же строкой: «в 2-м и 3-м лице a становится ä». Именно это человек и не понимает, глядя на слово; молчать об этом нельзя. Для существительного: множественное число — «мн. ч.: die Abenteuer»; ЕСЛИ форма слова из текста отличается от словарной формой окончания или входит в состав именной группы после предлога или другого слова, управляющего формой (Suche nach dem Schlüssel, dem Mechaniker helfen) — ДОБАВЬ в то же поле ещё одной фразой, ЧЕМ вызвано изменение: какое слово рядом (предлог или глагол) требует этой формы — «здесь форма вызвана предлогом nach» / «здесь форма вызвана глаголом helfen, который требует эту форму у зависимого слова». Если изменения нет (форма и без того словарная) — вторую фразу не добавляй. Для прилагательного/наречия: степени сравнения, если они особые («groß — größer — am größten»), иначе пусто. Для служебного слова — пусто, КРОМЕ СЛИТНОЙ ФОРМЫ: если слово склеено из предлога и артикля (нем. im, am, zum, zur, beim, vom, ins; фр. du, au; ит. nel, dal), в morph РАЗЛОЖИ ЕГО НА ЧАСТИ — «im = in + dem», «zum = zu + dem». Писать «предлог + артикль» без указания, какой предлог и какой артикль, БЕСПОЛЕЗНО. '
+  + 'РЕГИСТР БУКВ — ПО РОЛИ СЛОВА В ПРЕДЛОЖЕНИИ (4.70): слово, которое в одном месте является названием (режим «Manuell» на панели), в обычном тексте пишется по общему правилу языка — «Damals war alles manuell» со строчной. Не переноси заглавную букву из названия в обычное употребление. '
   + 'forms — ТОЛЬКО для неправильного глагола: три основные формы («fahren – fuhr – ist gefahren»). Для правильного глагола и других частей речи — пустая строка. is_irregular — true только для неправильного глагола. '
   + 'ТРАНСКРИПЦИЯ — ДВА ОТДЕЛЬНЫХ ПОЛЯ (критично): translit передаёт звучание формы surface, term_translit — звучание словарной формы term. Оба буквами native_lang, без знаков IPA. Это РАЗНЫЕ слова с разным звучанием, копировать одно в другое ЗАПРЕЩЕНО: surface «schicke» → translit [шике], term «schicken» → term_translit [шикен]. Совпадают они только тогда, когда совпадают сами формы. Перед выдачей сверь каждое звук за звуком: КАЖДЫЙ согласный слова обязан быть отражён в его транскрипции. Пропуск согласной — брак: Abenteuer → [абэнтойэр], а НЕ [абэнойэр].';
 
@@ -8595,8 +8646,48 @@ const CardCache = {
   }
 };
 
+/* 4.70 (QUEUE-196): СКОБКИ ТРАНСКРИПЦИИ — ОФОРМЛЕНИЕ, А НЕ ДАННЫЕ.
+   Модель присылала звучание то в скобках («[энт-НА-мэ]»), то без («зээ-э»), и на экране это
+   выглядело как разнобой в одном и том же месте. Решать, как выглядит транскрипция, должно
+   приложение: любые пришедшие скобки снимаются на входе, свои ставятся при показе. Тогда вид
+   одинаков независимо от того, что вернула модель, и правило не приходится ей повторять. */
+function bareTranslit(t) {
+  return String(t == null ? '' : t).trim()
+    .replace(/^[\[\](){}<>«»""'']+/, '').replace(/[\[\](){}<>«»""'']+$/, '').trim();
+}
+function showTranslit(t) {
+  const s = bareTranslit(t);
+  return s ? '[' + s + ']' : '';
+}
+
+/* 4.70 (QUEUE-199): словарная форма не печатается дважды. Правило «не повторяй словарную форму
+   в morph» стоит с 4.61, и модель его нарушает: приходило «stehen · stehen — стоять; здесь: …».
+   Приложение печатает эту строку само, поэтому дубль из текста убирается кодом. */
+function cleanMorph(morph, term) {
+  let m = String(morph || '').trim();
+  const t = String(term || '').trim();
+  if (!m || !t) return m;
+  const e = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /* Дубль приходит в разном виде: «stehen · …», «stehen — стоять; …», «fahren — ехать · …».
+     Снимаем ведущее вхождение словарной формы столько раз, сколько оно повторяется. */
+  const head = [
+    new RegExp('^\\s*' + e + '\\s*[—–-]\\s*[^;·]*[;·]\\s*', 'iu'),
+    new RegExp('^\\s*' + e + '\\s*[·|]\\s*', 'iu'),
+    new RegExp('^\\s*' + e + '\\s*[—–-]\\s*[^;·]*$', 'iu')
+  ];
+  for (let pass = 0; pass < 3; pass++) {
+    const before = m;
+    head.forEach(rx => { m = m.replace(rx, ''); });
+    m = m.trim();
+    if (m === before) break;
+  }
+  return m.trim();
+}
+
 function mergeWordCard(w, f) {
   ['term','surface','translit','term_translit','term_translation','translation','part_of_speech','morph','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
+  ['translit','term_translit'].forEach(k => { if (w[k]) w[k] = bareTranslit(w[k]); });   // 4.70
+  if (w.morph) w.morph = cleanMorph(w.morph, w.term);                                    // 4.70
   if (typeof f.is_irregular === 'boolean') w.is_irregular = f.is_irregular;
   if (f.unverified) w.unverified = true; else w.mv = f.mv;
 }
@@ -8661,7 +8752,15 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   document.body.appendChild(loading);
   const w = await CardCache.load(term, ctx);
   loading.remove();
-  if (!w) { showTapPopup({ term:'', surface:term, translit:'', translation:'?' }, anchorEl, ctx, term); return; }
+  /* 4.70 (QUEUE-201): неудача — это НЕ ответ. Прежде на месте перевода появлялся знак вопроса,
+     и человек читал его как «перевода не существует», хотя запрос просто не вернулся. Пишем,
+     что случилось, и даём повторить: провал сети должен выглядеть как провал сети. */
+  if (!w) {
+    showTapPopup({ term:'', surface:term, translit:'',
+                   translation: t('Не удалось получить разбор'),
+                   morph: t('Нажмите слово ещё раз, чтобы повторить.') }, anchorEl, ctx, term);
+    return;
+  }
   saveTappedWord(w, term);
   showTapPopup(w, anchorEl, ctx, term);
 }
@@ -8714,6 +8813,70 @@ function attachTapAll(container, _sceneWords) {
    своими словами» в «перепиши подсказанное». Прогон v123: «Скажите, что вы берете заготовку,
    используя слово 'Werkstück'». Правило снова оказалось просьбой, и снова проверяется тривиально:
    условие на РОДНОМ языке, слово из must_use — на целевом, достаточно поискать вхождение. */
+/* 4.70 (QUEUE-202): УСЛОВИЕ НА ЧУЖОМ ЯЗЫКЕ.
+   «prompt_for_user СТРОГО на native_lang» — правило промпта сцены, и оно нарушалось целиком:
+   человеку на A1 выдавалось «Beschreiben Sie, was Sie reinigen». Тот, кто не понимает условия,
+   не может даже начать. Признак прямой: условие написано письменностью целевого языка при
+   расходящихся письменностях, либо (при общей письменности) состоит из слов, известных как
+   целевые. Мера нарочно осторожная: сомнительное не трогаем, испортить верное условие хуже.
+   Порядок важен: сначала язык, потом чистка от требуемых слов (4.69) — иначе шаблоны чистки,
+   написанные на родном, промахиваются по немецкому обороту «Nutzen Sie das Wort …». */
+function promptWrongLanguage(sc, sceneText){
+  try {
+    const txt = String((sc && sc.prompt_for_user) || '').trim();
+    if (txt.length < 8) return false;
+    const tgt = scriptsOfLang(DB.profile.targetLang), nat = scriptsOfLang(DB.profile.nativeLang);
+    if (tgt.length && nat.length && !tgt.some(x => nat.indexOf(x) >= 0))
+      return hasAnyScript(txt, tgt) && !hasAnyScript(txt, nat);
+    // письменность общая — считаем по словам самой сцены: условие не должно быть из них собрано
+    const scene = new Set(tokenize(String(sceneText || '')));
+    if (scene.size < 5) return false;
+    const toks = tokenize(txt).filter(w => w.length > 3);
+    if (toks.length < 4) return false;
+    const hits = toks.filter(w => scene.has(w)).length;
+    return hits / toks.length > 0.5;
+  } catch(_) { return false; }
+}
+async function fixPromptLanguage(sc, p){
+  if (!promptWrongLanguage(sc, sc && sc.scene_text)) return sc;
+  console.warn('[AILEX] условие сцены не на родном языке — переводим');
+  try {
+    const r = await Gemini.call({
+      task: 'translate_prompt', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      prompt: sc.prompt_for_user,
+      rules: 'Переведи задание на native_lang. Это инструкция ученику, а не учебный материал: '
+           + 'она обязана быть на РОДНОМ языке целиком, ни одного слова target_lang в ней остаться не должно. '
+           + 'Смысл и объём сохрани, ничего не добавляй.'
+    }, '{"prompt":"задание на родном языке"}');
+    const t2 = String((r && r.prompt) || '').trim();
+    if (t2.length >= 8) sc.prompt_for_user = t2;
+  } catch(e) { console.warn('fixPromptLanguage:', e && e.message); }
+  return sc;
+}
+
+/* 4.70 (QUEUE-203): ЛИЦО В УСЛОВИИ И В КАРКАСЕ СОВПАДАЮТ.
+   «Ханс выбирает режим. Какой режим ОН выбирает?» при каркасе «Ich wähle ___» — задание
+   противоречит само себе: спрашивают про героя, отвечать велят от себя. Человек, ответивший
+   на заданный вопрос («Er wählt …»), окажется не совпавшим с каркасом, то есть будет наказан
+   за правильный ответ. Признак виден коду: имя героя или «он/она» в условии против «я» в
+   каркасе. Правим каркас, а не условие: условие человек уже прочитал, и менять вопрос под
+   ответ — значит переспрашивать другое. */
+function personMismatch(sc, hero){
+  try {
+    const q = norm(String((sc && sc.prompt_for_user) || ''));
+    const sf = String((sc && sc.scaffold) || (sc && sc.expected_target) || '');
+    if (!q || !sf) return false;
+    const name = norm(String((hero && hero.name) || ''));
+    const third = /\b(он|она|оно|они)\b/u.test(q) || (name && q.indexOf(name) >= 0);
+    const you   = /\b(вы|вас|вам|ты|тебя|тебе)\b/u.test(q);
+    if (!third || you) return false;                 // спрашивают не про героя — вопроса нет
+    const first = tokenize(sf).slice(0, 2);
+    return first.length > 0 && FIRST_PERSON.has(first[0]);
+  } catch(_) { return false; }
+}
+// местоимения 1-го лица целевых языков: закрытый список, но короткий и стабильный
+const FIRST_PERSON = new Set(['ich','i','je','yo','io','eu','jag','jeg','ik','én','ja','я','мен','ben']);
+
 function promptNamesMustUse(sc, mustUse){
   try {
     const txt = norm(String((sc && sc.prompt_for_user) || ''));
@@ -8742,6 +8905,30 @@ function stripMustUseFromPrompt(sc, mustUse){
   if (t.length >= 12) sc.prompt_for_user = t;
   return sc;
 }
+/* 4.70 (QUEUE-200): ПОСЛОВНЫЙ РАЗБОР СЦЕНЫ ПРИХОДИТ ВМЕСТЕ СО СЦЕНОЙ.
+   Поле `encountered_words` в контракте есть с самого начала, но полнота его не проверялась, и
+   модель клала туда часть слов. Наружу это выходило так: перевод сцены целиком уже на экране
+   («Раньше всё было вручную»), а тап по слову `damals` уходил в сеть на десяток секунд — при
+   том что данные для перевода фразы у модели явно были.
+   Важно различать два уровня: перевод ПРЕДЛОЖЕНИЙ (`native_hint`) нужен для чтения, разбор
+   СЛОВ — для тапа, и первое не заменяет второго. Дыры добираются тем же пакетным запросом,
+   что и глоссарий заданий урока (4.65): нет дыр — нет запроса. */
+async function fillSceneWords(sc){
+  try {
+    if (!sc || !sc.scene_text) return sc;
+    const item = { sentence: sc.scene_text,
+                   glossary: [...(sc.encountered_words||[]), ...(sc.answer_glossary||[])] };
+    const before = (item.glossary||[]).length;
+    await fillGlossaryGaps([item], 'sentence');
+    const add = (item.glossary||[]).slice(before);
+    if (add.length) {
+      console.log('[AILEX] слов сцены дозаполнено:', add.length);
+      sc.encountered_words = [...(sc.encountered_words||[]), ...add];
+    }
+  } catch(e) { console.warn('fillSceneWords:', e && e.message); }
+  return sc;
+}
+
 function fixSceneGlossary(sc){
   try {
     ['answer_glossary','encountered_words'].forEach(k => {
@@ -8782,7 +8969,7 @@ function localFormCard(form, glossary, rec){
 function wordHintHTML(answer, card, rec){
   const tr = formTranslitOf(card, answer) || '';
   const tn = (card && card.translation) || (rec && rec.translation) || '';
-  return `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(tr)}</span>`
+  return `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(showTranslit(tr))}</span>`
        + sayBtn(answer) + ` — ${esc(tn)}` + dictFormLineHTML(card, answer);
 }
 
@@ -8813,7 +9000,7 @@ function dictFormLineHTML(w, tok) {
   const parts = [];
   if (!same) {
     let line = esc(dict);
-    if (w.term_translit)    line += ` <span style="color:var(--orange)">${esc(w.term_translit)}</span>`;
+    if (w.term_translit)    line += ` <span style="color:var(--orange)">${esc(showTranslit(w.term_translit))}</span>`;
     if (w.term_translation) line += ` — ${esc(w.term_translation)}`;
     parts.push(line);
   }
@@ -8832,7 +9019,7 @@ function tapCardRows(w, tok, tts, whyBtn) {
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:600;font-size:15px">${esc(head)}${paren}</span>
       ${tts}
-      <span style="color:var(--orange);font-size:13px;flex:1">${esc(formTranslitOf(w, tok))}</span>
+      <span style="color:var(--orange);font-size:13px;flex:1">${esc(showTranslit(formTranslitOf(w, tok)))}</span>
       ${whyBtn}
       <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0">✕</button>
     </div>
@@ -8890,7 +9077,15 @@ function showTapPopup(w, anchorEl, ctx, tapped) {
     if (!body) return;
     body.innerHTML = tapCardRows(w, tok, tts, whyBtn);
     const sayEl = popup.querySelector('#tapSay');
-    if (sayEl) sayEl.onclick = () => speak(w.surface || w.term, DB.profile.targetLang);
+    /* 4.70 (QUEUE-197): озвучка читает ФОРМУ ИЗ ТЕКСТА. Правило тут стояло и раньше, но
+       `surface` заполнялась через раз — карточка из глоссария или Ядра приходила без неё, —
+       и озвучка молча уходила к словарной форме: тапаешь «prüft», слышишь «prüfen». Поэтому
+       форма подставляется здесь принудительно: тапнутое слово приложение знает точно.
+       4.70 (QUEUE-198): и произносится СРАЗУ при открытии — как в подсказке урока, где этот
+       приём уже принят; динамик остаётся для повтора. */
+    const _say = bareTranslit(tapped || w.surface || w.term);
+    if (sayEl) sayEl.onclick = () => speak(_say, DB.profile.targetLang);
+    try { speak(_say, DB.profile.targetLang); } catch(_){}
     popup.querySelector('#tapClose').onclick = () => popup.remove();
     // explain_element разбирает ТУ форму, по которой тапнули, а не словарную (QUEUE-76)
     const whyEl = popup.querySelector('#tapWhy');
@@ -9287,7 +9482,7 @@ async function runSuperquestAct(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b class="tapall" style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
         ${sc.scaffold?`<div style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
@@ -9297,7 +9492,7 @@ async function runSuperquestAct(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b>${esc(g.term)}</b> <span style="color:var(--orange)">${esc(g.translit||'')}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b class="tapall">${esc(g.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(g.translit))}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -9410,7 +9605,7 @@ async function runSuperquestAct(cfg) {
             return '<div class="note" style="margin-top:10px;line-height:1.9;text-align:left">'
               + seen.slice(0, 20).map(w =>
                   `<b>${esc(dictForm(w))}</b>`
-                  + (w.translit ? ` <span style="color:var(--orange)">${esc(w.translit)}</span>` : '')
+                  + (w.translit ? ` <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` : '')
                   + (w.translation ? ` — ${esc(w.translation)}` : '')
                   + sayBtn(w.term)
                 ).join('<br>')
@@ -9558,7 +9753,7 @@ function startRemedial(E) {
     ensureMnemonic(DB.vocab.find(v=>v.term===w.term)||w);
     Screen.show(`<div class="eyebrow">${lbl('Разбор')} · ${i+1} / ${items.length}</div>
       <div class="card">
-        <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)} <span style="color:var(--orange);font-size:14px">${esc(w.translit||'')}</span></div>
+        <div class="task-text">${esc(w.emoji||'')} ${esc(w.translation)} <span style="color:var(--orange);font-size:14px">${esc(showTranslit(w.translit))}</span></div>
         ${pass===1?`<div class="feedback ok" style="display:block;margin-bottom:10px">🧠 Верный ответ: <b>${esc(w.term)}</b>${w.mnemonic?'<br>'+esc(w.mnemonic):''} ${lbl('— введите его вручную.')}</div>`:''}
         <input type="text" id="ans" autocomplete="off" autocapitalize="off" placeholder="${esc(pass===1?t('Перепишите слово'):t('Теперь по памяти'))}">
         <div class="feedback" id="fb"></div>
