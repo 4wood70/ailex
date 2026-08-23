@@ -152,30 +152,30 @@ textarea.ans-grow{resize:none;overflow:hidden;min-height:52px;line-height:1.45}
   padding:14px 20px;font-weight:600;margin-top:9px;isolation:isolate}
 .opt.branch b,.opt.branch small{position:relative;z-index:2}
 .opt.branch small{display:block;font-weight:400;font-size:12px;opacity:.85;margin-top:2px}
-/* Искра по контуру: конический градиент крутится под пилюлей, наружу торчит только тонкая дуга —
-   заливка сверху перекрывает всё, кроме полутора пикселей канта. Тот же приём, что у мерцания
-   звёзд на главном экране: движение едва заметное, но взгляд цепляет и кнопка читается как
-   действие, а не как карточка с текстом. */
+/* Кнопка развилки: неподвижная пилюля с живым кантом. Движение едва заметное, но взгляд
+   цепляет, и кнопка читается как действие, а не как карточка с текстом. */
 .opt.branch{background:var(--bf);border:1.5px solid color-mix(in srgb,var(--bc) 45%,transparent)}
-/* 4.70: светится ТОЛЬКО кант. Прежде конический градиент крутился под всей пилюлей и наружу
-   вылезал не тонкий след, а весь диск — заливка ездила поперёк кнопки, и та выглядела
-   вращающейся вокруг невидимой оси. Теперь вращающийся слой вырезан маской в рамку шириной
-   полтора пикселя: сама кнопка и её заливка неподвижны, по периметру пробегает искра. */
-.opt.branch::before{content:'';position:absolute;inset:0;border-radius:inherit;z-index:0;
-  padding:1.5px;
-  background:conic-gradient(from 0deg,transparent 0 70%,var(--bc) 82%,#fff 86%,var(--bc) 90%,transparent 98%);
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;
-  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  mask-composite:exclude;
-  animation:branchspark 3.4s linear infinite}
-.opt.branch-a{--bc:var(--cyan);--bf:rgba(47,125,246,.14)}
-.opt.branch-b{--bc:var(--orange);--bf:rgba(255,138,60,.14)}
-.opt.branch-b::before{animation-delay:-1.7s}          /* искры расходятся, а не бегут синхронно */
+/* 4.74: кант пульсирует, ничего не вращается. Две прежние попытки шли одним путём —
+   вращать конический градиент и оставлять наружу только тонкую дугу; в 4.70 лишнее
+   срезалось маской (mask-composite). В WebView Android эта маска не работает: слой не
+   обрезается, и наружу выходит весь диск — по обеим кнопкам ездила диагональная полоса,
+   ровно то, чего мы избегали. Приём заменён на заведомо переносимый: анимируются только
+   цвет рамки и мягкое свечение вокруг неё, геометрия неподвижна. Ритм асимметричный —
+   вспышка быстрая, угасание долгое, — и кнопки разведены по фазе на полпериода: светится
+   то одна, то другая, будто выбор предлагают по очереди. */
+.opt.branch-a{--bc:var(--cyan);--bf:rgba(47,125,246,.14);--bg2:47,125,246}
+.opt.branch-b{--bc:var(--orange);--bf:rgba(255,138,60,.14);--bg2:255,138,60}
+.opt.branch{animation:branchpulse 5.2s ease-in-out infinite}
+.opt.branch-b{animation-delay:-2.6s}          /* полпериода: пики не совпадают */
 .opt.branch:active{transform:scale(.985)}
-@keyframes branchspark{to{transform:rotate(360deg)}}
+@keyframes branchpulse{
+  0%   {border-color:color-mix(in srgb,var(--bc) 35%,transparent);box-shadow:0 0 0 0 rgba(var(--bg2),0)}
+  14%  {border-color:color-mix(in srgb,var(--bc) 95%,transparent);box-shadow:0 0 14px 1px rgba(var(--bg2),.34)}
+  55%  {border-color:color-mix(in srgb,var(--bc) 45%,transparent);box-shadow:0 0 5px 0 rgba(var(--bg2),.08)}
+  100% {border-color:color-mix(in srgb,var(--bc) 35%,transparent);box-shadow:0 0 0 0 rgba(var(--bg2),0)}
+}
 @media (prefers-reduced-motion:reduce){
-  .opt.branch::before{animation:none;background:var(--bc);opacity:.55}
+  .opt.branch{animation:none;border-color:color-mix(in srgb,var(--bc) 70%,transparent)}
 }
 /* Lang picker */
 .lang-opt:last-child{border-bottom:none!important}
@@ -294,7 +294,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v128';
+const APP_VERSION = 'v129';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
