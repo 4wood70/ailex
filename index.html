@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v130';
+const APP_VERSION = 'v131';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -8759,6 +8759,8 @@ async function fetchWordCard(token, sentence, strict) {
       word: token, sentence: sentence || '',
       rules: TAP_CARD_RULES + (strict === 'translit'
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции. Поле translit ОБЯЗАТЕЛЬНО: буквами native_lang, передаёт звучание формы surface.'
+          + ' ДЛИННОЕ СОСТАВНОЕ СЛОВО (4.75): если слово состоит из нескольких основ (нем. Zugabteil, Fahrkartenautomat), не пропускай транскрипцию из-за длины —'
+          + ' раздели слово на составляющие, запиши звучание каждой и соедини в одну строку. Пустое поле недопустимо ни при какой длине слова.'
         : strict === 'termtr'
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции словарной формы. Поля term_translit и term_translation ОБЯЗАТЕЛЬНЫ: term_translit — звучание СЛОВАРНОЙ формы буквами native_lang, отдельно от translit, который передаёт звучание формы из текста.'
         : strict
@@ -8822,7 +8824,7 @@ const CardCache = {
     if (this._mem.has(k)) return this._mem.get(k);
     try {
       const rec = (DB && DB.cards) ? DB.cards[k] : null;
-      if (rec && rec.translit) { this._mem.set(k, rec); return rec; }
+      if (rec) { this._mem.set(k, rec); return rec; }   // 4.75: неполную тоже отдаём — её дочинит _repair
     } catch(_){}
     return null;
   },
@@ -8846,8 +8848,19 @@ const CardCache = {
       return (a.length / b.length) < 0.65;
     } catch(_) { return false; }
   },
+  /* 4.75 (QUEUE-230): ПОЧИНКА ОБЯЗАНА ЗАКАНЧИВАТЬСЯ.
+     С 4.54 карточка без транскрипции сознательно не помечалась полной и не попадала в кэш —
+     «чтобы не закрыть путь к починке». Замысел верный: запирать полуфабрикат навсегда нельзя.
+     Но у пути к починке не было конца. Составное существительное (`Zugabteil`) модель отдаёт
+     без звучания и с первого раза, и со второго, усиленного; в кэш не ложится ничего — и
+     КАЖДОЕ следующее нажатие повторяет оба запроса заново. Снаружи: карточка появилась,
+     закрыл, нажал снова — опять «ищет», и так без конца, а транскрипции всё нет.
+     Правило «отсутствие данных должно быть замечено» мы соблюдали, а парное к нему — «попытки
+     чинить конечны» — нет. Теперь неполная запись кладётся в кэш и помечается неполной (`mv`
+     ниже текущей): повторное нажатие отвечает мгновенно из памяти, а дозапрос делается один
+     раз за сеанс через `_fix`, а не при каждом касании. */
   put(tok, card){
-    if (!card || !card.translit) return card;   // без звучания карточка бесполезна и не кэшируется
+    if (!card) return card;
     if (this.contextBound(tok, card)) return card;
     const k = this.key(tok);
     this._mem.set(k, card);
@@ -8885,7 +8898,11 @@ const CardCache = {
     if (!card || card.mv >= TAP_CARD_V || card.unverified) return null;
     const k = this.key(tok);
     if (this._fix.has(k)) return this._fix.get(k);
-    const pr = fetchWordCard(tok, sentence, 'termtr')
+    /* 4.75: чинить надо то, чего не хватает. Дозапрос всегда шёл в режиме `termtr` —
+       за звучанием СЛОВАРНОЙ формы, — даже когда пустой была сама транскрипция формы из
+       текста. Просьба не совпадала с дырой, и починка не могла помочь. */
+    const mode = card.translit ? 'termtr' : 'translit';
+    const pr = fetchWordCard(tok, sentence, mode)
       .then(c => (c && c.mv >= TAP_CARD_V) ? this.put(tok, c) : null)
       .catch(() => null);
     this._fix.set(k, pr);
@@ -9031,7 +9048,22 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
      Уровень стоит ПОСЛЕ Ядра и Словаря, потому что те дают словарную статью, а здесь лежит
      разбор конкретной формы из текста — то, что вывести локально нельзя. */
   const cached = CardCache.get(term);
-  if (cached) { showTapPopup(cached, anchorEl, ctx, term); return; }   // неполную дочинит сам попап (QUEUE-77)
+  if (cached) {
+    showTapPopup(cached, anchorEl, ctx, term);
+    /* 4.75: неполную показываем НЕМЕДЛЕННО, а недостающее добираем в фоне и один раз за сеанс.
+       Ждать под лоадером ради транскрипции незачем — перевод уже на экране; но и оставлять
+       запись неполной навсегда нельзя, иначе пропуск станет постоянным. */
+    if (tapNeedsCard(cached)) {
+      CardCache.load(term, ctx).then(better => {
+        try {
+          if (!better || !better.translit) return;
+          const ov = document.getElementById('tapOverlay');
+          if (ov && ov.dataset && ov.dataset.term === norm(term)) showTapPopup(better, anchorEl, ctx, term);
+        } catch(_) {}
+      }).catch(()=>{});
+    }
+    return;
+  }
   // 6. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
@@ -9376,6 +9408,7 @@ function showTapPopup(w, anchorEl, ctx, tapped) {
   let old = document.getElementById('tapOverlay'); if (old) old.remove();
   const popup = document.createElement('div');
   popup.id = 'tapOverlay';
+  popup.dataset.term = norm(tok);          // 4.75: чья это карточка — чтобы фоновая починка не подменила чужую
   const tts = hasTTS(DB.profile.targetLang)
     ? `<button id="tapSay" aria-label="Озвучить" style="background:none;border:none;font-size:18px;cursor:pointer;padding:0 2px;flex-shrink:0">🔊</button>`
     : '';
