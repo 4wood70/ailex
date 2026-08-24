@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v131';
+const APP_VERSION = 'v132';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1866,9 +1866,35 @@ const Gemini = {
   },
   /* 4.31: единая точка гарантии — любой ответ модели проходит здесь перед возвратом.
      Одна точка вместо правок пятнадцати контрактов: закрывает и будущие контракты тоже. */
+  /* 4.76 (QUEUE-234): «ПРИШЛО, НО ПУСТО» — ЭТО НЕ ПРИШЛО.
+     Обязательность поля в responseSchema гарантирует только НАЛИЧИЕ ключа, а не содержимое:
+     модель законно отдаёт пустую строку и формально контракта не нарушает. Про промпты мы это
+     знали давно (4.51), про схему до сих пор считали иначе. Пробелы и пустые строки снимаются
+     здесь, в общей точке, чтобы «есть ключ» нигде не читалось как «есть данные».
+     4.76 (QUEUE-235): служебные пометки нашего же запроса не выходят к ученику. В карточке
+     стояло «читать (Interests: книги)» — имя слоя из запроса (`layer:'interests'`) модель
+     дописала прямо в перевод. Правилом это не лечится: запрет в промпте будет нарушен, а
+     ученик не должен видеть внутренностей приложения ни при какой погоде. */
+  _META_RX: /\s*[(\[]\s*(interests?|layer|topic|cefr|level|contract|task|native_lang|target_lang)\s*[:=][^)\]]*[)\]]/gi,
+  _scrub(v){
+    let t = String(v).replace(this._META_RX, '').replace(/\s{2,}/g, ' ').trim();
+    return t;
+  },
   async _guarantee(out, contract) {
     if (!out || typeof out !== 'object') return out;
     if (contract && contract.task === 'fix_glossary') return out;   // починка себя не санирует
+    try {
+      const clean = node => {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node)) { node.forEach(clean); return; }
+        Object.keys(node).forEach(k => {
+          const v = node[k];
+          if (typeof v === 'string') node[k] = this._scrub(v);
+          else if (v && typeof v === 'object') clean(v);
+        });
+      };
+      clean(out);
+    } catch(_) {}
     const nat = (contract && contract.native_lang) || (DB && DB.profile && DB.profile.nativeLang) || '';
     const tgt = (contract && contract.target_lang) || (DB && DB.profile && DB.profile.targetLang) || '';
     const TERM_KEYS = ['term','word','phrase','form','target','text_target','expected_target','correct_form'];
@@ -8738,6 +8764,12 @@ function tapMatch(rec, t) {
 // закрытые классы полностью описаны в Ядре языка (v64), контекст даёт 📘.
 function tapNeedsCard(w) {
   if (!w) return false;
+  if (w.failed) return false;                    // 4.76: провал — не запись, чинить в нём нечего
+  /* 4.76 (QUEUE-237): запись без части речи никогда не была полной карточкой — это тройка из
+     глоссария задания или из Ядра (форма, звучание, перевод). Для `lesen` такой тройки хватало,
+     чтобы тап счёл её готовой, и ученик не мог узнать главного: `er liest`, чередование в
+     основе. Парадигма и формы неправильного глагола в глоссарии не лежат и лежать не могут. */
+  if (!w.part_of_speech) return true;
   if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return false;
   /* 4.54 (QUEUE-173): запись без транскрипции неполна, каким бы ни было mv. До v106 карточка
      штамповалась полной безусловно, поэтому пустая транскрипция закреплялась навсегда: тап по
@@ -8748,6 +8780,33 @@ function tapNeedsCard(w) {
      которой [шикен] стоял рядом с «schicke». */
   if (w.term && w.surface && norm(stripArtG(w.term)) !== norm(stripArtG(w.surface)) && !w.term_translit) return true;
   return !(w.mv >= TAP_CARD_V);
+}
+
+/* 4.76 (QUEUE-240): ЗВУЧАНИЕ ПРОСИМ ОТДЕЛЬНЫМ УЗКИМ ЗАПРОСОМ.
+   Транскрипция стоит в `required` схемы карточки, и всё равно приходила пустой — на обычных
+   формах (`denkt`, `flüstert`), не только на составных словах. Причина не в упрямстве модели:
+   контракт карточки просит десять полей сразу и несёт длинные правила, а `thinkingBudget: 0`
+   не оставляет запаса — одно поле тихо теряется. Усиливать уговоры внутри того же большого
+   запроса бессмысленно (4.51: правило, живущее в промпте, будет нарушено). Поэтому у звучания
+   свой контракт из одного вопроса: вот слово — дай его звучание буквами родного языка.
+   Короткая просьба исполняется несравнимо надёжнее длинной. */
+const TRANSLIT_ONLY_SCHEMA = '{"translit":"звучание слова буквами native_lang, без скобок и без знаков IPA"}';
+const TRANSLIT_ONLY_RESPONSE_SCHEMA = { type:'OBJECT', properties:{ translit:{ type:'STRING' } }, required:['translit'] };
+async function fetchTranslitOnly(word, sentence){
+  try {
+    const p = DB.profile;
+    const out = await Gemini.call({
+      task:'transliterate', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      word: String(word || ''), sentence: sentence || '',
+      rules: 'Верни ТОЛЬКО звучание слова word буквами native_lang. Слово принадлежит target_lang. '
+           + 'Никаких знаков IPA, никаких скобок, никакого перевода и никаких пояснений — одна строка звучания. '
+           + 'КАЖДЫЙ согласный слова обязан быть отражён: Abenteuer → абэнтойэр, а НЕ абэнойэр. '
+           + 'Длинное составное слово раздели на основы, запиши звучание каждой и соедини в одну строку. Пустая строка недопустима.'
+    }, TRANSLIT_ONLY_SCHEMA, { responseSchema: TRANSLIT_ONLY_RESPONSE_SCHEMA });
+    const tr = bareTranslit(out && out.translit);
+    // isBadTranslit ждёт КОД языка (сверяется с NONLATIN_NATIVE), а не человекочитаемое имя
+    return (tr && !isBadTranslit(tr, p.nativeLang)) ? tr : '';
+  } catch(_) { return ''; }
 }
 
 async function fetchWordCard(token, sentence, strict) {
@@ -8781,6 +8840,10 @@ async function fetchWordCard(token, sentence, strict) {
   if (!out.translit && !strict) {
     const again = await fetchWordCard(token, sentence, 'translit');
     if (again && again.translit) return again;
+    /* 4.76: большой контракт звучание не отдал ни с первого раза, ни со второго — спрашиваем
+       отдельным узким запросом, где кроме него ничего не просят. */
+    const only = await fetchTranslitOnly(token, sentence);
+    if (only) out.translit = only;
   }
   /* 4.61: транскрипция словарной формы обязательна ровно тогда, когда словарная форма ВООБЩЕ
      показывается, то есть когда она отличается от формы из текста. Метка полноты не ставится,
@@ -8969,6 +9032,7 @@ function cleanMorph(morph, term) {
 }
 
 function mergeWordCard(w, f) {
+  delete w.note; delete w.failed;          // 4.76: следы неудачного показа не переживают починку
   ['term','surface','translit','term_translit','term_translation','translation','part_of_speech','morph','paradigm','forms'].forEach(k => { if (f[k]) w[k] = f[k]; });
   ['translit','term_translit'].forEach(k => { if (w[k]) w[k] = bareTranslit(w[k]); });   // 4.70
   if (w.morph) w.morph = cleanMorph(w.morph, w.term);                                    // 4.70
@@ -8980,7 +9044,7 @@ function mergeWordCard(w, f) {
 // непроверенную словарную форму не пишем тем более (QUEUE-76) — иначе SRS учит чужому слову.
 function saveTappedWord(w, tapped) {
   try {
-    if (!w || !w.term || w.unverified) return;
+    if (!w || !w.term || w.unverified || w.failed) return;   // 4.76: провал в Словарь не пишется
     if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return;
     const ex = DB.vocab.find(v => norm(v.term) === norm(w.term) || norm(stripArtG(v.term)) === norm(stripArtG(w.term)));
     const rec = ex || { term:w.term, translation:'', translit:'', term_translit:'', term_translation:'', emoji:'', part_of_speech:'', is_irregular:false,
@@ -9025,9 +9089,20 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   const term = raw.replace(/[.,!?;:"'«»()]/g,'').trim();
   if (!term) return;
   // explain_element: контекст для кнопки «почему так?» — целевое предложение из контейнера сцены
-  const ctx = (anchorEl && anchorEl.closest('.target'))
-    ? anchorEl.closest('.target').textContent.replace(/🔊/g,'').replace(/\s+/g,' ').trim()
-    : '';
+  /* 4.76 (QUEUE-239): у 📘 должен быть контекст и в строках задания. Контекст брался только из
+     блока сцены (`.target`), а строки «Используйте» и «Значения» такого блока не имеют — книжка
+     там не рисовалась вовсе. А нужна она именно там: слово дали как опору для ответа, и вопрос
+     «а как это в других лицах» возникает ровно здесь. Запасной контекст — текст самого задания. */
+  const ctx = (() => {
+    try {
+      const inScene = anchorEl && anchorEl.closest('.target');
+      if (inScene) return inScene.textContent.replace(/🔊/g,'').replace(/\s+/g,' ').trim();
+      const card = anchorEl && anchorEl.closest('.card');
+      const task = card && (card.querySelector('.frame') || card.querySelector('.task-text'));
+      if (task) return task.textContent.replace(/🔊/g,'').replace(/\s+/g,' ').trim().slice(0, 300);
+    } catch(_) {}
+    return '';
+  })();
   // QUEUE-19: добавляем sceneWords в кэш сцены
   if (sceneWords && L) { if (!L.encounteredCache) L.encounteredCache = []; sceneWords.forEach(w=>{ if(w&&w.term&&!L.encounteredCache.find(x=>norm(x.term)===norm(w.term))) L.encounteredCache.push(w); }); }
   // 1. Слова ТЕКУЩЕЙ сцены — контекст важнее общего словаря (QUEUE-19: иначе 'plane' → 'самолёт')
@@ -9048,22 +9123,11 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
      Уровень стоит ПОСЛЕ Ядра и Словаря, потому что те дают словарную статью, а здесь лежит
      разбор конкретной формы из текста — то, что вывести локально нельзя. */
   const cached = CardCache.get(term);
-  if (cached) {
-    showTapPopup(cached, anchorEl, ctx, term);
-    /* 4.75: неполную показываем НЕМЕДЛЕННО, а недостающее добираем в фоне и один раз за сеанс.
-       Ждать под лоадером ради транскрипции незачем — перевод уже на экране; но и оставлять
-       запись неполной навсегда нельзя, иначе пропуск станет постоянным. */
-    if (tapNeedsCard(cached)) {
-      CardCache.load(term, ctx).then(better => {
-        try {
-          if (!better || !better.translit) return;
-          const ov = document.getElementById('tapOverlay');
-          if (ov && ov.dataset && ov.dataset.term === norm(term)) showTapPopup(better, anchorEl, ctx, term);
-        } catch(_) {}
-      }).catch(()=>{});
-    }
-    return;
-  }
+  /* 4.76 (QUEUE-238): фоновый добор ОДИН. В 4.75 я добавил здесь свой заход, не заметив, что
+     попап уже делает ровно то же по `tapNeedsCard` (QUEUE-77). Вместе с повтором внутри
+     `fetchWordCard` получалось до трёх запросов на одно нажатие — те самые три-пять секунд.
+     Показ неполной карточки остаётся мгновенным, добор делает попап, и только он. */
+  if (cached) { showTapPopup(cached, anchorEl, ctx, term); return; }
   // 6. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
@@ -9076,9 +9140,7 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
      и человек читал его как «перевода не существует», хотя запрос просто не вернулся. Пишем,
      что случилось, и даём повторить: провал сети должен выглядеть как провал сети. */
   if (!w) {
-    showTapPopup({ term:'', surface:term, translit:'',
-                   translation: t('Не удалось получить разбор'),
-                   morph: t('Нажмите слово ещё раз, чтобы повторить.') }, anchorEl, ctx, term);
+    showTapPopup(failCard(term), anchorEl, ctx, term);
     return;
   }
   saveTappedWord(w, term);
@@ -9117,13 +9179,22 @@ function attachTapAll(container, _sceneWords) {
     };
   });
 }
+/* 4.76 (QUEUE-236): СЛУЖЕБНАЯ НАДПИСЬ — НЕ СОДЕРЖИМОЕ КАРТОЧКИ.
+   В 4.74 текст «Нажмите слово ещё раз» был положен в поле `morph` — то есть в данные разбора.
+   Дальше сработала цепочка: попап видит неполную карточку и чинит её, но починка ДОПОЛНЯЕТ
+   пришедшими полями, а пустой `morph` из ответа мою заглушку не вытеснял. Служебная фраза
+   прилипала к настоящему разбору («ander — другой · Нажмите слово ещё раз…») и уходила в
+   Словарь вместе с ним. Теперь у провала свой флаг и своя строка показа: в данные он не лезет,
+   починку не запускает и в Словарь не пишется. */
+function failCard(term){
+  return { term:'', surface:term, translit:'', translation: t('Не удалось получить разбор'),
+           note: t('Нажмите слово ещё раз, чтобы повторить.'), failed:true };
+}
 function tapFailed(term, anchorEl, err){
   console.warn('тап:', err && err.message);
   try {
     const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
-    showTapPopup({ term:'', surface:term, translit:'',
-                   translation: t('Не удалось получить разбор'),
-                   morph: t('Нажмите слово ещё раз, чтобы повторить.') }, anchorEl, '', term);
+    showTapPopup(failCard(term), anchorEl, '', term);
   } catch(_) {}
 }
 
@@ -9391,6 +9462,8 @@ function tapCardRows(w, tok, tts, whyBtn) {
   const paren = '';                       // 4.61: словарная форма ушла в отдельную строку ниже
   const morph = dictFormLineHTML(w, tok);
   const forms = w.forms ? `<div style="margin-top:3px;color:var(--faint);font-size:12px;line-height:1.45">${w.is_irregular?'⚡ ':''}${esc(w.forms)}</div>` : '';
+  // 4.76: служебная строка живёт отдельно от разбора и в данные карточки не попадает
+  const note = w.note ? `<div style="margin-top:3px;color:var(--faint);font-size:12px;line-height:1.45">${esc(w.note)}</div>` : '';
   return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:600;font-size:15px">${esc(head)}${paren}</span>
       ${tts}
@@ -9398,7 +9471,7 @@ function tapCardRows(w, tok, tts, whyBtn) {
       ${whyBtn}
       <button id="tapClose" aria-label="Закрыть" style="background:none;border:none;font-size:18px;line-height:1;color:var(--faint);cursor:pointer;padding:0">✕</button>
     </div>
-    <div style="margin-top:4px;font-size:13px;line-height:1.45">${translationPairHTML(w)}</div>${morph}${forms}`;
+    <div style="margin-top:4px;font-size:13px;line-height:1.45">${translationPairHTML(w)}</div>${morph}${forms}${note}`;
 }
 
 function showTapPopup(w, anchorEl, ctx, tapped) {
