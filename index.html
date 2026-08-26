@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v132';
+const APP_VERSION = 'v134';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -851,7 +851,7 @@ const I18N = {
       'семья и друзья':'family and friends','время и распорядок дня':'time and daily routine','работа и учёба':'work and study',
       'почта, банк, ремонт':'post office, bank, repairs','отдых и свободное время':'leisure and free time','одежда и вещи':'clothes and belongings',
       'SYSTEM ONLINE':'SYSTEM ONLINE','С возвращением':'Welcome back',
-      'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Готовлю Суперквест…':'Preparing Superquest…',
+      'Готовлю урок':'Preparing lesson','Догружаю урок…':'Loading lesson…','Создаю урок…':'Building the lesson…','Готовлю Суперквест…':'Preparing Superquest…',
       'Догружаю Суперквест…':'Loading Superquest…','Проверяю…':'Checking…',
       'Не получилось подготовить урок':'Could not prepare the lesson',
       'Напишите предложение, подставив пропущенное слово':'Write the sentence with the missing word filled in',
@@ -970,6 +970,7 @@ const I18N = {
       'Память устройства переполнена — прогресс может не сохраниться':'Device storage is full — progress may not be saved',
       'В этом уроке нет отдельного правила':'This lesson has no separate rule',
       'Связь барахлит — ответ засчитан':'Connection is patchy — the answer is counted',
+      'Сбой в задании — ответ засчитан':'A glitch in the task — the answer is counted',
       'Верно, опечатка:':'Correct, a typo:',
       'Почти верно — артикль:':'Almost — the article:',
       'Сохраняю и анализирую урок…':'Saving and reviewing the lesson…',
@@ -2110,8 +2111,24 @@ const Screen = {
     syncSysStatus();          // v68: код занятия в шапке — виден на любом скриншоте
     window.scrollTo(0,0);
   },
+  /* 4.77 (QUEUE-244): у ожидания должен быть счётчик. Заставка показывала только надпись, и
+     при задержке нечего было предъявить: «долго грузилось» — это не наблюдение, а ощущение.
+     Секундомер идёт с момента показа, и скриншот заставки сам сообщает, сколько именно ждали.
+     Долей готовности здесь нет намеренно: урок собирается одним запросом к модели, и рисовать
+     проценты значило бы показывать выдуманное число — та же ложная полнота, что и везде. */
   loader(msg) {
-    this.show(`<div class="loader"><div class="spin"></div><div>${esc(I18N.t(msg||'Запрос к Gemini…'))}</div></div>`);
+    this.show(`<div class="loader"><div class="spin"></div><div>${esc(I18N.t(msg||'Запрос к Gemini…'))}</div>`
+      + `<div id="loadClock" style="margin-top:6px;color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums">0:00</div></div>`);
+    try {
+      clearInterval(this._clock);
+      const t0 = Date.now();
+      this._clock = setInterval(() => {
+        const el = document.getElementById('loadClock');
+        if (!el) { clearInterval(this._clock); return; }
+        const sec = Math.floor((Date.now() - t0) / 1000);
+        el.textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+      }, 1000);
+    } catch(_) {}
   }
 };
 /* Шапка приложения: код текущего занятия рядом с номером билда (v68).
@@ -6124,7 +6141,7 @@ async function ensureChunk2() {
   if (!L) return false;
   if (L.chunk2.state === 'ready') return true;
   if (L.chunk2.state === 'idle') fetchLessonChunk2();
-  Screen.loader('Догружаю урок…');
+  Screen.loader('Создаю урок…');
   try { await L.chunk2.promise; return true; }
   catch(e) {
     if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return false; }
@@ -7847,6 +7864,7 @@ function drillReviewContext(s, rd) {
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), tapWordsFor(rd.glossary));
       speak(shown, DB.profile.targetLang);
+      lockHint();      // 4.77: ответ показан — подсказке больше нечего добавить
       $('#check').textContent=I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.recognition++; noteWordError(w.term); scheduleRetry(w.term); mustRetype = true; }
@@ -7900,15 +7918,28 @@ function drillContext(s) {
      написание; частое обращение к ней само по себе учит, и прятать ответ от того, кто его
      попросил, — не обучение, а препятствие. Теперь одно нажатие: слово, транскрипция, перевод,
      озвучка — как в «повторении в контексте», где так и было. */
+  /* 4.77 (QUEUE-241): ПОДСКАЗКА НЕ ИМЕЕТ ПРАВА СТИРАТЬ РЕЗУЛЬТАТ ПРОВЕРКИ.
+     Подсказка и результат делят один блок `#fb`, поэтому нажатие 💡 после верного ответа
+     затирало зелёное «Отлично!» — ученик терял подтверждение того, ради чего отвечал.
+     Хуже: сначала в блок ставилось многоточие-заглушка, и если добор карточки не возвращался,
+     многоточие так и оставалось на экране. То есть на месте результата висели три точки —
+     пустое поле, показанное как содержимое. В «собери фразу» этого нет: там подсказка берётся
+     из готового эталона и сети не требует, поэтому чинится только сломанная ветка.
+     Правило: прежнее содержимое запоминается и возвращается, если показать нечего. */
   $('#hint').onclick = async () => {
     L.hints++;
-    $('#fb').className = 'feedback ok';
+    const prev = { html: $('#fb').innerHTML, cls: $('#fb').className };
+    const restore = () => { $('#fb').innerHTML = prev.html; $('#fb').className = prev.cls; };
+    const put = html => {
+      if (!html || !String(html).replace(/<[^>]*>/g,'').replace(/[💡…\s]/g,'')) { restore(); return false; }
+      $('#fb').className = 'feedback ok'; $('#fb').innerHTML = html; return true;
+    };
     const local = localFormCard(answer, item.glossary, vEntry) || CardCache.get(answer);
-    if (local) { $('#fb').innerHTML = wordHintHTML(answer, local, vEntry); speak(answer, DB.profile.targetLang); return; }
-    $('#fb').innerHTML = `💡 …`;
-    const card = await CardCache.load(answer, fullSentence);
-    $('#fb').innerHTML = wordHintHTML(answer, card, vEntry);
-    speak(answer, DB.profile.targetLang);
+    if (local) { if (put(wordHintHTML(answer, local, vEntry))) speak(answer, DB.profile.targetLang); return; }
+    $('#fb').className = 'feedback ok'; $('#fb').innerHTML = `💡 …`;
+    let card = null;
+    try { card = await CardCache.load(answer, fullSentence); } catch(_) {}
+    if (put(wordHintHTML(answer, card, vEntry))) speak(answer, DB.profile.targetLang);
   };
   $('#check').onclick = async () => {
     const a = $('#ans').value.trim(); maybeKeyboardTip(a);   // 4.65: письменность ответа
@@ -7964,6 +7995,7 @@ function drillContext(s) {
         + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
       attachTapAll($('#fb'), tapWordsFor(item.glossary));
       speak(shown, DB.profile.targetLang);
+      lockHint();      // 4.77: ответ показан — подсказке больше нечего добавить
       $('#check').textContent = I18N.t('Дальше'); $('#check').onclick = () => { L.i++; renderStep(); };
     } else {
       if (!mustRetype) { L.errors.writing++; noteWordError(dictWord); markSeen(dictWord); mustRetype = true; }
@@ -8049,9 +8081,13 @@ function drillConstruct(s) {
   // словарик новых слов задания (с переводом+транскрипцией) + автосохранение в словарь
   const gloss = Array.isArray(c.glossary) ? c.glossary.filter(g=>g && g.term) : [];
   gloss.forEach(g => {
-    const ex = DB.vocab.find(v=>norm(v.term)===norm(g.term));
-    if (ex) { if (g.translit && !ex.translit) ex.translit=g.translit; return; }
-    DB.vocab.push({ term:g.term, translation:g.translation||'', translit:g.translit||'', emoji:'💬',
+    /* 4.77 (QUEUE-242): совпадение искалось по написанию БЕЗ снятия артикля, поэтому
+       «der Abrichtzyklus» и «Abrichtzyklus» ложились в Словарь двумя записями — в списке
+       слово стояло дважды. Сверяем так же, как везде: по слову без артикля. */
+    const key = norm(stripArtG(g.term));
+    const ex = DB.vocab.find(v => norm(stripArtG(v.term)) === key);
+    if (ex) { if (g.translit && !ex.translit) ex.translit = trimTranslit(g.translit, g.term); return; }
+    DB.vocab.push({ term:g.term, translation:g.translation||'', translit:trimTranslit(g.translit, g.term), emoji:'💬',
       part_of_speech:'', article:'', is_irregular:false, forms:'', lesson:'CONTEXT',
       errors:0, status:'встречено в контексте', source:'task', seen_in_context:true, mnemonic:'', date_added:today(), date_review:today() });
   });
@@ -8143,6 +8179,22 @@ function drillConstruct(s) {
     $('#check').disabled = false;
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true, 'writing'); return passOK(null); }
     if (res.correct) { firstTry(key, true, 'writing'); return passOK(res, a); }
+    /* 4.78 (QUEUE-246): ПРОТИВОРЕЧИЕ ВНУТРИ ЗАДАНИЯ — СБОЙ ПРИЛОЖЕНИЯ, А НЕ ОШИБКА УЧЕНИКА.
+       Случай с прогона: в лексику по интересам (ЧПУ) попало `der Ständer` с переводом «станок»,
+       хотя это стойка/подставка. Приложение построило вокруг неверного перевода задание
+       «Скажите, что вы запускаете станок», потребовало это слово к употреблению — и записало
+       ошибку человеку, который ответил `die Maschine`, то есть ВЕРНО. На одном экране стояли
+       два разных перевода одного слова: «der Ständer — станок» в «Значениях» и «'Ständer'
+       (штатив/подставка)» в разборе ошибки. Признак пригоден для кода: проверяющий сам назвал
+       перевод обязательного слова, и он не сходится ни одним значимым словом с тем, что
+       приложение показало ученику. Когда источники внутри задания спорят друг с другом,
+       засчитывать ошибку нельзя — виноват не отвечавший. */
+    if (checkerContradictsTask(res, c)) {
+      console.warn('противоречие в задании:', c.focus_word);
+      toast('Сбой в задании — ответ засчитан', true);
+      firstTry(key, true, 'writing');
+      return passOK(null, a);
+    }
     firstTry(key, false, 'writing');
     L.errors.construction++; if (c.focus_word) { noteWordError(c.focus_word); scheduleRetry(c.focus_word); }
     correctForm = (res && res.correct_form) || c.expected_target;
@@ -8770,6 +8822,13 @@ function tapNeedsCard(w) {
      чтобы тап счёл её готовой, и ученик не мог узнать главного: `er liest`, чередование в
      основе. Парадигма и формы неправильного глагола в глоссарии не лежат и лежать не могут. */
   if (!w.part_of_speech) return true;
+  /* 4.78 (QUEUE-247): перевод должен относиться к ТОЙ форме, по которой нажали. По `Bücher`
+     в «Путешественники читают книги» карточка выдавала «книга» — словарное значение вместо
+     значения этой формы. Признак кодовый: форма из текста отличается от словарной, а перевод
+     у обеих один и тот же — значит контекстной работы не было, и карточка неполна. */
+  if (w.term && w.surface && norm(stripArtG(w.term)) !== norm(stripArtG(w.surface))
+      && w.term_translation && w.translation
+      && norm(w.term_translation) === norm(w.translation)) return true;
   if (CLOSED_POS.has(String(w.part_of_speech||'').toLowerCase())) return false;
   /* 4.54 (QUEUE-173): запись без транскрипции неполна, каким бы ни было mv. До v106 карточка
      штамповалась полной безусловно, поэтому пустая транскрипция закреплялась навсегда: тап по
@@ -8820,6 +8879,10 @@ async function fetchWordCard(token, sentence, strict) {
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции. Поле translit ОБЯЗАТЕЛЬНО: буквами native_lang, передаёт звучание формы surface.'
           + ' ДЛИННОЕ СОСТАВНОЕ СЛОВО (4.75): если слово состоит из нескольких основ (нем. Zugabteil, Fahrkartenautomat), не пропускай транскрипцию из-за длины —'
           + ' раздели слово на составляющие, запиши звучание каждой и соедини в одну строку. Пустое поле недопустимо ни при какой длине слова.'
+        : strict === 'ctx'
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал форме из текста то же значение, что и словарной. Поле translation — значение ИМЕННО формы surface в этом предложении:'
+          + ' у множественного числа перевод во множественном («Bücher» → «книги», а не «книга»), у спрягаемой формы — в соответствующем лице и времени.'
+          + ' Словарное значение остаётся в term_translation; совпадать эти поля могут только если форма и есть словарная.'
         : strict === 'termtr'
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции словарной формы. Поля term_translit и term_translation ОБЯЗАТЕЛЬНЫ: term_translit — звучание СЛОВАРНОЙ формы буквами native_lang, отдельно от translit, который передаёт звучание формы из текста.'
         : strict
@@ -8840,8 +8903,13 @@ async function fetchWordCard(token, sentence, strict) {
   if (!out.translit && !strict) {
     const again = await fetchWordCard(token, sentence, 'translit');
     if (again && again.translit) return again;
-    /* 4.76: большой контракт звучание не отдал ни с первого раза, ни со второго — спрашиваем
-       отдельным узким запросом, где кроме него ничего не просят. */
+  }
+  /* 4.77 (QUEUE-243): узкий запрос звучания шёл ТОЛЬКО в первом, нестрогом заходе. Починка
+     (`_repair`) всегда зовёт эту функцию с `strict`, поэтому до узкого запроса не доходила
+     никогда — и слово, у которого звучания не было изначально, не получало его и потом.
+     Отсюда соседство в одном задании: `lesen [лезэн]` и `Bücher` без транскрипции вовсе.
+     Спрашиваем узко всегда, когда поле пусто, — независимо от того, каким заходом пришли. */
+  if (!out.translit) {
     const only = await fetchTranslitOnly(token, sentence);
     if (only) out.translit = only;
   }
@@ -8964,7 +9032,11 @@ const CardCache = {
     /* 4.75: чинить надо то, чего не хватает. Дозапрос всегда шёл в режиме `termtr` —
        за звучанием СЛОВАРНОЙ формы, — даже когда пустой была сама транскрипция формы из
        текста. Просьба не совпадала с дырой, и починка не могла помочь. */
-    const mode = card.translit ? 'termtr' : 'translit';
+    const mode = !card.translit ? 'translit'
+               : (card.term && card.surface && norm(stripArtG(card.term)) !== norm(stripArtG(card.surface))
+                  && card.term_translation && card.translation
+                  && norm(card.term_translation) === norm(card.translation)) ? 'ctx'
+               : 'termtr';
     const pr = fetchWordCard(tok, sentence, mode)
       .then(c => (c && c.mv >= TAP_CARD_V) ? this.put(tok, c) : null)
       .catch(() => null);
@@ -8998,6 +9070,14 @@ const CardCache = {
    выглядело как разнобой в одном и том же месте. Решать, как выглядит транскрипция, должно
    приложение: любые пришедшие скобки снимаются на входе, свои ставятся при показе. Тогда вид
    одинаков независимо от того, что вернула модель, и правило не приходится ей повторять. */
+/* 4.77 (QUEUE-242): в Словаре встретилось «der Abrichtzyklus [АБ-рихьт-цюклус лойфт]» — к
+   звучанию приклеено `лойфт`, звучание СОСЕДНЕГО слова `läuft`. Напрашивалось правило «слово
+   одно, значит и блок звучания один, лишнее отсечь». ОТКЛОНЕНО проверкой на node: у «Die
+   Reisenden» после снятия артикля тоже остаётся одно слово, а верная транскрипция «ди
+   райзэндэн» состоит из двух блоков — правило урезало бы её до «ди». Починка, портящая
+   исправные данные, хуже самого дефекта. Порченая запись приходит от модели изредка и
+   вытесняется при следующем доборе; лечим то, что воспроизводится всегда, — двойную запись. */
+function trimTranslit(tr, _term){ return bareTranslit(tr); }
 function bareTranslit(t) {
   return String(t == null ? '' : t).trim()
     .replace(/^[\[\](){}<>«»""'']+/, '').replace(/[\[\](){}<>«»""'']+$/, '').trim();
@@ -9355,7 +9435,31 @@ function fixSceneGlossary(sc){
 }
 function glossaryHit(glossary, form){
   const f = norm(stripArtG(form));
-  const all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === f);
+  let all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === f);
+  /* 4.77 (QUEUE-245): кусок из нескольких слов ищется ещё и по своему главному слову. В «собери
+     фразу» набор строит приложение из эталона, и кусок приходит целиком — «Die Reisenden».
+     В глоссарии же запись может лежать под одним словом, и тогда совпадения не было ни в одну
+     сторону: тап уходил в сеть за двусловным запросом и не возвращался ничем. */
+  if (!all.length) {
+    const parts = f.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) {
+      const head = parts[parts.length - 1];
+      all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === head);
+    }
+  }
+  /* И по общей основе: форма из текста отличается от словарной хвостом («Reisenden» против
+     «Reisende»), и точного совпадения нет ни в одну сторону — тап уходил в сеть за двусловным
+     запросом и не возвращался ничем. Требуем общего начала не короче пяти букв и расхождения
+     не длиннее трёх — этого хватает для склонения и мало для случайного соседа. */
+  if (!all.length && f.length >= 5) {
+    all = (glossary||[]).filter(g => {
+      if (!g || !g.term) return false;
+      const t = norm(stripArtG(g.term));
+      if (t.length < 5 || Math.abs(t.length - f.length) > 3) return false;
+      let n = 0; while (n < t.length && n < f.length && t[n] === f[n]) n++;
+      return n >= 5 && (f.length - n) <= 3 && (t.length - n) <= 3;
+    });
+  }
   /* 4.68: заполненная запись побеждает заглушку. Дозаливка (4.65) дописывает добранное в КОНЕЦ
      списка, а поиск брал первое совпадение — то есть находил ту самую пустую запись, ради
      которой запрос и делался. Дыру заполняли, заглушку не убирали, и на экран шла пустота:
@@ -9388,6 +9492,37 @@ function localFormCard(form, glossary, rec){
     morph: '', mv: TAP_CARD_V,
     translitAttributed: true                 // форма и её звучание пришли одной парой
   };
+}
+/* 4.77: после верного ответа подсказывать нечего — эталон уже на экране, а нажатие 💡 только
+   уносит его. Кнопка убирается в тот же момент, когда «Проверить» становится «Дальше». */
+function lockHint(){ try { const h = $('#hint'); if (h) h.style.display = 'none'; } catch(_) {} }
+/* 4.78: значимые слова перевода — по ним сверяются два источника. Служебные слова и скобки
+   отбрасываются: «штатив/подставка» против «станок» должны разойтись, а «книга» против
+   «книга (том)» — совпасть. */
+function meaningWords(s){
+  return String(s || '').toLowerCase()
+    .replace(/[()\[\]«»"',.;:!?/]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 4);
+}
+function checkerContradictsTask(res, c){
+  try {
+    const word = String((c && c.focus_word) || '').trim();
+    if (!word || !res || !res.explanation) return false;
+    const g = glossaryHit(c.glossary, word);
+    const shown = g && g.translation;
+    if (!shown) return false;                       // приложение перевода не показывало — спорить не с чем
+    /* Перевод, который проверяющий приписал этому слову: скобка сразу после самого слова. */
+    const bare = norm(stripArtG(word)).split(/\s+/).pop();
+    const rx = new RegExp(bare + "'?\\s*[(]([^)]{2,60})[)]", 'i');
+    const m = rx.exec(String(res.explanation));
+    if (!m) return false;
+    const a = meaningWords(shown), b = meaningWords(m[1]);
+    if (!a.length || !b.length) return false;
+    /* Общее значимое слово хотя бы одно — источники согласны; ни одного — спорят. */
+    const share = a.some(x => b.some(y => x === y || x.startsWith(y.slice(0, 5)) || y.startsWith(x.slice(0, 5))));
+    return !share;
+  } catch(_) { return false; }
 }
 function wordHintHTML(answer, card, rec){
   const tr = formTranslitOf(card, answer) || '';
