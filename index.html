@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v134';
+const APP_VERSION = 'v135';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -7817,11 +7817,21 @@ function drillReviewContext(s, rd) {
   $('#hint').onclick = async () => {
     L.hints++; $('#fb').className='feedback ok';
     // 4.64: глоссарий предложения + запись Словаря — всё локально, сети здесь делать нечего
-    const local = localFormCard(answer, rd.glossary, w) || CardCache.get(answer);
-    if (local) { $('#fb').innerHTML = wordHintHTML(answer, local, w); speak(answer, DB.profile.targetLang); return; }
+    const prev = { html: $('#fb').innerHTML, cls: $('#fb').className };
+    const local = localFormCard(answer, rd.glossary, w, true) || CardCache.get(answer);
+    if (local) {
+      $('#fb').innerHTML = wordHintHTML(answer, local, w); speak(answer, DB.profile.targetLang);
+      if (!bareTranslit(local.translit)) topUpHint(answer, fullSentence, w);   // 4.79: звучание фоном
+      return;
+    }
     $('#fb').innerHTML = `💡 …`;                       // урок собран старым билдом — глоссария нет
-    const card = await CardCache.load(answer, fullSentence);
-    $('#fb').innerHTML = wordHintHTML(answer, card, w);
+    let card = null;
+    try { card = await CardCache.load(answer, fullSentence); } catch(_) {}
+    const html = card ? wordHintHTML(answer, card, w) : '';
+    if (!html || !String(html).replace(/<[^>]*>/g,'').replace(/[💡…\s]/g,'')) {
+      $('#fb').innerHTML = prev.html; $('#fb').className = prev.cls; return;   // 4.79: пустоту не показываем
+    }
+    $('#fb').innerHTML = html;
     speak(answer, DB.profile.targetLang);
   };
   $('#check').onclick = async () => {
@@ -7934,8 +7944,14 @@ function drillContext(s) {
       if (!html || !String(html).replace(/<[^>]*>/g,'').replace(/[💡…\s]/g,'')) { restore(); return false; }
       $('#fb').className = 'feedback ok'; $('#fb').innerHTML = html; return true;
     };
-    const local = localFormCard(answer, item.glossary, vEntry) || CardCache.get(answer);
-    if (local) { if (put(wordHintHTML(answer, local, vEntry))) speak(answer, DB.profile.targetLang); return; }
+    /* 4.79: сначала показываем то, что есть, — немедленно. Недостающее звучание догоняем фоном
+       и дорисовываем; не придёт — подсказка уже сделала свою работу. */
+    const local = localFormCard(answer, item.glossary, vEntry, true) || CardCache.get(answer);
+    if (local) {
+      if (put(wordHintHTML(answer, local, vEntry))) speak(answer, DB.profile.targetLang);
+      if (!bareTranslit(local.translit)) topUpHint(answer, fullSentence, vEntry);
+      return;
+    }
     $('#fb').className = 'feedback ok'; $('#fb').innerHTML = `💡 …`;
     let card = null;
     try { card = await CardCache.load(answer, fullSentence); } catch(_) {}
@@ -9163,6 +9179,17 @@ function tapEntryReady(w){
   if (!w || !w.translation) return false;
   return translitNeeded() ? !!bareTranslit(w.translit) : true;
 }
+/* 4.79 (QUEUE-251): ПОЛНОТА — КРИТЕРИЙ ДОБОРА, А НЕ ТОЛЬКО ПОКАЗА. Добор считал дыру закрытой,
+   если слово в Словаре просто ЛЕЖИТ — хотя бы с одним переводом. Что у него нет звучания, никто
+   не смотрел: `Aussendurchmesser` формально «есть», добор его пропускал, и звучания не
+   появлялось ни при сборке урока, ни потом. Слово, показанное ученику как новое, обязано быть
+   полным к первому показу — за ним не должно быть беготни посреди урока. */
+function vocabGapAt(form){
+  const v = vocabHit(form);
+  if (!v) return true;                                   // записи нет вовсе
+  if (!String(v.translation || '').trim()) return true;  // перевода нет
+  return translitNeeded() && !bareTranslit(v.translit);  // звучания нет, а оно нужно
+}
 
 // Поиск слова: сначала локальные источники, потом Gemini
 async function lookupAndShowWord(raw, anchorEl, sceneWords) {
@@ -9433,6 +9460,27 @@ function fixSceneGlossary(sc){
   } catch(_){}
   return sc;
 }
+/* 4.79 (QUEUE-250): общая основа — один и тот же признак для всех хранилищ. В 4.77 поиск по
+   основе появился только у глоссария задания, а кэш карточек и Словарь остались на точном
+   совпадении: `betrachtet` не находил разобранный десять минут назад `betrachten`, и разбор
+   заказывался заново. Починка, сделанная в одной точке из трёх, расходится с остальными —
+   это и есть QUEUE-229 в действии. */
+function sameStem(a, b){
+  const x = norm(stripArtG(String(a || ''))), y = norm(stripArtG(String(b || '')));
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length < 5 || y.length < 5 || Math.abs(x.length - y.length) > 3) return false;
+  let n = 0; while (n < x.length && n < y.length && x[n] === y[n]) n++;
+  return n >= 5 && (x.length - n) <= 3 && (y.length - n) <= 3;
+}
+function vocabHit(form){
+  const f = norm(stripArtG(String(form || '')));
+  if (!f) return null;
+  return DB.vocab.find(v => norm(stripArtG(v.term)) === f)
+      || DB.vocab.find(v => v.surface && norm(stripArtG(v.surface)) === f)
+      || DB.vocab.find(v => sameStem(v.term, f))
+      || null;
+}
 function glossaryHit(glossary, form){
   const f = norm(stripArtG(form));
   let all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === f);
@@ -9466,7 +9514,15 @@ function glossaryHit(glossary, form){
      «entriegele» и «Speicher» без транскрипции. */
   return all.find(g => g.translit && g.translation) || all.find(g => g.translit) || all[0] || null;
 }
-function localFormCard(form, glossary, rec){
+/* 4.79 (QUEUE-249): СТРОГИЙ ПОРОГ ПОЛНОТЫ ПРИМЕНЁН НЕ КО ВСЕМ ПУТЯМ ОДИНАКОВО.
+   С 4.72 запись без транскрипции считается неполной и отдаётся сети, чтобы половина данных не
+   выдавалась за целое. Для Словаря и кэша это верно: запись оседает надолго. Для ПОДСКАЗКИ —
+   вредно: человек застрял на задании и ждёт помощи сейчас, а приложение отвергает лежащий на
+   устройстве перевод из-за отсутствующего звучания и уходит в сеть на десять секунд. На экране
+   всё это время три точки. Подсказка, которая приходит через десять секунд, уже не подсказка:
+   к этому моменту человек либо угадал, либо закрыл приложение.
+   `lenient` — порог подсказки: достаточно перевода. Звучание дотягивается фоном. */
+function localFormCard(form, glossary, rec, lenient){
   const g = glossaryHit(glossary, form);
   const dict = (rec && rec.term) ? String(rec.term) : '';
   const sameForm = !!dict && norm(stripArtG(dict)) === norm(stripArtG(form));
@@ -9478,7 +9534,8 @@ function localFormCard(form, glossary, rec){
      транскрипция — единственная опора произношения, а не украшение. Неполная запись отдаётся
      сетевому пути, который её дозаполнит. */
   const tr = g ? String(g.translit || '').trim() : String((rec && rec.translit) || '').trim();
-  if (!tr) return null;
+  if (!tr && !lenient) return null;
+  if (!tr && !((g && g.translation) || (rec && rec.translation))) return null;  // и перевода нет — показывать нечего
   /* Транскрипция словарной формы: своё поле, если оно есть (4.61); иначе транскрипция записи
      годится лишь тогда, когда запись описывает саму словарную форму, а не какую-то другую. */
   const recIsDict = !!rec && (!rec.surface || norm(stripArtG(rec.surface)) === norm(stripArtG(dict)));
@@ -9495,6 +9552,16 @@ function localFormCard(form, glossary, rec){
 }
 /* 4.77: после верного ответа подсказывать нечего — эталон уже на экране, а нажатие 💡 только
    уносит его. Кнопка убирается в тот же момент, когда «Проверить» становится «Дальше». */
+/* 4.79: фоновая дотяжка звучания для уже показанной подсказки. Ошибка молчаливая намеренно:
+   подсказка на экране, перевод верен, отсутствие звучания ученику ничем не грозит. */
+async function topUpHint(word, sentence, rec){
+  try {
+    const card = await CardCache.load(word, sentence);
+    if (!card || !bareTranslit(card.translit)) return;
+    const fb = $('#fb'); if (!fb || !/💡/.test(fb.innerHTML)) return;   // подсказку уже сменил результат
+    fb.innerHTML = wordHintHTML(word, card, rec);
+  } catch(_) {}
+}
 function lockHint(){ try { const h = $('#hint'); if (h) h.style.display = 'none'; } catch(_) {} }
 /* 4.78: значимые слова перевода — по ним сверяются два источника. Служебные слова и скобки
    отбрасываются: «штатив/подставка» против «станок» должны разойтись, а «книга» против
