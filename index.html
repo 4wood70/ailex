@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v135';
+const APP_VERSION = 'v136';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -350,6 +350,7 @@ const UI_EXTRA = [
     'Скорость:',
     /* 4.70: неудачный разбор слова. */
     'Не удалось получить разбор',
+    'отделяемая часть глагола',
     'Нажмите слово ещё раз, чтобы повторить.',
     /* 4.65: подсказка о раскладке целевого языка. */
     'Нужна клавиатура изучаемого языка',
@@ -2487,6 +2488,22 @@ const CORE_RULES = 'Слова упорядочь по употребимост�
   + 'is_irregular=true ТОЛЬКО для неправильных (сильных) глаголов. article заполняется только для существительных; если в целевом языке артиклей нет — пусто. '
   + 'cefr — уровень, начиная с которого слово уместно. Транскрипция — ТОЛЬКО буквами native_lang в квадратных скобках, IPA СТРОГО ЗАПРЕЩЁН (НЕ копируй письменность этой инструкции — пиши буквами native_lang). '
   + 'Исключи всё, что перечислено в exclude. Никаких технических кодов, аббревиатур и цифровых команд — только обычные слова целевого языка.';
+/* 4.80 (QUEUE-248, пункт 8 очереди v136): КАЧЕСТВО ТЕРМИНОВ ПРОФЕССИОНАЛЬНОГО СЛОЯ.
+   Два подтверждённых случая, оба ЧПУ: der Ständer → «станок» (на деле стойка/подставка) и
+   Fusskreis → «основная окружность» (на деле окружность впадин). Термин по интересам приходит
+   БЕЗ проверки на однозначность, а вокруг него дальше строится задание с обязательным
+   употреблением — ошибка не ученика, а входа. Языково-специфичного словаря терминов в код не
+   заведёшь (72 пары), поэтому единственный доступный рычаг — самопроверка модели обратным
+   переводом перед выдачей, тем же приёмом, что и узуальность фраз (QUEUE-34) и самопроверка
+   транскрипции по согласным (4.31): попросить конкретное действие, а не общее «будь точнее». */
+const CORE_INTERESTS_CHECK = 'ТЕРМИН ПРОФЕССИОНАЛЬНОГО СЛОЯ ОБЯЗАН БЫТЬ ОДНОЗНАЧНЫМ (критично): '
+  + 'прежде чем вписать слово в ответ, переведи его перевод (translation) ОБРАТНО на target_lang мысленно и сверь — '
+  + 'получится ли снова ИМЕННО term, а не другое, более частое слово той же темы? Если обратный перевод скорее даст '
+  + 'другое слово — это ложный друг переводчика или слишком широкий бытовой перевод специального термина; замени '
+  + 'translation на более точный (не «станок» для стойки станка, если «станок» на target_lang — отдельное, чаще '
+  + 'встречающееся слово; не общее название детали, если у неё есть собственный термин). Лучше отдать более редкое, '
+  + 'но точное слово, чем частое, но подходящее сразу трём разным деталям.';
+
 
 const Core = {
   _pf: false, _failed: false,
@@ -2543,7 +2560,8 @@ const Core = {
                      то есть модели запрещали бы возвращать ровно те слова, ради списка которых
                      партия и затевалась, и класс приходил бы дырявым. Повтор не страшен:
                      _add() дедуплицирует по _known(). */
-                  exclude: (o.capture ? [] : this._exclude()), rules:CORE_RULES };
+                  exclude: (o.capture ? [] : this._exclude()),
+                  rules: CORE_RULES + (o.layer === 'interests' ? ' ' + CORE_INTERESTS_CHECK : '') };
     if (o.layer) req.layer = o.layer;
     if (o.part)  req.part  = o.part;
     if (o.hint)  req.hint  = o.hint;
@@ -6601,6 +6619,61 @@ async function fillMissingTranslit(items) {
    и тап по ним проваливался в сеть — где упирался в лимит запросов или в таймаут.
    Приём тот же, что у `fillMissingTranslit`: код находит дыры, недостающее добирается ОДНИМ
    пакетным запросом при сборке урока. Запроса нет, если дыр нет; сбой урок не рушит. */
+/* 4.80 (пункт 6 очереди v136): ОТДЕЛЯЕМАЯ ПРИСТАВКА РАЗБИРАЕТСЯ ВМЕСТЕ СО СВОИМ ГЛАГОЛОМ.
+   «vor» в «Ich bereite das Schleifwerkzeug … vor» — часть vorbereiten, а не самостоятельное
+   слово; в отрыве от глагола оно ничего не значит, и модель на запрос «переведи слово vor»
+   отвечает отказом. Правило вычислимо в коде языково-нейтрально: если короткое слово, взятое
+   вместе с ДРУГИМ словом того же предложения (перед ним или после), совпадает с известным
+   словом Ядра или Словаря — перед нами не отдельное слово, а разделённая пара, и разбирать
+   надо базовый глагол. Проверка не завязана на немецкий — она просто ищет слепленную пару
+   среди слов уже известного языка, что работает для любого языка с раздельно пишущимися
+   приставками (нем., нидерл. и т.п.) и не даёт ложных срабатываний на языках без такого
+   явления: случайная склейка двух слов почти никогда не совпадает со словарной статьёй. */
+function combinedVerbHit(term, contextText){
+  const t = norm(stripArtG(String(term || '')));
+  if (!t || t.length > 5) return null;           // приставки короткие; длинное слово само по себе уже значимо
+  const toks = tokenize(contextText).filter(x => x && x !== t);
+  for (const other of toks) {
+    if (!other || other.length < 3) continue;
+    const a = t + other, b = other + t;
+    let hit = vocabHit(a) || vocabHit(b);
+    if (!hit) {
+      try {
+        const pool = (typeof Core !== 'undefined' && Core.list) ? Core.list() : [];
+        hit = pool.find(w => w && w.term && (sameStem(w.term, a) || sameStem(w.term, b)));
+      } catch(_) {}
+    }
+    /* Склейка обязана дать СЛОВО, которого нет ни в одной из частей по отдельности. Без этой
+       проверки поиск ловил сам себя: `sameStem` считает «tischder» родственным «Tisch», потому
+       что более короткое слово целиком лежит в начале склейки, — и обычное существительное
+       объявлялось приставкой соседнего слова. Найдено изолированным тестом на node. */
+    if (hit && !sameStem(hit.term, t) && !sameStem(hit.term, other)) return hit;
+  }
+  return null;
+}
+/* Слово, обнаруженное как разделённая пара, добавляется в глоссарий локально — без сети —
+   с прямым указанием, что это часть уже известного глагола. Вызывается ДО подсчёта дыр, чтобы
+   такие слова не уходили в fill_glossary и не встречались одиночным запросом на тап. */
+function resolveLocalCombos(item, textField){
+  try {
+    const key = textField || 'expected_target';
+    const text = String((item && item[key]) || '');
+    if (!text) return;
+    const miss = glossaryMissing(item, key);
+    if (!miss.length) return;
+    const cur = Array.isArray(item.glossary) ? item.glossary.slice() : [];
+    let changed = false;
+    miss.forEach(tk => {
+      if (cur.some(g => g && norm(stripArtG(g.term||'')) === tk)) return;
+      const hit = combinedVerbHit(tk, text);
+      if (!hit) return;
+      cur.push({ term: tk, translit: hit.translit || '',
+        translation: t('отделяемая часть глагола') + ' ' + hit.term });
+      changed = true;
+    });
+    if (changed) item.glossary = cur;
+  } catch(_) {}
+}
 function glossaryMissing(item, textField) {
   const text = String((item && item[textField || 'expected_target']) || '');
   if (!text) return [];
@@ -6648,6 +6721,7 @@ async function fillGlossaryGaps(items, textField, _pass) {
   const key = textField || 'expected_target';        // 4.67: у предложений повторения поле `sentence`
   const found = [];
   list.forEach((it, i) => {
+    resolveLocalCombos(it, key);          // 4.80: разделённые приставки — сначала локально, без сети
     const miss = glossaryMissing(it, key);
     if (miss.length) found.push({ i, sentence: it[key], words: miss });
   });
@@ -8427,7 +8501,7 @@ async function runQuest(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}" style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
+        ${useLineHTML(sc.answer_glossary)}
         ${sc.scaffold?`<div id="questScaffold" style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
@@ -8437,7 +8511,7 @@ async function runQuest(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}">${esc(g.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(g.translit))}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${meaningsLineHTML(sc.answer_glossary)}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
@@ -8718,6 +8792,19 @@ function tapAllWordsHTML(text) {
   }).join('');
 }
 
+/* 4.80 (QUEUE-229): строки «Используйте: …» и «📒 Значения: …» были скопированы в четыре места —
+   по два в квесте урока и в Суперквесте. Разметка одна и та же, значит и чиниться должна в одном
+   месте: то, что лежит в общей точке, правится один раз, то, что скопировано, расходится с каждым
+   касанием (ровно об этом просил владелец продукта после прогона v129). */
+function useLineHTML(glossary){
+  if (!glossary || !glossary.length) return '';
+  return `<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">${esc(t('Используйте:'))}</span> ${glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}" style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`;
+}
+function meaningsLineHTML(glossary){
+  if (!glossary || !glossary.length) return '';
+  return `<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}">${esc(g.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(g.translit))}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`;
+}
+
 // Поиск слова: сначала словарь, потом Gemini
 /* =====================================================================
    4.32 — КАРТОЧКА ТАПНУТОГО СЛОВА (QUEUE-75, QUEUE-76, QUEUE-77; билд v74)
@@ -8777,7 +8864,14 @@ const TAP_CARD_RESPONSE_SCHEMA = {
     forms:           { type:'STRING' },
     is_irregular:    { type:'BOOLEAN' }
   },
-  required: ['surface','term','translit','term_translit','translation','term_translation']
+  /* 4.80 (пункт 2 очереди v136): БЫЛО шесть обязательных полей — «Denke» падала целиком там,
+     где мягкий контракт fill_glossary (три поля, без responseSchema) для того же слова в тот
+     же момент отвечал нормально. Одна и та же модель, одна и та же нагрузка thinkingBudget:0 —
+     разная жёсткость контракта. Приложение и так не показывает карточку без term/translation
+     (см. fetchWordCard ниже), а транскрипции обеих форм дотягиваются отдельными узкими
+     запросами (translit/termtr) — их обязательность на входе только роняла весь ответ, ничего
+     не давая взамен. Обязательны теперь только те поля, без которых карточки нет вообще. */
+  required: ['surface','term','translation']
 };
 
 const TAP_CARD_RULES =
@@ -8867,7 +8961,32 @@ function tapNeedsCard(w) {
    Короткая просьба исполняется несравнимо надёжнее длинной. */
 const TRANSLIT_ONLY_SCHEMA = '{"translit":"звучание слова буквами native_lang, без скобок и без знаков IPA"}';
 const TRANSLIT_ONLY_RESPONSE_SCHEMA = { type:'OBJECT', properties:{ translit:{ type:'STRING' } }, required:['translit'] };
+/* 4.80 (QUEUE-253, пункт 7 очереди v136): ДЛИННЫЕ СОСТАВНЫЕ МОЛЧАТ ДАЖЕ НА ГОЛОМ ЗАПРОСЕ.
+   `Zugabteil`, `Fahrkartenautomat`, `Aussendurchmesser` не получали звучания устойчиво даже
+   через узкий контракт из одного поля (4.76) — просьба к модели «раздели и склей сам»
+   протекает так же, как любое правило, живущее только в промпте (4.51). Раз модель просьбу не
+   исполняет, это делает код: слово ищется как две уже известные части — по Ядру и Словарю,
+   у которых звучание уже есть. Признак языково-нейтральный (это тот же приём, что у
+   `nounArticleFor` для рода составных): деление НЕ привязано к немецкому конкретно, оно просто
+   ищет две подряд идущие подстроки, каждая из которых сама по себе — известное слово. */
+function translitBySplit(word){
+  try {
+    const w = norm(stripArtG(String(word || '')));
+    if (w.length < 8) return '';                 // короткое слово раскладывать не на что
+    const pool = [].concat((typeof Core!=='undefined' && Core.list) ? Core.list() : [], (DB && DB.vocab) || [])
+      .filter(x => x && x.term && bareTranslit(x.translit));
+    if (!pool.length) return '';
+    const byKey = new Map();
+    pool.forEach(x => { const k = norm(stripArtG(x.term)); if (k && !byKey.has(k)) byKey.set(k, x); });
+    for (let cut = 3; cut <= w.length - 3; cut++) {
+      const head = byKey.get(w.slice(0, cut)), tail = byKey.get(w.slice(cut));
+      if (head && tail) return bareTranslit(head.translit) + bareTranslit(tail.translit);
+    }
+    return '';
+  } catch(_) { return ''; }
+}
 async function fetchTranslitOnly(word, sentence){
+  let tr = '';
   try {
     const p = DB.profile;
     const out = await Gemini.call({
@@ -8878,10 +8997,11 @@ async function fetchTranslitOnly(word, sentence){
            + 'КАЖДЫЙ согласный слова обязан быть отражён: Abenteuer → абэнтойэр, а НЕ абэнойэр. '
            + 'Длинное составное слово раздели на основы, запиши звучание каждой и соедини в одну строку. Пустая строка недопустима.'
     }, TRANSLIT_ONLY_SCHEMA, { responseSchema: TRANSLIT_ONLY_RESPONSE_SCHEMA });
-    const tr = bareTranslit(out && out.translit);
     // isBadTranslit ждёт КОД языка (сверяется с NONLATIN_NATIVE), а не человекочитаемое имя
-    return (tr && !isBadTranslit(tr, p.nativeLang)) ? tr : '';
-  } catch(_) { return ''; }
+    tr = bareTranslit(out && out.translit);
+    if (tr && isBadTranslit(tr, p.nativeLang)) tr = '';
+  } catch(_) { tr = ''; }
+  return tr || translitBySplit(word);
 }
 
 async function fetchWordCard(token, sentence, strict) {
@@ -9212,20 +9332,36 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
   })();
   // QUEUE-19: добавляем sceneWords в кэш сцены
   if (sceneWords && L) { if (!L.encounteredCache) L.encounteredCache = []; sceneWords.forEach(w=>{ if(w&&w.term&&!L.encounteredCache.find(x=>norm(x.term)===norm(w.term))) L.encounteredCache.push(w); }); }
+  /* 4.80: сопоставление сведено к ОДНОЙ функции (`glossaryHit`) во всех четырёх источниках —
+     раньше здесь стоял точный `tapMatch`, а терпимое к основе сравнение (родственная форма,
+     многословная запись) жило только в подсказке 💡. Расхождение и роняло тап на «denke» при
+     глоссарии «denken»: слово было под рукой, но не находилось, и уходило в сеть, где падало
+     на жёстком контракте карточки. */
   // 1. Слова ТЕКУЩЕЙ сцены — контекст важнее общего словаря (QUEUE-19: иначе 'plane' → 'самолёт')
-  const sc0 = Array.isArray(sceneWords) ? sceneWords.find(w => tapMatch(w, term)) : null;
-  if (sc0 && tapEntryReady(sc0)) { showTapPopup(sc0, anchorEl, ctx, term); return; }
+  const sc0 = Array.isArray(sceneWords) ? glossaryHit(sceneWords, term) : null;
+  if (sc0 && tapEntryReady(sc0)) { saveTappedWord(sc0, term); showTapPopup(sc0, anchorEl, ctx, term); return; }
   // 2. Словарь пользователя. Показываем только полную запись; неполную дозаполняет Gemini.
-  const found = DB.vocab.find(v => tapMatch(v, term));
+  const found = glossaryHit(DB.vocab, term);
   if (found && tapEntryReady(found)) { showTapPopup(found, anchorEl, ctx, term); return; }
   // 3. encountered_words текущего урока (сохранены в L.encounteredCache)
-  const enc = (L && L.encounteredCache) ? L.encounteredCache.find(w => tapMatch(w, term)) : null;
-  if (enc && tapEntryReady(enc)) { showTapPopup(enc, anchorEl, ctx, term); return; }
+  const enc = (L && L.encounteredCache) ? glossaryHit(L.encounteredCache, term) : null;
+  if (enc && tapEntryReady(enc)) { saveTappedWord(enc, term); showTapPopup(enc, anchorEl, ctx, term); return; }
   // 4. Ядро языка (QUEUE-69): закрытые классы — предлоги, союзы, частицы, местоимения, артикли —
   // сгенерированы при создании профиля и лежат локально. Тап по служебному слову отвечает
   // мгновенно, без запроса к Gemini и без записи в Словарь. Контекстное значение — по 📘.
-  const inCore = (typeof Core!=='undefined' && Core.list) ? Core.list().find(w => tapMatch(w, term)) : null;
+  const inCore = (typeof Core!=='undefined' && Core.list) ? glossaryHit(Core.list(), term) : null;
   if (inCore && tapEntryReady(inCore)) { showTapPopup(inCore, anchorEl, ctx, term); return; }
+  /* 4.5. Отделяемая приставка (пункт 6 очереди v136): слово само по себе ничего не значит, но
+     вместе с соседним словом ЭТОГО предложения складывается в известный глагол — «vor» +
+     «bereite» = «vorbereiten». Проверяется до сети, чтобы не запрашивать перевод обрубка,
+     на который модель честно не может ответить. */
+  const combo = ctx ? combinedVerbHit(term, ctx) : null;
+  if (combo) {
+    const card = { ...combo, surface: term,
+      morph: (combo.morph ? combo.morph + ' · ' : '') + t('отделяемая часть глагола') + ' ' + combo.term };
+    showTapPopup(card, anchorEl, ctx, term);
+    return;
+  }
   /* 4.62: 5. Кэш карточек форм — тап по уже разобранной форме отвечает мгновенно и без сети.
      Уровень стоит ПОСЛЕ Ядра и Словаря, потому что те дают словарную статью, а здесь лежит
      разбор конкретной формы из текста — то, что вывести локально нельзя. */
@@ -9234,7 +9370,7 @@ async function lookupAndShowWord(raw, anchorEl, sceneWords) {
      попап уже делает ровно то же по `tapNeedsCard` (QUEUE-77). Вместе с повтором внутри
      `fetchWordCard` получалось до трёх запросов на одно нажатие — те самые три-пять секунд.
      Показ неполной карточки остаётся мгновенным, добор делает попап, и только он. */
-  if (cached) { showTapPopup(cached, anchorEl, ctx, term); return; }
+  if (cached) { saveTappedWord(cached, term); showTapPopup(cached, anchorEl, ctx, term); return; }
   // 6. Запрашиваем Gemini — показать нечего, ждём под лоадером
   const bar = document.getElementById('tapOverlay'); if (bar) bar.remove();
   const loading = document.createElement('div'); loading.id = 'tapOverlay';
@@ -9481,9 +9617,18 @@ function vocabHit(form){
       || DB.vocab.find(v => sameStem(v.term, f))
       || null;
 }
+/* 4.80 (QUEUE-229 + пункт 2/4/5 очереди v136): ОДНА ФУНКЦИЯ СОПОСТАВЛЕНИЯ ВМЕСТО ДВУХ.
+   `glossaryHit` (терпима к основе и многословным записям) жила только в подсказке 💡;
+   тап по слову сцены/квеста сравнивал ТОЧНЫМ `tapMatch` — отсюда «denke» не находил в
+   глоссарии «denken» (родственная форма, но не то же написание) и уходил в сеть, где падал
+   на жёстком контракте карточки (пункт 2). Добавлено то, что раньше умел только `tapMatch`:
+   точное совпадение без снятия артикля и запомненные словоформы (`surfaces`). */
 function glossaryHit(glossary, form){
   const f = norm(stripArtG(form));
-  let all = (glossary||[]).filter(g => g && g.term && norm(stripArtG(g.term)) === f);
+  const rawF = norm(form);
+  let all = (glossary||[]).filter(g => g && g.term
+    && (norm(g.term) === rawF || norm(stripArtG(g.term)) === f
+        || (Array.isArray(g.surfaces) && g.surfaces.indexOf(rawF) >= 0)));
   /* 4.77 (QUEUE-245): кусок из нескольких слов ищется ещё и по своему главному слову. В «собери
      фразу» набор строит приложение из эталона, и кусок приходит целиком — «Die Reisenden».
      В глоссарии же запись может лежать под одним словом, и тогда совпадения не было ни в одну
@@ -9746,7 +9891,14 @@ function showTapPopup(w, anchorEl, ctx, tapped) {
   render();
   // QUEUE-77: разбор формы не требует второго тапа. Если запись сделана до 4.32 —
   // карточка дозаполняется в фоне и обновляется на месте; экран не блокируется.
-  if (tapNeedsCard(w)) {
+  /* 4.80 (пункт 4 очереди v136): ПРОВАЛ ТОЖЕ ЗАСЛУЖИВАЕТ ОДНУ ПОПЫТКУ ПОЧИНКИ.
+     `tapNeedsCard` нарочно отдаёт false для `w.failed` — провал не карточка, чинить в нём
+     нечего своими полями. Но это же исключало провал и из фонового дозапроса: карточка,
+     не найденная локально и упавшая в сети, оставалась висеть с «Не удалось получить разбор»
+     НАВСЕГДА, даже если рядом человек нажимал 📘 и получал объяснение по тому же слову —
+     провал и успех уживались на одном экране. `mergeWordCard` и так снимает `failed` при
+     удачном дозапросе (4.76) — не хватало только повода его вызвать. */
+  if (tapNeedsCard(w) || w.failed) {
     (async () => {
       const fresh = await CardCache.load(tok, ctx);
       if (!fresh) return;
@@ -10133,7 +10285,7 @@ async function runSuperquestAct(cfg) {
         ${/* 4.42: требуемые слова — В САМОМ УСЛОВИИ, до поля ввода. Раньше они стояли мелким
              шрифтом ПОД полем, уже после того как человек напечатал ответ: требование было не
              видно там, где принимается решение, и синоним засчитывался ошибкой без вины ученика. */''}
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div style="margin:6px 0 2px;font-size:15px;line-height:2"><span style="color:var(--dim)">Используйте:</span> ${sc.answer_glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}" style="color:var(--ink)">${esc(g.term)}</b>`+sayBtn(g.term)).join(', ')}</div>`:''}
+        ${useLineHTML(sc.answer_glossary)}
         ${sc.scaffold?`<div style="margin:8px 0;padding:8px 10px;background:var(--card2,rgba(255,255,255,.05));border-radius:8px;font-size:15px">
           <span style="color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em">Каркас:</span><br>
           ${sc.scaffold.split('___').map((part,i,arr)=>
@@ -10143,7 +10295,7 @@ async function runSuperquestAct(cfg) {
           ).join('')}
         </div>`:''}
         <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Ваша фраза…"></textarea>
-        ${(sc.answer_glossary&&sc.answer_glossary.length)?`<div class="note" style="margin:8px 0;line-height:1.7">${lbl('📒 Значения:')} ${sc.answer_glossary.map(g=>`<b class="tapall" data-word="${esc(g.term)}">${esc(g.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(g.translit))}</span> — ${esc(g.translation||'')}`).join(' · ')}</div>`:''}
+        ${meaningsLineHTML(sc.answer_glossary)}
         <div class="feedback" id="fb"></div>
         <div class="btn-row" style="margin-top:12px">
           ${(L&&L.grammar)?`<button class="btn btn-ghost btn-ico" id="qrule" title="Правило" aria-label="Правило">📐</button>`:''}
