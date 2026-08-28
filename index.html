@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v136';
+const APP_VERSION = 'v137';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -1972,7 +1972,9 @@ const Gemini = {
   async call(contract, schema, opts) {
     const key = Storage.getKey();
     if (!key) throw new Error('NO_KEY');
-    const useSchema = !!(opts && opts.responseSchema) && !this.noSchema;
+    /* 4.81: признак «без схемы» нужен и разово, для одного запроса, а не только глобально —
+       QUEUE-253 проверяет, отвечает ли модель на голую просьбу там, где молчит под схемой. */
+    const useSchema = !!(opts && opts.responseSchema) && !this.noSchema && !(opts && opts.noSchema);
     const body = {
       systemInstruction: { parts: [{ text: this.SYSTEM }] },
       contents: [{ role:'user', parts: [{ text:
@@ -4333,6 +4335,10 @@ function mainMenu() {
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
   const next = DB.nextStage;
+  /* 4.81 (QUEUE-252): слежение за запасом автоматическое — главное меню и есть та точка, через
+     которую человек проходит перед каждым уроком. Вызов не ожидается: меню рисуется сразу,
+     сборка идёт фоном. */
+  try { LessonQueue.refill(); } catch(_) {}
   const isA0   = next.startsWith('A0.');
   const isExam = next.startsWith('EXAM_');
   const words = DB.vocab.length, mastered = DB.vocab.filter(w=>w.status==='освоено').length;
@@ -5515,9 +5521,9 @@ async function legacyVocabPortion(p, lvl, survN, known) {
   return words;
 }
 
-async function startLesson(code) {
+async function startLesson(code, _prefetch) {
   // --- восстановление незавершённого урока из снимка (v45, слоты раздельные с 4.29) ---
-  const cached = LessonCache.lesson(code);
+  const cached = _prefetch ? null : LessonCache.lesson(code);
   if (cached && cached.code === code && cached.i > 0) {
     L = cached;
     // если chunk2 уже был готов — восстанавливаем данные; иначе перезапускаем фоновую загрузку
@@ -5530,9 +5536,22 @@ async function startLesson(code) {
     renderStep();
     return;
   }
-  LessonCache.clearLesson(code);   // 4.29: этот урок начинается заново — прочие эпизоды не трогаем
+  /* 4.81 (QUEUE-252): ГОТОВЫЙ ЗАПАС ОТКРЫВАЕТСЯ МГНОВЕННО.
+     Если этот урок уже собран фоном — он полон (слова, порция 2, глоссарии проверены), и
+     ждать нечего. Ожидание в десять секунд перед уроком — то, на чём обычный ученик бросает
+     приложение; ради этого пункт и делался. */
+  if (!_prefetch) {
+    const ready = LessonQueue.take(code);
+    if (ready) {
+      L = ready;
+      renderStep();
+      LessonQueue.refill();          // запас пополняется сразу, пока человек занимается
+      return;
+    }
+  }
+  if (!_prefetch) LessonCache.clearLesson(code);   // 4.29: этот урок начинается заново — прочие эпизоды не трогаем
   const p = DB.profile, lvl = parseCode(code).lvl;
-  Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…');
+  if (!_prefetch) Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…');
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);   // строки — список исключений резервного генератора
@@ -5604,7 +5623,7 @@ async function startLesson(code) {
   steps.push({ t:'quest', n:`<span>Задание</span> 21/${totalDrills} · Final Challenge` });
   if (hasDictation) steps.push({ t:'dictation', n:`<span>Задание</span> 22/22` });
 
-  L = { code, words, steps, i:0, grammar:null, constructs:null, reviewDrills:null,
+  const LS = { code, words, steps, i:0, grammar:null, constructs:null, reviewDrills:null,
         reviewWords: recapItems.map(w=>({ term:w.term, translation:w.translation||'' })),
         chunk2:{state:'idle',promise:null,err:null},
         lvl, known,
@@ -5618,6 +5637,10 @@ async function startLesson(code) {
         wordErr:{}, firstTryDone:{}, retryPlanned:{},
         situation: lessonSituation(code),   // 4.73: бытовая ситуация урока — контекст верхнего уровня
         _contentBuild: APP_VERSION };
+  /* 4.81 (QUEUE-252): при обычном старте урок становится текущим НЕМЕДЛЕННО — порядок шагов и
+     показ от заготовки не зависят. При заготовке `L` не трогается вовсе: в этом и была вся
+     опасность пункта, и потому объект собирается локально, а глобальным не становится. */
+  if (!_prefetch) L = LS;
   /* =====================================================================
      4.56 (v109): КАРТОЧКИ СЛОВ ЧИНЯТСЯ ДО ГЕНЕРАЦИИ, А НЕ ПОСЛЕ.
      `ensureLessonCards` написана в v99 и всё это время НЕ ВЫЗЫВАЛАСЬ ниоткуда — мёртвый код.
@@ -5630,16 +5653,82 @@ async function startLesson(code) {
      Порция 2 ждёт починку; порядок шагов урока от этого не меняется, ученик успевает пройти
      повторение и презентацию, пока идёт фоновая работа.
      ===================================================================== */
-  (async () => {
+  const prepare = (async () => {
     try {
       const fixed = await ensureLessonCards(words);
-      if (Array.isArray(fixed) && fixed.length) L.words = fixed;
-      L.known = await ensureKnownArticles(knownRecs);
+      if (Array.isArray(fixed) && fixed.length) LS.words = fixed;
+      LS.known = await ensureKnownArticles(knownRecs);
     } catch(e) { console.warn('ensureLessonCards:', e && e.message); }
-    fetchLessonChunk2();   // порция 2 — в фоне, пока ученик делает повторение/презентацию/узнавание
+    return fetchLessonChunk2(LS);   // порция 2 — в свой объект урока, а не в глобальный
   })();
+  /* Заготовка ждёт полной готовности: урок считается готовым только когда собрана порция 2 и
+     проверена полнота слов (QUEUE-251). Наполовину собранный запас — это перенос дыры из
+     середины урока в фон, а не заготовка. */
+  if (_prefetch) { await prepare; return LS; }
   renderStep();
 }
+
+/* =====================================================================
+   4.81 (QUEUE-252) — ЗАПАС УРОКОВ, СОБРАННЫХ ЗАРАНЕЕ.
+   Решение владельца продукта: два урока держатся готовыми фоном, при любой сети, слежение
+   за запасом автоматическое. Первый урок после установки открывается, как только готов он
+   один; следующие собираются во время его прохождения, прозрачно для человека. Трафик
+   копеечный, ключ бесплатный, а ожидание перед уроком — то, на чём ученик бросает приложение.
+   Оговорка, названная сразу: проверка свободной фразы и следующая сцена квеста зависят от
+   ответа ученика и заранее не считаются — там ожидание остаётся, и это честно.
+   Запас живёт в памяти сеанса, а не в хранилище: собранный урок содержит слова, которые в
+   Словаре ещё не отмечены показанными, и его переживание перезапуска рассинхронизировало бы
+   прогресс. Потеря запаса при перезапуске стоит одной обычной сборки.
+   ===================================================================== */
+const LessonQueue = {
+  DEPTH: 2,
+  _ready: {},        // code → собранный урок
+  _busy: {},         // code → идёт сборка
+  _key(){ return (DB.profile && DB.profile.id) || ''; },
+  _owner: '',
+  _reset(){ const k = this._key(); if (k !== this._owner) { this._ready = {}; this._busy = {}; this._owner = k; } },
+  take(code){
+    this._reset();
+    const l = this._ready[code];
+    if (!l) return null;
+    delete this._ready[code];
+    /* Билд мог смениться, пока урок лежал в запасе: содержимое собрано прежней методикой.
+       Тот же признак, что у снимка незавершённого урока (4.53). */
+    if (l._contentBuild !== APP_VERSION) return null;
+    console.log('[AILEX] урок взят из запаса:', code);
+    return l;
+  },
+  /* Какие уроки готовить: следующий по курсу и следующий за ним. Порядок курса принадлежит
+     приложению (`nextAfterLesson`) — заготовка не выдумывает свой, иначе запас разошёлся бы
+     с курсом при первой же смене методики. Экзамены и уроки A0 не заготавливаются: у них
+     свои сборщики (`startExam`, `startA0Lesson`), и содержимое A0 живёт в снимке. */
+  _codes(){
+    const out = [];
+    try {
+      let code = String(DB.nextStage || '');
+      for (let i = 0; i < this.DEPTH && code; i++) {
+        if (code.startsWith('EXAM_') || code.startsWith('A0.')) break;
+        out.push(code);
+        code = String(nextAfterLesson(code) || '');
+      }
+    } catch(_) {}
+    return out;
+  },
+  async refill(){
+    this._reset();
+    if (!Storage.getKey()) return;               // без ключа фоновая сборка бессмысленна
+    for (const code of this._codes()) {
+      if (this._ready[code] || this._busy[code]) continue;
+      if (LessonCache.lesson(code)) continue;    // незавершённый урок важнее заготовки
+      this._busy[code] = true;
+      try {
+        const l = await startLesson(code, true);
+        if (l) { this._ready[code] = l; console.log('[AILEX] урок заготовлен:', code); }
+      } catch(e) { console.warn('[AILEX] заготовка не удалась:', code, e && e.message); }
+      finally { delete this._busy[code]; }
+    }
+  }
+};
 
 // Порция 2: задания на построение фраз + правило урока. Грузится в фоне, повторяется локально при сбое.
 /* QUEUE-66: вторая линия обороны по уровню для заданий урока.
@@ -6046,11 +6135,17 @@ async function repairTargets(items, words) {
   return list;
 }
 
-function fetchLessonChunk2() {
-  if (!L) return;
-  L.chunk2.state = 'loading'; L.chunk2.err = null;
-  const p = DB.profile, lvl = L.lvl, words = L.words, known = L.known;
-  L.chunk2.promise = (async () => {
+/* 4.81 (QUEUE-252): ПОРЦИЯ 2 СОБИРАЕТСЯ В ПЕРЕДАННЫЙ УРОК, А НЕ В ГЛОБАЛЬНЫЙ `L`.
+   Заготовка урока наперёд невозможна, пока сборка пишет результат в `L`: фоновая сборка
+   следующего урока затирала бы текущий прямо под руками ученика. Это и есть та гонка, из-за
+   которой пункт откладывался. Развязка механическая и полная: функция получает объект урока,
+   по умолчанию — текущий. Ни одной записи в `L` внутри не остаётся. */
+function fetchLessonChunk2(target) {
+  const T = target || (typeof L !== 'undefined' ? L : null);
+  if (!T) return;
+  T.chunk2.state = 'loading'; T.chunk2.err = null;
+  const p = DB.profile, lvl = T.lvl, words = T.words, known = T.known;
+  T.chunk2.promise = (async () => {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
       topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
@@ -6095,30 +6190,30 @@ function fetchLessonChunk2() {
     await fillMissingTranslit(constructs);
     await fillGlossaryGaps(constructs);      // 4.65: тап по любому слову эталона отвечает локально
     if (constructs.length < DRILL_POOL) console.warn('[AILEX] пул неполон:', constructs.length, 'из', DRILL_POOL, '— заданий будет меньше, повторов не будет');
-    L.constructs = constructs;
+    T.constructs = constructs;
     // QUEUE-07: пул фраз = новые от Gemini + старые из словаря (ротация)
     const newPhrases = (r2.everyday_phrases||[]).filter(f=>f && f.phrase).slice(0,3);
     const savedPhrases = (DB.vocab||[]).filter(v=>v.source==='phrase' && v.term)
       .sort(()=>Math.random()-0.5).slice(0, Math.max(0, 3-newPhrases.length))
       .map(v=>({phrase:v.term, translit:v.translit||'', translation:v.translation||'', when:v.note||''}));
-    L.phrases = [...newPhrases, ...savedPhrases].slice(0,3);   // всегда 3 фразы
+    T.phrases = [...newPhrases, ...savedPhrases].slice(0,3);   // всегда 3 фразы
     // пункт 12: короткие предложения для слов ПОВТОРЕНИЯ — чтобы Recap шёл в контексте со скелетами
-    if (L.reviewWords && L.reviewWords.length) {
+    if (T.reviewWords && T.reviewWords.length) {
       try {
         const rv = await Gemini.call({
           task:'generate_review_sentences', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
-          review_words: L.reviewWords.map(w=>({ word:w.term, meaning:w.translation||'' })), count: L.reviewWords.length,
+          review_words: T.reviewWords.map(w=>({ word:w.term, meaning:w.translation||'' })), count: T.reviewWords.length,
           rules:'Для КАЖДОГО объекта из review_words верни короткое естественное предложение на целевом языке, СОДЕРЖАЩЕЕ слово word в ЗНАЧЕНИИ meaning. КРИТИЧНО (QUEUE-40): у слова может быть несколько значений — используй ИМЕННО meaning, и весь смысл предложения обязан соответствовать этому значению (если meaning = «патрон (токарный)» — предложение про станок/деталь, НЕ про корм для собаки; если meaning = «корм» — про животное). Предложение строго по уровню CEFR. word — то слово из review_words, к которому относится предложение. '
             + 'GLOSSARY — ВСЕ СЛОВА ПРЕДЛОЖЕНИЯ (критично, 4.64): в glossary помести КАЖДОЕ слово из sentence РОВНО В ТОЙ ФОРМЕ, в какой оно там стоит («schicke», а НЕ «schicken»), включая служебные (артикли, предлоги, союзы), каждое: слово + транскрипция родными буквами + перевод. Транскрипция относится ИМЕННО к этой форме. Приложение показывает её ученику как подсказку и как перевод по тапу, поэтому пропуск слова оставляет ученика без подсказки. '
             + 'ПЕРЕВОД ПОЛНЫЙ И ТОЧНЫЙ (критично, 4.53): translation обязан передавать ВЕСЬ смысл sentence — модальность (must/должен, can/может, want/хочет), время, отрицание, каждое смысловое слово. Терять модальный глагол ЗАПРЕЩЕНО: «Das Baby muss weinen» переводится «Младенец должен плакать», а НЕ «Младенец плачет» — это разные предложения с разным смыслом. Проверь перед ответом: если убрать из sentence модальный/вспомогательный глагол, изменится ли translation — если нет, перевод неполный, исправь.'
         },
         '{"items":[{"word":"слово из review_words","sentence":"короткое предложение на целевом, содержащее это слово","translation":"перевод предложения на родной, полностью передающий смысл — включая модальность и время","glossary":[{"term":"слово из sentence в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}');
-        L.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
+        T.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
         /* 4.67: та же проверка полноты, что у заданий на построение. В v120 её вызвали только
            для них, хотя глоссарий предложений повторения появился тем же билдом (4.64) — и
            подсказка в R-заданиях осталась без звучания там, где слово в глоссарий не попало. */
-        await fillGlossaryGaps(L.reviewDrills, 'sentence');
-      } catch(_) { L.reviewDrills = []; }
+        await fillGlossaryGaps(T.reviewDrills, 'sentence');
+      } catch(_) { T.reviewDrills = []; }
     }
     try {
       const knownRules = (DB.rules||[]).map(r=>r.title).slice(-40);
@@ -6126,7 +6221,7 @@ function fetchLessonChunk2() {
       // 4.30: тему выбирает ПРИЛОЖЕНИЕ по карте грамматики, модель её только раскрывает.
       // Карта не собралась (сбой генерации / старый профиль) — прежний путь, выбор за моделью.
       const theme = GrammarCore.next(lvl);
-      if (theme && theme.title) L.theme = theme.title;   // 4.41: тема доступна заданиям (QUEUE-106)
+      if (theme && theme.title) T.theme = theme.title;   // 4.41: тема доступна заданиям (QUEUE-106)
       const themeReq = theme
         ? { theme_order: theme.order, theme_title: theme.title, theme_gist: theme.gist }
         : {};
@@ -6146,12 +6241,12 @@ function fetchLessonChunk2() {
       '{"has_new_rule":true,"title":"короткое название на родном","summary":"суть в 1-2 фразы на родном","categories":["одна или несколько из: Артикли, Существительные, Глаголы, Времена, Падежи, Предлоги, Порядок слов, Местоимения, Прочее"],"note":"особенность или исключение одной фразой на родном, пусто если нет","table":[{"label":"подпись формы на родном: я / он, она, оно / Dativ — кому/чему","form":"форма на целевом","translit":"[транскрипция родными буквами]","translation":"перевод"}],"examples":[{"target":"пример на целевом","translit":"[транскрипция]","translation":"перевод"}],"cefr":"уровень"}');
       if (rg && rg.has_new_rule && rg.title && !(DB.rules||[]).some(r=>norm(r.title)===norm(rg.title))) {
         if (theme) rg._theme = theme.order;      // 4.30: отметим тему пройденной, когда правило реально показано
-        L.grammar = rg;
+        T.grammar = rg;
       }
     } catch(_) { /* правило необязательно */ }
-    L.chunk2.state = 'ready';
-  })().catch(e => { L.chunk2.state = 'error'; L.chunk2.err = e; throw e; });
-  return L.chunk2.promise;
+    T.chunk2.state = 'ready';
+  })().catch(e => { T.chunk2.state = 'error'; T.chunk2.err = e; throw e; });
+  return T.chunk2.promise;
 }
 
 // Гарантирует готовность порции 2 к моменту, когда она нужна (построение фраз / правило).
@@ -8710,6 +8805,9 @@ async function finishLesson() {
 
   // --- завершающий экран (5.1): простая фраза, крупные кнопки ---
   const code = L.code, hintsUsed = L.hints, dict = L.dictation || null; L = null;
+  /* 4.81 (QUEUE-252): урок пройден, курс сдвинулся — собираем запас под новый рубеж, пока
+     человек читает итоги. `L` уже снят, гонки нет по построению. */
+  try { LessonQueue.refill(); } catch(_) {}
   Screen.show(`
     <div class="eyebrow">${lbl('Точность:')} ${Math.round(acc*100)}% · ${lbl('подсказок:')} ${hintsUsed}</div>
     <h1>${lbl('Урок')} ${esc(code)} ${lbl('завершён, прогресс сохранён.')}</h1>
@@ -8898,6 +8996,33 @@ const TAP_CARD_RULES =
    а не просьба к модели: приложение знает, по чему тапнули, и не имеет права показать
    вместо этого другое слово. Проверка нарочно терпима к аблауту (liest → lesen):
    помимо общего начала принимается совпадение по полю forms из Ядра языка/Словаря. */
+/* 4.81 (QUEUE-259): РОДСТВО КОРНЯ — НЕ ТО ЖЕ, ЧТО СЛОВАРНАЯ ФОРМА ЭТОГО СЛОВА.
+   Прогон v136: тап по наречию `sorgfältig` («säubere alles sorgfältig» — «тщательно») открыл
+   карточку с словарной формой `Sorgfalt` и переводом существительного — «тщательность,
+   аккуратность, усердие». Ученик читает «тщательно», а заучивает «тщательность». Проверка
+   родства пропустила: ей хватало трёх общих букв в начале, а `sorgfältig`/`Sorgfalt` совпадают
+   восемью. Корень действительно общий — но это СЛОВООБРАЗОВАНИЕ, а не словоизменение: у наречия
+   своя словарная форма, и она равна самому слову.
+   Признак вычислим кодом и языково-нейтрален: словарная форма ОБЯЗАНА быть той же части речи,
+   что и слово в тексте. Часть речи модель уже присылает — она просто ни с чем не сверялась.
+   Правило 4.78 этот случай не ловит: там сравниваются два перевода, а здесь неверна сама
+   словарная форма, и оба перевода ей соответствуют. */
+function posMismatch(w){
+  if (!w || !w.term || !w.surface) return false;
+  const a = norm(stripArtG(w.term)), b = norm(stripArtG(w.surface));
+  if (!a || !b || a === b) return false;
+  const pos = String(w.part_of_speech || '').toLowerCase();
+  if (!pos) return false;
+  /* Существительное отличимо от прочих частей речи в письме языков с заглавной буквой у имён
+     (нем., люксембургский) и по метке части речи везде. Берём общий признак: если модель
+     назвала часть речи НЕ существительным, а словарная форма выглядит существительным
+     (или наоборот), — это переход между частями речи, а не форма того же слова. */
+  const isNoun = p => /noun|subst|существ/.test(p);
+  const termLooksNoun = /^[A-ZÄÖÜ]/.test(String(w.term).trim());
+  const faceLooksNoun = /^[A-ZÄÖÜ]/.test(String(w.surface).trim());
+  if (!isNoun(pos) && termLooksNoun && !faceLooksNoun) return true;
+  return false;
+}
 function tapRelated(tapped, dict) {
   const a = norm(stripArtG(tapped)), b = norm(stripArtG(dict));
   if (!a || !b) return false;
@@ -8985,7 +9110,7 @@ function translitBySplit(word){
     return '';
   } catch(_) { return ''; }
 }
-async function fetchTranslitOnly(word, sentence){
+async function fetchTranslitOnly(word, sentence, _depth){
   let tr = '';
   try {
     const p = DB.profile;
@@ -9001,7 +9126,43 @@ async function fetchTranslitOnly(word, sentence){
     tr = bareTranslit(out && out.translit);
     if (tr && isBadTranslit(tr, p.nativeLang)) tr = '';
   } catch(_) { tr = ''; }
-  return tr || translitBySplit(word);
+  if (tr) return tr;
+  /* 4.81 (QUEUE-253): ЗАХОД ВТОРОЙ — ГОЛЫЙ ЗАПРОС ВНЕ ВСЯКОГО КОНТРАКТА.
+     `Zugabteil`, `Fahrkartenautomat`, `Aussendurchmesser` не получали звучания ни от большого
+     контракта карточки, ни от узкого из одного поля со схемой. Оставалось невыясненным, мешает
+     ли нагрузка контракта или сама длина слова. Проверяем прямо в работе: запрос БЕЗ
+     `responseSchema` и без JSON-обвязки — просто просьба вернуть строку. Если здесь звучание
+     появляется, значит дело в схеме, а не в слове, и это видно в журнале.
+     `noSchema` — тот же признак, которым Gemini.call уже умеет отключать схему. */
+  try {
+    const p = DB.profile;
+    const raw = await Gemini.call({
+      task:'transliterate_bare', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
+      word: String(word || ''),
+      rules: 'Ответь ОДНОЙ строкой: как звучит слово word, записанное буквами native_lang. Без пояснений, без скобок, без перевода.'
+    }, TRANSLIT_ONLY_SCHEMA, { responseSchema: TRANSLIT_ONLY_RESPONSE_SCHEMA, noSchema: true });
+    tr = bareTranslit(raw && (raw.translit || raw.text || raw.result));
+    if (tr && isBadTranslit(tr, p.nativeLang)) tr = '';
+    if (tr) { console.log('[AILEX] QUEUE-253: голый запрос дал звучание, схема — нет:', word); return tr; }
+  } catch(_) {}
+  /* ЗАХОД ТРЕТИЙ — СКЛЕЙКА ИЗ УЖЕ ИЗВЕСТНОГО (4.80). Части, которые приложение знает. */
+  const bySplit = translitBySplit(word);
+  if (bySplit) return bySplit;
+  /* ЗАХОД ЧЕТВЁРТЫЙ — РАЗБИВАЕМ САМИ И СПРАШИВАЕМ ПО ЧАСТЯМ.
+     Если и голый запрос молчит, длина слова — единственное, что отличает эти случаи от
+     работающих. Тогда просьбу «раздели и склей сам» исполняет код, а не модель: слово режется
+     пополам по границе, спрашивается каждая половина ОТДЕЛЬНО коротким запросом, и звучание
+     собирается приложением. Каждая половина для модели — обычное короткое слово. */
+  try {
+    const w = String(word || '');
+    if (w.length >= 10 && !(_depth > 0)) {          // делим ОДИН раз: половины спрашиваются как обычные слова
+      const cut = Math.round(w.length / 2);
+      const head = w.slice(0, cut), tail = w.slice(cut);
+      const [h, t2] = await Promise.all([fetchTranslitOnly(head, '', 1), fetchTranslitOnly(tail, '', 1)]);
+      if (h && t2) { console.log('[AILEX] QUEUE-253: звучание собрано по частям:', word); return h + t2; }
+    }
+  } catch(_) {}
+  return '';
 }
 
 async function fetchWordCard(token, sentence, strict) {
@@ -9015,6 +9176,14 @@ async function fetchWordCard(token, sentence, strict) {
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без транскрипции. Поле translit ОБЯЗАТЕЛЬНО: буквами native_lang, передаёт звучание формы surface.'
           + ' ДЛИННОЕ СОСТАВНОЕ СЛОВО (4.75): если слово состоит из нескольких основ (нем. Zugabteil, Fahrkartenautomat), не пропускай транскрипцию из-за длины —'
           + ' раздели слово на составляющие, запиши звучание каждой и соедини в одну строку. Пустое поле недопустимо ни при какой длине слова.'
+        : strict === 'pos'
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал словарную форму ДРУГОЙ части речи. Словарная форма обязана быть той же части речи,'
+          + ' что и слово surface в предложении: у наречия это само наречие (нем. sorgfältig → sorgfältig, НЕ существительное Sorgfalt),'
+          + ' у прилагательного — прилагательное, у глагольной формы — инфинитив. Однокоренное слово другой части речи словарной формой НЕ является.'
+        : strict === 'tr'
+        ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ пришёл без перевода. Поле translation ОБЯЗАТЕЛЬНО и не может быть пустым:'
+          + ' это значение слова surface в этом предложении, словами native_lang. Даже у служебного слова значение есть —'
+          + ' если оно переводится только в связке, напиши значение связки. Пустая строка недопустима.'
         : strict === 'ctx'
         ? ' ПОВТОРНАЯ ПОПЫТКА: прошлый ответ дал форме из текста то же значение, что и словарной. Поле translation — значение ИМЕННО формы surface в этом предложении:'
           + ' у множественного числа перевод во множественном («Bücher» → «книги», а не «книга»), у спрягаемой формы — в соответствующем лице и времени.'
@@ -9028,6 +9197,30 @@ async function fetchWordCard(token, sentence, strict) {
   } catch(e) { return null; }
   if (!out || typeof out !== 'object') return null;
   out.surface = token;                       // гарантия кода: карточка всегда о тапнутом токене
+  /* 4.81 (QUEUE-258): ПЕРЕВОД — ЭТО И ЕСТЬ ОТВЕТ, БЕЗ НЕГО КАРТОЧКИ НЕТ.
+     Прогон v136 показал `danach` со звучанием «[данах]» и пустым местом там, где должно стоять
+     значение: человек нажал ради смысла и смысла не получил, но экран выглядел как готовый
+     ответ. Это хуже честного провала. Причина — та же, что в 4.76 для транскрипции: `required`
+     в схеме гарантирует НАЛИЧИЕ ключа, а не содержимое, и `_guarantee` снимает пустую строку.
+     Для translit проверка была, для translation — нет, хотя оно и есть суть карточки. Просим
+     повторно один раз; не пришло и тогда — возвращаем null, то есть честный провал. */
+  if (!String(out.translation || '').trim()) {
+    if (!strict) {
+      const again = await fetchWordCard(token, sentence, 'tr');
+      if (again && String(again.translation || '').trim()) return again;
+    }
+    return null;
+  }
+  /* 4.81 (QUEUE-259): словарная форма другой части речи — не словарная форма этого слова.
+     Гасим её так же, как непроверяемую: слово и перевод формы остаются, чужая лемма со своим
+     переводом со экрана уходит. Один повтор с прямой просьбой — прежде чем гасить. */
+  if (out.term && posMismatch(out)) {
+    if (!strict) {
+      const again = await fetchWordCard(token, sentence, 'pos');
+      if (again && !posMismatch(again)) return again;
+    }
+    out.term = ''; out.morph = ''; out.forms = ''; out.term_translit = ''; out.term_translation = '';
+  }
   if (out.term && !tapRelated(token, out.term)) {
     if (!strict) return await fetchWordCard(token, sentence, true);
     out.term = ''; out.morph = ''; out.forms = ''; out.term_translit = ''; out.term_translation = '';
@@ -9295,9 +9488,19 @@ function translitNeeded(){
     return String(a[1]) !== String(b[1]);           // письменности разные — транскрипция нужна
   } catch(_) { return true; }
 }
+/* 4.81 (QUEUE-260): МОЛЧАНИЕ НА ЗВУЧАНИИ НЕ ДОЛЖНО ГНАТЬ СЛОВО В СЕТЬ.
+   Прогон v136: тап по `Später` и по `reinigen` — обычные слова показанной сцены — уходил в сеть
+   с индикатором ожидания, хотя заготовка глоссария сцены (4.80) для того и делалась. Разбор:
+   запись считается покрытой только при наличии И перевода, И транскрипции (`glossaryMissing`),
+   а транскрипцию модель отдаёт нестабильно (QUEUE-253) — два прохода добора дыру не закрывают,
+   `tapEntryReady` неполную запись отвергает, и тап идёт в сеть. То есть молчание на звучании
+   блокировало всю работу 4.80: сколько ни готовь глоссарий, слово всё равно ждёт сеть.
+   Порог тапа приравнен к порогу подсказки (4.79, там это уже признано верным): показываем
+   имеющееся немедленно, звучание дотягиваем фоном. Строгий порог остаётся у того, что оседает
+   в Словаре надолго, — `tapNeedsCard` по-прежнему считает запись без звучания неполной и
+   заказывает добор, просто теперь не под лоадером, а после показа. */
 function tapEntryReady(w){
-  if (!w || !w.translation) return false;
-  return translitNeeded() ? !!bareTranslit(w.translit) : true;
+  return !!(w && String(w.translation || '').trim());
 }
 /* 4.79 (QUEUE-251): ПОЛНОТА — КРИТЕРИЙ ДОБОРА, А НЕ ТОЛЬКО ПОКАЗА. Добор считал дыру закрытой,
    если слово в Словаре просто ЛЕЖИТ — хотя бы с одним переводом. Что у него нет звучания, никто
