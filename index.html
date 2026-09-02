@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v138';
+const APP_VERSION = 'v139';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -2611,10 +2611,19 @@ const Core = {
   },
 
   // закрытые классы целиком + открытый класс уровня (раздел 4.4)
+  /* 4.83: сборка запоминает МЕСТО ОСТАНОВКИ, а не только слова. Слова каждой пачки писались
+     в базу сразу, но пройденное место — нет: признак готовности ставился только после всех
+     десяти пачек, и прерванная сборка начиналась с первой. Человек, вышедший на седьмой пачке,
+     при следующем заходе видел «1/10» и ждал всё заново — база выглядела так, будто ничего не
+     помнит. Дубликаты при этом отсеивались `_add`, то есть заново тратились только время и
+     запросы, но именно они здесь и есть цена. Считаем не только «сколько сделано», но и «из
+     скольких»: если план сборки изменился новым билдом, старое место недействительно и работа
+     начинается сначала — иначе сдвиг плана молча пропустил бы часть языка. */
+  _resume(rec, of){ return (rec && rec.of === of && rec.done > 0) ? rec.done : 0; },
   async build(onStep){
     const meta = this.meta(), total = CLOSED_BATCHES.length + 5;
     if (!meta.closedDone){
-      for (let i=0; i<CLOSED_BATCHES.length; i++){
+      for (let i = this._resume(meta.closedAt, CLOSED_BATCHES.length); i<CLOSED_BATCHES.length; i++){
         const b = CLOSED_BATCHES[i];
         // 4.38 (v81): счётчик вынесен из переводимой строки — узел со вставленным «1/9»
         // не совпал бы ни с одним ключом и остался бы русским на любом языке.
@@ -2623,9 +2632,10 @@ const Core = {
         if (b.capture === 'articles')    this._captureArticles(w);
         if (b.capture === 'determiners') this._captureDeterminers(w);
         this._add(w, { klass:'closed', layer:'general', cefr:'A1' });
+        meta.closedAt = { done: i+1, of: CLOSED_BATCHES.length };
         Storage.save(DB);
       }
-      meta.closedDone = true; Storage.save(DB);
+      meta.closedDone = true; delete meta.closedAt; Storage.save(DB);
     }
     await this.buildLevel(this.lvlFor(DB.profile), onStep, CLOSED_BATCHES.length, total);
   },
@@ -2639,15 +2649,17 @@ const Core = {
     const plan = [];
     for (let left=nGen; left>0; left-=CORE_BATCH) plan.push({ layer:'general',   count: Math.min(CORE_BATCH,left) });
     for (let left=nInt; left>0; left-=CORE_BATCH) plan.push({ layer:'interests', count: Math.min(CORE_BATCH,left) });
-    for (let i=0; i<plan.length; i++){
+    meta.levelAt = meta.levelAt || {};
+    for (let i = this._resume(meta.levelAt[lvl], plan.length); i<plan.length; i++){
       const b = plan[i];
       onStep && onStep(t('Собираю словарь уровня') + ' ' + lvl + '… ' + ((done||0)+i+1) + '/' + (total || plan.length));
       const w = await this._batch({ class:'open', layer:b.layer, cefr:lvl, count:b.count,
         topic: b.layer==='interests' ? (p.interests || 'повседневная жизнь') : SURVIVAL_TOPICS });
       this._add(w, { klass:'open', layer:b.layer, cefr:lvl });
+      meta.levelAt[lvl] = { done: i+1, of: plan.length };
       Storage.save(DB);
     }
-    meta.levels.push(lvl); Storage.save(DB);
+    meta.levels.push(lvl); delete meta.levelAt[lvl]; Storage.save(DB);
   },
 
   /* Артикли языка (4.35): список кладётся в coreMeta.articles, пустой список — законный ответ
@@ -3944,13 +3956,28 @@ function langDisplayName(code, inLang) {
     return (v && v !== code) ? v : '';
   } catch(_) { return ''; }
 }
+/* 4.83: данные ICU на устройстве урезаны по локали, и `Intl.DisplayNames` для части языков
+   возвращает пустоту. В списке оставались самоназвания вперемешку с переведёнными названиями:
+   «Cymraeg» и «Yorùbá» среди «датский», «немецкий», «зулу». Человек, не знающий валлийского,
+   свою строку в таком списке не находит — ровно та задача, которую 4.44 и решала, и полагаться
+   на полноту чужих данных здесь было нельзя. У приложения названия всех 72 языков есть своим
+   набором: LANG_RU переводится наравне с интерфейсом (список UI_EXTRA), LANG_ID держит
+   устойчивое английское название. Порядок заходов: браузер → свой набор → самоназвание. */
+function langNamed(code, inLang, inProfileLang) {
+  const byBrowser = langDisplayName(code, inLang);
+  if (byBrowser) return byBrowser;
+  // родной язык профиля уже известен — берём название из своего набора и переводим его
+  if (inProfileLang && LANG_RU[code]) { const n = I18N.t(LANG_RU[code]); if (n) return n; }
+  const en = LANG_ID[code];                    // до выбора родного интерфейс на языке устройства
+  return en ? en[0] : '';
+}
 function langLabel(l, questionKey) {
   const native = esc(l.n);
   if (questionKey === 'targetLang') {                     // родной уже выбран — пишем на нём
-    const inNative = langDisplayName(l.c, I18N.lang || I18N.deviceLang());
+    const inNative = langNamed(l.c, I18N.lang || I18N.deviceLang(), true);
     return esc(inNative || l.n);
   }
-  const inDevice = langDisplayName(l.c, I18N.deviceLang());   // выбор родного — язык устройства
+  const inDevice = langNamed(l.c, I18N.deviceLang(), false);   // выбор родного — язык устройства
   if (!inDevice || norm(inDevice) === norm(l.n)) return native;
   return esc(inDevice) + ' <span style="color:var(--dim)">(' + native + ')</span>';
 }
@@ -4202,6 +4229,15 @@ const PLACEMENT_PER_LEVEL = 4;    // 2 грамматики + 1 лексика +
    случаях из ста на уровень, а на родственной паре — заметно чаще. */
 const PLACEMENT_NEED_GRAM = 2;    // оба грамматических
 const PLACEMENT_ROUNDS    = 4;    // 4.82: кругов сборки набора, включая первый запрос
+/* 4.83: сколько непройденных ступеней прощается. Повод: человек, свободно читающий и говорящий
+   по-английски, не вспомнил, как называется долгий звук в вопросе на чтение A0, — и лестница
+   оборвалась на первой же ступени, отправив его на A0 «к основам». Провал ОДНОЙ ступени
+   говорит о дырке в этой ступени, а не о потолке человека: знание языка неровное, и мелкая
+   прореха внизу ничего не сообщает о том, что человек умеет строить фразы уровнем выше.
+   Поэтому тест идёт дальше через один провал и обрывается на втором — две подряд непройденные
+   ступени это уже потолок, а не прореха. Прощение работает и в вердикте: уровнем становится
+   высшая пройденная ступень, до которой набралось не больше одного провала. */
+const PLACEMENT_FORGIVEN  = 1;
 const PLACEMENT_SCHEMA =
   `{"questions":[
       {"level":"A0","skill":"grammar","question":"вопрос на чтение: какой звук даёт буква / как читается короткое слово","options":["в1","в2","в3","в4"],"correct_index":0},
@@ -4405,13 +4441,15 @@ async function runPlacement(profile) {
      вопросов, зато во время теста нет ни одного обращения к сети. */
   const ladder = PLACEMENT_LEVELS.slice();
   const qs = ladder.flatMap(L => by[L]);
-  let idx = 0, okGram = {}, prod = {}, stopped = false, lastLevel = null, busy = false;
+  let idx = 0, okGram = {}, prod = {}, stopped = false, lastLevel = null, busy = false, misses = 0;
   const gramOK = L => (okGram[L]||0) >= PLACEMENT_NEED_GRAM;
 
   const step = () => {
     if (stopped || idx >= qs.length) return done();
     const q = qs[idx];
-    if (lastLevel && q.level !== lastLevel && !gramOK(lastLevel)) { stopped = true; return done(); }
+    if (lastLevel && q.level !== lastLevel && !gramOK(lastLevel) && ++misses > PLACEMENT_FORGIVEN) {
+      stopped = true; return done();           // 4.83: две непройденные ступени подряд — потолок
+    }
     lastLevel = q.level;
     const kind = q.skill === 'vocab' ? t('лексика') : q.skill === 'produce' ? t('напишите сами') : t('грамматика');
     const head = `
@@ -4460,12 +4498,15 @@ async function runPlacement(profile) {
       if (!it.ok && it.user) pending.push(it);
     });
     await placementJudge(pending, profile);
-    /* Уровнем считается последняя ПОЛНОСТЬЮ пройденная ступень. При сомнении ставим ниже:
-       начать слишком низко — несколько лёгких дней, начать слишком высоко — человек читает
-       фразу и не понимает, о чём речь, и бросает. */
-    let level = 'A0';
+    /* 4.83: уровнем становится высшая ПОЛНОСТЬЮ пройденная ступень, до которой накопилось не
+       больше одного провала. Прежнее правило обрывало счёт на первом же провале, и оступившийся
+       на A0 получал A0, даже если дальше проходил A1, A2 и B1. При сомнении по-прежнему ставим
+       ниже: два провала закрывают лестницу, и случайное попадание на верхней ступени уровня
+       не даёт. */
+    let level = 'A0', miss = 0;
     for (const L of ladder) {
-      if (gramOK(L) && prod[L] && prod[L].ok) level = L; else break;
+      if (gramOK(L) && prod[L] && prod[L].ok) { level = L; continue; }
+      if (++miss > PLACEMENT_FORGIVEN) break;
     }
     finishOnboarding(profile, level);
   };
