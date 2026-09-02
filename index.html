@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v137';
+const APP_VERSION = 'v138';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -559,6 +559,26 @@ const UI_EXTRA = [
     'Скачайте AILEX.html на телефон («Поделиться» → «Сохранить в Файлы»).',
     'Для микрофона и полной надёжности файл можно выложить на бесплатный хостинг.',
     '⚠️ Глагол со списком форм — особенный: он не подчиняется общему правилу. Формы даны справочно — просто запомните их вместе со словом. Правило разберём позже, а пока достаточно узнавать эти формы в тексте.',
+    /* 4.82: экран выбора стартового уровня, сборка набора теста, смена уровня в настройках. */
+    'Не знаю язык совсем — даже буквы',
+    'Знаю буквы и отдельные слова',
+    'Понимаю простые фразы о себе и о быте',
+    'Говорю на бытовые темы, читаю простые тексты',
+    'Общаюсь свободно, понимаю сложный текст',
+    'Владею языком почти свободно',
+    'Владею языком как носитель',
+    '— или выберите свой уровень —',
+    'Нужен интернет: и тест, и словарная база выбранного уровня собираются по сети.',
+    'Уровень потом можно сменить в настройках профиля.',
+    'Проверяю вопросы теста…',
+    'Проверяю ваши ответы…',
+    'Вопросы теста не собрались полностью. Для теста нужна устойчивая связь — попробуйте позже или выберите свой уровень.',
+    'Сейчас:',
+    'Смените уровень, если тест определил его неверно или язык оказался знаком лучше, чем казалось. Словарь, освоенные слова и Свод правил останутся; занятия начнутся с первого урока выбранного уровня. Нужен интернет: словарь нового уровня догружается по сети.',
+    'Сменить уровень?',
+    'Занятия начнутся с первого урока выбранного уровня. Пройденные уроки, словарь и Свод правил сохранятся, счёт уроков внутри уровня начнётся заново.',
+    'Сменить',
+    'Уровень изменён ✓',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -916,11 +936,21 @@ const I18N = {
       'Шаг 2':'Step 2',
       'Как лучше начать изучение':'How should we start with',
       'Пройти короткий тест (рекомендуется)':'Take a short test (recommended)',
-      '— или выберите старт вручную —':'— or choose your starting point —',
-      'Я новичок, но буквы читаю → начать с A1':'I am a beginner but I can read the letters → start at A1',
-      'Не знаю язык совсем, даже буквы → начать с основ A0':'I do not know the language at all, not even the letters → start at A0',
+      /* 4.82: две кнопки ручного старта (A1 и A0) заменены полным списком уровней A0–C2. */
+      '— или выберите свой уровень —':'— or pick your own level —',
+      'Не знаю язык совсем — даже буквы':'I do not know the language at all — not even the letters',
+      'Знаю буквы и отдельные слова':'I know the letters and some separate words',
+      'Понимаю простые фразы о себе и о быте':'I understand simple phrases about myself and daily life',
+      'Говорю на бытовые темы, читаю простые тексты':'I can talk about everyday topics and read simple texts',
+      'Общаюсь свободно, понимаю сложный текст':'I communicate freely and understand complex texts',
+      'Владею языком почти свободно':'I use the language almost fluently',
+      'Владею языком как носитель':'I use the language like a native speaker',
+      'Нужен интернет: и тест, и словарная база выбранного уровня собираются по сети.':'You need a connection: both the test and the vocabulary base for the chosen level are built online.',
+      'Уровень потом можно сменить в настройках профиля.':'The level can be changed later in the profile settings.',
       'Готовлю вопросы теста…':'Preparing the test…',
-      'Не удалось получить тест — начнём с A1':'Could not load the test — we will start at A1',
+      'Проверяю вопросы теста…':'Checking the test questions…',
+      'Проверяю ваши ответы…':'Checking your answers…',
+      'Вопросы теста не собрались полностью. Для теста нужна устойчивая связь — попробуйте позже или выберите свой уровень.':'The test questions did not load completely. The test needs a stable connection — try again later or pick your own level.',
       'Тест уровня · вопрос':'Level test · question',
       'лексика':'vocabulary','грамматика':'grammar','Не знаю':'I do not know',
       /* --- 4.38: аудит экранов, доступных без профиля. localizeDOM переводит только строки
@@ -1090,9 +1120,15 @@ const I18N = {
     'Самое важное поле: на нём строятся все квесты и рассказы.',
     'Поиск языка…','Далее','Заполните поле','Целевой язык должен отличаться от родного',
     'Шаг 2','Определение уровня','Как лучше начать изучение','Пройти короткий тест (рекомендуется)',
-    '— или выберите старт вручную —','Я новичок, но буквы читаю → начать с A1',
-    'Не знаю язык совсем, даже буквы → начать с основ A0','Готовлю вопросы теста…',
-    'Не удалось получить тест — начнём с A1','Тест уровня · вопрос','лексика','грамматика','Не знаю',
+    '— или выберите свой уровень —',
+    'Не знаю язык совсем — даже буквы','Знаю буквы и отдельные слова',
+    'Понимаю простые фразы о себе и о быте','Говорю на бытовые темы, читаю простые тексты',
+    'Общаюсь свободно, понимаю сложный текст','Владею языком почти свободно','Владею языком как носитель',
+    'Нужен интернет: и тест, и словарная база выбранного уровня собираются по сети.',
+    'Уровень потом можно сменить в настройках профиля.',
+    'Готовлю вопросы теста…','Проверяю вопросы теста…','Проверяю ваши ответы…',
+    'Вопросы теста не собрались полностью. Для теста нужна устойчивая связь — попробуйте позже или выберите свой уровень.',
+    'Тест уровня · вопрос','лексика','грамматика','напишите сами','Не знаю','Напишите ответ','Ответить',
     'Сохранено ✓','Собираю словарь языка — это один раз…',
     'Собираю основу языка — служебные слова и неправильные глаголы…','Собираю словарь уровня',
     'Строю карту грамматики языка…',
@@ -2781,10 +2817,10 @@ const Core = {
    Область действия — только ВЫХОД (задание, эталон, каркас). Текст сцены
    не ограничивается сознательно: вход выше уровня — это развитие (раздел 5.0).
    ===================================================================== */
-const GCORE_LEVELS = ['A1','A2','B1','B2'];
+const GCORE_LEVELS = ['A1','A2','B1','B2','C1','C2'];   // 4.82: ручной старт открыт до C2
 const GCORE_MAX_BANNED = 60;    // потолок списка маркеров в запрос (4.40: было 40 — не хватало на старшие уровни)
 const SCAFFOLD_CAP = { A1:2, A2:3 };   // потолок прочерков в каркасе (раздел 5.0)
-const GCORE_SCHEMA = '{"themes":[{"order":1,"title":"служебное название темы на родном","gist":"одна фраза сути на родном","cefr":"A1|A2|B1|B2","requires":[],"foundation":true,"markers":["слово или форма целевого языка"]}]}';
+const GCORE_SCHEMA = '{"themes":[{"order":1,"title":"служебное название темы на родном","gist":"одна фраза сути на родном","cefr":"A1|A2|B1|B2|C1|C2","requires":[],"foundation":true,"markers":["слово или форма целевого языка"]}]}';
 const GCORE_RULES = 'Верни карту грамматических тем для пары target_lang→native_lang по уровням levels, В МЕТОДИЧЕСКОМ ПОРЯДКЕ изучения. '
   + 'order — сквозная нумерация с 1 по возрастанию сложности. requires — номера тем, которые ОБЯЗАНЫ быть пройдены раньше; ссылаться вперёд (на больший order) ЗАПРЕЩЕНО. '
   + 'foundation=true — ТОЛЬКО для тем, без которых в этом языке предложение не строится физически (личные местоимения, настоящее время, базовый порядок слов, именительная форма существительного). '
@@ -2833,7 +2869,25 @@ const GrammarCore = {
     if (this._failed || !DB || !DB.profile) return false;
     if (DB.profile.cefr === 'A0') return false;
     const m = this.meta();
-    return !!m.built && (m.gen || 1) < GCORE_GEN;
+    if (!m.built) return false;
+    if ((m.gen || 1) < GCORE_GEN) return true;
+    /* 4.82: карта, собранная тогда, когда уровень профиля ещё не входил в GCORE_LEVELS, тем
+       своего уровня не содержит ВОВСЕ — а `lvlFor` до 4.82 молча возвращал в таком случае A1,
+       и профиль C1 занимался бы по карте грамматики уровня A1, ничего об этом не сообщая.
+       Сверяемся с тем, что у карты СПРАШИВАЛИ, а не с тем, что в ней лежит: язык может честно
+       не иметь отдельных тем на уровень, и сверка по содержимому гоняла бы пересборку каждый
+       запуск. Профили до 4.82 поля не имеют — им подставляется прежний набор. */
+    const asked = Array.isArray(m.levelsAsked) ? m.levelsAsked : ['A1','A2','B1','B2'];
+    return !asked.includes(this.lvlFor());
+  },
+
+  /* 4.82: у карты спрашиваем уровни не выше, чем нужно этому профилю. Просить все шесть всегда —
+     значит на каждом профиле A1 гнать вдвое более длинный ответ ради тем, которые этому человеку
+     не понадобятся, и без нужды приближаться к обрыву JSON. Потолок не ниже B2: запреты маркеров
+     старших тем (QUEUE-66) должны работать и на нижних уровнях. */
+  askLevels(){
+    const i = Math.max(GCORE_LEVELS.indexOf(this.lvlFor()), GCORE_LEVELS.indexOf('B2'));
+    return GCORE_LEVELS.slice(0, i + 1);
   },
 
   async build(onStep){
@@ -2841,7 +2895,7 @@ const GrammarCore = {
     onStep && onStep(t('Строю карту грамматики языка…'));
     const r = await Gemini.call({
       task:'generate_grammar_core', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
-      levels: GCORE_LEVELS, rules: GCORE_RULES
+      levels: this.askLevels(), rules: GCORE_RULES
     }, GCORE_SCHEMA);
     const raw = (r && Array.isArray(r.themes)) ? r.themes : [];
     if (!raw.length) throw new Error('empty grammar core');
@@ -2857,6 +2911,7 @@ const GrammarCore = {
     })).sort((a,b)=>a.order-b.order);
     this.meta().built = true;
     this.meta().gen = GCORE_GEN;
+    this.meta().levelsAsked = this.askLevels();      // 4.82: чем покрыта карта — см. needsRebuild
     this.migrateProgress();
     Storage.save(DB);
   },
@@ -2915,6 +2970,21 @@ const GrammarCore = {
     // страховка от тупика: модель может выдать циклические или ссылающиеся вперёд requires,
     // и тогда ни одна тема не «готова» — курс молча вернулся бы к выбору темы моделью
     return open.find(t => (t.requires||[]).every(n => done.has(n))) || open[0] || null;
+  },
+  /* 4.82: смена уровня в настройках. При ПОВЫШЕНИИ темы уровней ниже нового считаются
+     пройденными — ровно так же, как при создании профиля сразу на высоком уровне
+     (migrateProgress). Иначе выйдет молчаливое противоречие: уровень стоит B2, а задания
+     ограничены темами A1, потому что «не пройдено» — то есть приложение будет держать
+     человека на A1, ничего ему об этом не сообщая. При ПОНИЖЕНИИ не снимаем ничего:
+     пройденное остаётся пройденным, уроки просто идут ниже. */
+  raiseTo(lvl){
+    const i = GCORE_LEVELS.indexOf(lvl); if (i < 0) return;
+    this.list().forEach(t => {
+      if (GCORE_LEVELS.indexOf(t.cefr) < i && t.status !== 'пройдена') {
+        t.status = 'пройдена'; t.lesson = 'смена уровня';
+      }
+    });
+    Storage.save(DB);
   },
   markPassed(order, code){
     const t = this.list().find(x => x.order === order);
@@ -4052,18 +4122,46 @@ function showI18nReport() {
 }
 
 /* ---------- Placement Test v2 (раздел 4.2, версия 4.17) ---------- */
-function placementIntro(profile) {
+/* =====================================================================
+   4.82 — СВОЙ УРОВЕНЬ НАРАВНЕ С ТЕСТОМ (QUEUE-261)
+   Повод: человек с сертифицированным итальянским B1–B2 прошёл тест и получил A1.
+   Ручной старт в приложении был, но только ВНИЗ — две кнопки, A1 и A0. Заявить свой
+   уровень было нечем: ни до теста, ни на экране результата, ни в настройках, а
+   единственный путь вверх лежал через экзамен на каждом уровне. Цена промаха теста
+   для человека с уровнем B1 — пройти весь A1 и весь A2, прежде чем начнётся его
+   материал; он уйдёт раньше.
+   Механика старта выше A1 была готова давно и ничего не требовала: finishOnboarding
+   принимает любой уровень, карта грамматики помечает темы нижних уровней пройденными
+   (migrateProgress), Ядро отбирает слова по уровню профиля. Не хватало ровно точки входа.
+   ===================================================================== */
+const START_LEVELS = [
+  ['A0','Не знаю язык совсем — даже буквы'],
+  ['A1','Знаю буквы и отдельные слова'],
+  ['A2','Понимаю простые фразы о себе и о быте'],
+  ['B1','Говорю на бытовые темы, читаю простые тексты'],
+  ['B2','Общаюсь свободно, понимаю сложный текст'],
+  ['C1','Владею языком почти свободно'],
+  ['C2','Владею языком как носитель']
+];
+function levelButtonsHTML(skip) {
+  return START_LEVELS.filter(x => x[0] !== skip)
+    .map(([code, desc]) => `<button class="opt" data-lvl="${code}"><b>${code}</b> <span>${t(desc)}</span></button>`)
+    .join('');
+}
+function placementIntro(profile, notice) {
   Screen.show(`
     <div class="eyebrow">${t('Шаг 2')}</div>
     <h1>${t('Определение уровня')}</h1>
     <p class="sub">${t('Как лучше начать изучение')} ${esc(langName(profile.targetLang))}?</p>
+    ${notice ? `<div class="card" style="border-color:var(--err)"><p class="note" style="margin:0">${esc(notice)}</p></div>` : ''}
     <button class="btn btn-primary" id="go">${t('Пройти короткий тест (рекомендуется)')}</button>
-    <p style="font-size:13px;color:var(--dim);text-align:center;margin:6px 0 4px">${t('— или выберите старт вручную —')}</p>
-    <button class="btn btn-ghost" id="skipA1">${t('Я новичок, но буквы читаю → начать с A1')}</button>
-    <button class="btn btn-ghost" id="skipA0">${t('Не знаю язык совсем, даже буквы → начать с основ A0')}</button>`);
-  $('#go').onclick    = () => runPlacement(profile);
-  $('#skipA1').onclick = () => finishOnboarding(profile, 'A1');
-  $('#skipA0').onclick = () => finishOnboarding(profile, 'A0');
+    <p style="font-size:13px;color:var(--dim);text-align:center;margin:6px 0 4px">${t('— или выберите свой уровень —')}</p>
+    ${levelButtonsHTML('')}
+    <p class="note" style="margin-top:12px">${t('Нужен интернет: и тест, и словарная база выбранного уровня собираются по сети.')}</p>
+    <p class="note">${t('Уровень потом можно сменить в настройках профиля.')}</p>`);
+  $('#go').onclick = () => runPlacement(profile);
+  document.querySelectorAll('.opt[data-lvl]').forEach(b =>
+    b.onclick = () => finishOnboarding(profile, b.dataset.lvl));
 }
 /* =====================================================================
    4.34 — PLACEMENT TEST: НАБОР ВОПРОСОВ ГАРАНТИРУЕТ ПРИЛОЖЕНИЕ (QUEUE-79)
@@ -4081,7 +4179,21 @@ function placementIntro(profile) {
    но его ошибка срабатывала на следующем грамматическом вопросе); уровень без
    вопросов не считается «проваленным» на пустом множестве.
    ===================================================================== */
-const PLACEMENT_LEVELS    = ['A0','A1','A2','B1','B2','C1'];   // 4.40: лестница начинается с A0
+/* =====================================================================
+   4.82 — НАБОР ВОПРОСОВ ГОТОВ ЦЕЛИКОМ ДО ПЕРВОГО ВОПРОСА (QUEUE-262)
+   Прежде набор просили одним запросом, один раз добирали недостачу и запускали тест
+   тем, что пришло: порог ступени пересчитывался «по факту» (`min(2, сколько прислали)`),
+   а ступень, где вопросов оказалось меньше двух, ВЫПАДАЛА из лестницы целиком — человек
+   после A1 получал сразу B1, проваливал чужой уровень и получал A1. Неполный набор
+   не «немного хуже», он даёт неверный ответ, ради которого тест и затевался.
+   Правило: тест не начинается, пока на каждой ступени нет полного состава (2 вопроса
+   с выбором на грамматику, 1 лексический, 1 с печатью ответа). Недостача добирается
+   повторами с паузами, на экране видно, сколько уже загружено. Не собралось — тест
+   не запускается вовсе: человек возвращается к выбору уровня с честным сообщением о
+   связи. Порог ступени снова фиксирован, потому что набор гарантирован.
+   Прямое следствие: во время самого теста сеть не нужна ни на один вопрос.
+   ===================================================================== */
+const PLACEMENT_LEVELS    = ['A0','A1','A2','B1','B2','C1','C2'];   // 4.82: лестница доведена до C2
 const PLACEMENT_PER_LEVEL = 4;    // 2 грамматики + 1 лексика + 1 с печатью ответа (4.40)
 /* 4.40: уровень засчитан, только если верны ОБА грамматических вопроса И вопрос с печатью
    ответа. Лексика на повышение не влияет вовсе: на родственной паре (румынский→итальянский)
@@ -4089,26 +4201,28 @@ const PLACEMENT_PER_LEVEL = 4;    // 2 грамматики + 1 лексика +
    «два из трёх при четырёх вариантах» проходился случайным угадыванием примерно в шестнадцати
    случаях из ста на уровень, а на родственной паре — заметно чаще. */
 const PLACEMENT_NEED_GRAM = 2;    // оба грамматических
-const PLACEMENT_PASS      = 2;    // (историческое имя, оставлено для совместимости)
+const PLACEMENT_ROUNDS    = 4;    // 4.82: кругов сборки набора, включая первый запрос
 const PLACEMENT_SCHEMA =
   `{"questions":[
       {"level":"A0","skill":"grammar","question":"вопрос на чтение: какой звук даёт буква / как читается короткое слово","options":["в1","в2","в3","в4"],"correct_index":0},
       {"level":"A0","skill":"produce","question":"условие на родном: напишите на целевом одно короткое слово","answer":"эталон одним словом","accept":["допустимый вариант"]},
-      {"level":"A1","skill":"grammar","question":"вопрос на целевом: ТОЛЬКО структура/порядок слов/спряжение, лексика уровня НИЖЕ A1","options":["в1","в2","в3","в4"],"correct_index":1},
+      {"level":"A1","skill":"grammar","question":"условие на родном: ТОЛЬКО структура/порядок слов/спряжение, лексика уровня НИЖЕ A1","options":["в1","в2","в3","в4"],"correct_index":1},
       {"level":"A1","skill":"vocab","question":"узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":2},
       {"level":"A1","skill":"produce","question":"условие на родном: напишите фразу на целевом (1-4 слова)","answer":"эталонная фраза","accept":["равноценный вариант"]}
     ]} — РОВНО ПО 4 вопроса на КАЖДЫЙ запрошенный уровень: 2 grammar + 1 vocab + 1 produce. Меньше четырёх на уровень — брак ответа.
-    ЯЗЫК УСЛОВИЯ (критично, 4.42): поле question — ВСЕГДА на native_lang, на ВСЕХ уровнях без исключения, включая A0 и C1.
+    ЯЗЫК УСЛОВИЯ (критично, 4.42): поле question — ВСЕГДА на native_lang, на ВСЕХ уровнях без исключения, включая A0 и C2.
     Человек проходит тест, ЧТОБЫ выяснить, знает ли он язык, — условие на целевом языке он прочитать не может по определению.
     Неверно: «Wie wird das 'ie' in 'Biene' ausgesprochen?» / «Scegli la forma corretta del verbo essere».
     Верно: «Как читается „ie“ в слове „Biene“?» / «Выберите правильную форму глагола essere: „Io ___ italiano“».
     На целевом языке остаётся ТОЛЬКО материал, который оценивается: сама буква, слово, фраза с пропуском, варианты ответа.
     ВАРИАНТЫ ОТВЕТА (критично, 4.42): в options не должно быть служебных слов целевого языка — только сам оцениваемый материал.
     Неверно: «wie 'e'», «wie 'ei'». Верно: «[e]», «[ei]», «[a]», «[i]».
+    ОДИН ВЕРНЫЙ ВАРИАНТ (критично, 4.82): у вопроса с выбором ровно один вариант верен, остальные три однозначно неверны.
+    Вопрос, где верны два варианта или где верного нет, приложение выбрасывает после независимой перепроверки, и весь набор приходится собирать заново.
     A0 — проверка ЧТЕНИЯ, а не грамматики: узнать звук буквы, прочитать короткое слово, понять простейшее слово. Никакой грамматики на A0 быть не должно.
     grammar: варианты на целевом языке, лексика строго из уровня НИЖЕ тестируемого — проверяется структура, а не словарный запас.
     vocab: узнавание слова целевого языка → перевод (или наоборот).
-    produce (критично, 4.40): вопрос БЕЗ вариантов — человек печатает ответ сам. question — условие СТРОГО на native_lang, без единого слова target_lang и без самой целевой фразы. answer — короткий эталон на целевом (1-4 слова, на A0 — одно слово). accept — 1-3 равноценных варианта ответа (другой порядок слов, синоним), БЕЗ форм с ошибками. Ответ проверяется сравнением строк на устройстве, поэтому эталон обязан быть однозначным: не задавай вопросов, где верных ответов много.
+    produce (критично, 4.40): вопрос БЕЗ вариантов — человек печатает ответ сам. question — условие СТРОГО на native_lang, без единого слова target_lang и без самой целевой фразы. answer — короткий эталон на целевом (1-4 слова, на A0 — одно слово). accept — 1-3 равноценных варианта ответа (другой порядок слов, синоним), БЕЗ форм с ошибками.
     Сложность produce растёт с уровнем: A0 — одно слово, A1 — короткая фраза настоящего времени, A2 и выше — конструкция уровня.
     correct_index — индекс верного варианта для grammar и vocab. Вопросы по возрастанию сложности.`;
 
@@ -4138,9 +4252,98 @@ function placementNormalize(list) {
   return by;
 }
 
-/* Проверка печатного ответа — на устройстве, без обращения к модели: ответ короткий и эталон
-   однозначный, поэтому сравнения строк достаточно, а лишний сетевой запрос только добавил бы
-   задержку иновый источник сбоев. Допуск: регистр, лишние пробелы, знаки препинания и одна опечатка. */
+/* 4.82: полнота ступени — это СОСТАВ, а не число. Четыре вопроса, из которых три
+   грамматических, ступень не проверяют: вердикт складывается из двух грамматических
+   и одного печатного. */
+const PLACEMENT_CAP = { grammar: PLACEMENT_NEED_GRAM, vocab: 1, produce: 1 };
+function placementLevelReady(qs) {
+  const list = qs || [];
+  return Object.keys(PLACEMENT_CAP).every(k => list.filter(q => q.skill === k).length >= PLACEMENT_CAP[k]);
+}
+/* Слияние добора: сверх состава ничего не берём — лишний третий грамматический вопрос
+   вытеснил бы печатный при обрезке и снова оставил ступень непроверяемой. */
+function placementMerge(by, add) {
+  PLACEMENT_LEVELS.forEach(L => {
+    (add[L]||[]).forEach(q => {
+      if (by[L].filter(x => x.skill === q.skill).length >= PLACEMENT_CAP[q.skill]) return;
+      if (by[L].some(x => norm(x.question) === norm(q.question))) return;
+      by[L].push(q);
+    });
+    const rank = { grammar:0, vocab:1, produce:2 };         // печатный — последним в ступени
+    by[L].sort((a,b) => rank[a.skill] - rank[b.skill]);
+  });
+}
+
+/* =====================================================================
+   4.82 — ВОПРОС ПРОВЕРЯЕТСЯ ВТОРЫМ НЕЗАВИСИМЫМ ОТВЕТОМ (QUEUE-263)
+   `correct_index` приходил от модели при temperature 0.7 и без responseSchema и не
+   сверялся НИЧЕМ. Один битый вопрос роняет ступень целиком, потому что ступень требует
+   оба грамматических. Грамматику 72 пар кодом не проверить, но можно спросить ответ
+   второй раз, не показывая первого: модель отвечает на собственные вопросы вслепую.
+   Расхождение НЕ «чинится» подстановкой — вопрос выбрасывается и добирается заново:
+   при двух разных ответах ни один не заслуживает доверия, а сомнение в НАШЕМ материале
+   нельзя предъявлять ученику (принцип: механический сбой — ответственность приложения).
+   Тотальное несогласие (больше половины) означает, что негоден проверяющий, а не набор, —
+   тогда набор остаётся как есть.
+   ===================================================================== */
+async function placementVerify(by, profile) {
+  const items = [];
+  /* Перепроверяются ТОЛЬКО грамматические: вердикт ступени держится на них. Битый лексический
+     вопрос ничего не решает (4.40), и его выбраковка стоила бы лишнего круга сборки набора
+     ради вопроса, который на уровень не влияет. */
+  PLACEMENT_LEVELS.forEach(L => (by[L]||[]).forEach(q => { if (q.skill === 'grammar' && !q._checked) items.push(q); }));
+  if (!items.length) return 0;
+  let ans;
+  try {
+    Screen.loader(t('Проверяю вопросы теста…'));
+    const r = await Gemini.call({
+      task:'validate_placement', target_lang: langId(profile.targetLang), native_lang: langId(profile.nativeLang),
+      questions: items.map((q,i) => ({ id:i, level:q.level, question:q.question, options:q.options })),
+      rules:'Ответь на каждый вопрос сам, как ответил бы человек, знающий целевой язык. index — номер верного варианта в массиве options этого вопроса, отсчёт с нуля. Верный ответ тебе не показан и подсказок нет — решай по существу. Если вопрос составлен так, что верных вариантов несколько или нет ни одного, верни index=-1. Ничего не объясняй.' },
+      '{"answers":[{"id":0,"index":0}]}');
+    ans = new Map((r && Array.isArray(r.answers) ? r.answers : []).map(a => [+a.id, +a.index]));
+  } catch(_) { return 0; }                       // проверка не состоялась — набор остаётся как есть
+  const bad = items.filter((q,i) => ans.has(i) && ans.get(i) !== q.correct_index);
+  items.forEach(q => q._checked = true);
+  if (!bad.length || bad.length > items.length / 2) return 0;
+  const drop = new Set(bad);
+  PLACEMENT_LEVELS.forEach(L => { by[L] = by[L].filter(q => !drop.has(q)); });
+  return bad.length;
+}
+
+/* 4.82: сборка набора кругами. Первый круг просит весь набор одним запросом, дальше
+   добираются только ступени с неполным составом. Возвращает готовый набор или null —
+   null означает «тест начинать нельзя», а не «начнём с A1». */
+async function placementCollect(profile) {
+  const req = extra => ({ task:'placement_test', target_lang: langId(profile.targetLang), native_lang: langId(profile.nativeLang),
+                          levels: PLACEMENT_LEVELS, per_level: PLACEMENT_PER_LEVEL, ...extra });
+  const by = {}; PLACEMENT_LEVELS.forEach(L => by[L] = []);
+  const TOTAL = PLACEMENT_LEVELS.length * PLACEMENT_PER_LEVEL;
+  const have  = () => PLACEMENT_LEVELS.reduce((n,L) => n + by[L].length, 0);
+  const short = () => PLACEMENT_LEVELS.filter(L => !placementLevelReady(by[L]));
+  for (let round = 0; round < PLACEMENT_ROUNDS; round++) {
+    const need = short();
+    if (!need.length) {
+      await placementVerify(by, profile);
+      if (!short().length) return by;            // состав полон и перепроверен
+      continue;                                  // выбитые вопросы добираются следующим кругом
+    }
+    Screen.loader(t('Готовлю вопросы теста…') + ' ' + have() + '/' + TOTAL);
+    try {
+      const r = await Gemini.call(req({ levels: need,
+        exclude: PLACEMENT_LEVELS.flatMap(L => by[L].map(q => q.question)).slice(0, 24) }), PLACEMENT_SCHEMA);
+      placementMerge(by, placementNormalize(r && r.questions));
+    } catch(_) {
+      // связь оборвалась или модель не ответила — пауза и следующий круг
+      await new Promise(res => setTimeout(res, 1500 * (round + 1)));
+    }
+  }
+  return short().length ? null : by;
+}
+
+/* Проверка печатного ответа на устройстве: регистр, лишние пробелы, знаки препинания и
+   одна опечатка. Это БЫСТРЫЙ путь, а не приговор: несовпадение здесь означает лишь, что
+   строки разошлись, и такой ответ уходит на разбор по смыслу (placementJudge). */
 function placementAnswerOk(input, q) {
   const a = norm(String(input||'').replace(/[.,!?;:]/g,' '));
   if (!a) return false;
@@ -4148,59 +4351,67 @@ function placementAnswerOk(input, q) {
   return variants.some(v => a === v || editDistance(a, v) <= 1);
 }
 
+/* =====================================================================
+   4.82 — ПЕЧАТНЫЙ ОТВЕТ ЗАСЧИТЫВАЕТСЯ ПО СМЫСЛУ (QUEUE-264)
+   Сравнение строк с допуском в одну опечатку работает на A0-A1, где эталон — одно слово,
+   и разваливается выше: одно и то же говорится по-разному. Проверено на живом коде для
+   итальянского: «Io vorrei un caffè» при эталоне «Vorrei un caffè» — расхождение 3, отказ;
+   «Ieri andai al cinema» при «Ieri sono andato al cinema» — отказ; «Che ore sono?» при
+   «Che ora è?» — отказ. Все три ответа верны. Чем лучше человек знает язык, тем свободнее
+   он отвечает и тем вероятнее промах по строке, — то есть дефект бил ровно по тем, ради
+   кого тест и нужен. Тест выясняет, владеет ли человек уровнем, а не совпал ли он с
+   эталоном побуквенно.
+   Разбор идёт ОДНИМ запросом в конце теста: во время самого теста сеть не нужна (4.82),
+   и ждать уместно там, где человек и так ждёт результата. Запрос не прошёл — остаётся
+   местная проверка строк, тест не рушится.
+   ===================================================================== */
+async function placementJudge(pending, profile) {
+  if (!pending.length) return;
+  try {
+    Screen.loader(t('Проверяю ваши ответы…'));
+    const r = await Gemini.call({
+      task:'check_placement_answers', target_lang: langId(profile.targetLang), native_lang: langId(profile.nativeLang),
+      items: pending.map((it,i) => ({ id:i, cefr:it.q.level, prompt:it.q.question, expected:it.q.answer,
+                                      accept: it.q.accept || [], user_answer: it.user })),
+      rules:'Для КАЖДОГО пункта реши одно: выполняет ли user_answer условие prompt на target_lang. '
+        + 'correct=true, если ответ грамматически верен и передаёт тот же смысл, что expected, — ДАЖЕ ЕСЛИ он написан иначе: '
+        + 'другие слова того же значения, другой порядок слов, другая, но уместная конструкция или время, '
+        + 'добавленное или опущенное личное местоимение, добавленный или опущенный артикль там, где язык это допускает, '
+        + 'отсутствие диакритических знаков и заглавных букв, опечатка в одну-две буквы. '
+        + 'Одно и то же можно сказать по-разному — вариант, которого нет в expected и accept, сам по себе НЕ ошибка. '
+        + 'correct=false только при настоящей смысловой или грамматической ошибке, при ответе не на том языке и при пустом ответе. '
+        + 'Ничего не объясняй, верни только id и correct.' },
+      '{"results":[{"id":0,"correct":true}]}');
+    ((r && Array.isArray(r.results)) ? r.results : []).forEach(x => {
+      const it = pending[+x.id];
+      if (it && x.correct === true) it.ok = true;
+    });
+  } catch(_) { /* остаётся вердикт местной проверки */ }
+}
 
 async function runPlacement(profile) {
   Screen.loader(t('Готовлю вопросы теста…'));
-  const req = extra => ({ task:'placement_test', target_lang: langId(profile.targetLang), native_lang: langId(profile.nativeLang),
-                          levels: PLACEMENT_LEVELS, per_level: PLACEMENT_PER_LEVEL, ...extra });
-  let by;
-  try {
-    const resp = await Gemini.call(req({}), PLACEMENT_SCHEMA);
-    by = placementNormalize(resp && resp.questions);
-  } catch(e) { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
+  let by = null;
+  try { by = await placementCollect(profile); }
+  catch(e) { by = null; }
+  if (!by) return placementIntro(profile,
+    t('Вопросы теста не собрались полностью. Для теста нужна устойчивая связь — попробуйте позже или выберите свой уровень.'));
 
-  // Добор: уровни, на которых пришло меньше трёх вопросов. Один дополнительный запрос,
-  // и только когда есть что добирать — порог остаётся методическим решением, а не следствием
-  // того, сколько строк вернула модель.
-  const short = PLACEMENT_LEVELS.filter(L => by[L].length < PLACEMENT_PER_LEVEL);
-  if (short.length) {
-    try {
-      const add = await Gemini.call(req({ levels: short,
-        exclude: PLACEMENT_LEVELS.flatMap(L => by[L].map(q => q.question)).slice(0, 20) }), PLACEMENT_SCHEMA);
-      const by2 = placementNormalize(add && add.questions);
-      short.forEach(L => by2[L].forEach(q => {
-        if (by[L].length < PLACEMENT_PER_LEVEL && !by[L].some(x => norm(x.question) === norm(q.question))) by[L].push(q);
-      }));
-    } catch(_) { /* добор не вышел — работаем тем, что есть, порог считается ниже по факту */ }
-  }
-
-  /* 4.40. Лестница A0→C1. Уровень засчитан, только если верны ОБА грамматических вопроса И
-     вопрос с печатью ответа; лексика на повышение не влияет (на родственной паре слова
-     узнаются даром). Лестница обрывается на первом непройденном уровне — дальше спрашивать
-     нечего, и человек не тратит время на заведомо чужие вопросы. */
-  // уровень попадает в лестницу, только если его есть чем проверить: иначе он «пройден» даром
-  const testable = L => by[L].some(q => q.skill === 'grammar' || q.skill === 'produce');
-  const ladder = PLACEMENT_LEVELS.filter(L => by[L].length >= 2 && testable(L));
-  if (!ladder.length || ladder[0] !== 'A0') { toast(t('Не удалось получить тест — начнём с A1'), true); return finishOnboarding(profile, 'A1'); }
-  const need = {};
-  ladder.forEach(L => {
-    by[L] = by[L].slice(0, PLACEMENT_PER_LEVEL);
-    const g = by[L].filter(q => q.skill === 'grammar').length;
-    const p = by[L].filter(q => q.skill === 'produce').length;
-    need[L] = { gram: Math.min(PLACEMENT_NEED_GRAM, g), produce: p > 0 };   // требуем всё, что пришло
-  });
-  const qs = ladder.flatMap(L => by[L]);          // порядок задаёт приложение, а не ответ модели
-
-  let idx = 0, okGram = {}, okProd = {}, stopped = false, lastLevel = null;
-
-  // уровень провален, как только добрать нужное число верных уже невозможно
-  const levelDone = (L) => by[L].every(q => qs.indexOf(q) < idx);
-  const levelPassed = (L) => (okGram[L]||0) >= need[L].gram && (!need[L].produce || okProd[L]);
+  /* 4.82. Лестница A0→C2, набор полон на каждой ступени, поэтому порог фиксирован:
+     ступень засчитана, если верны ОБА грамматических вопроса И вопрос с печатью ответа.
+     Лексика на зачёт не влияет (4.40). Лестница обрывается на первой ступени, где
+     провалена грамматика: дальше спрашивать нечего. Печатные ответы разбираются в конце
+     одним запросом, поэтому на них лестница не обрывается — цена в один лишний экран
+     вопросов, зато во время теста нет ни одного обращения к сети. */
+  const ladder = PLACEMENT_LEVELS.slice();
+  const qs = ladder.flatMap(L => by[L]);
+  let idx = 0, okGram = {}, prod = {}, stopped = false, lastLevel = null, busy = false;
+  const gramOK = L => (okGram[L]||0) >= PLACEMENT_NEED_GRAM;
 
   const step = () => {
     if (stopped || idx >= qs.length) return done();
     const q = qs[idx];
-    if (lastLevel && q.level !== lastLevel && !levelPassed(lastLevel)) { stopped = true; return done(); }
+    if (lastLevel && q.level !== lastLevel && !gramOK(lastLevel)) { stopped = true; return done(); }
     lastLevel = q.level;
     const kind = q.skill === 'vocab' ? t('лексика') : q.skill === 'produce' ? t('напишите сами') : t('грамматика');
     const head = `
@@ -4218,8 +4429,9 @@ async function runPlacement(profile) {
         <button class="opt" id="pskip" style="color:var(--dim)">${t('Не знаю')}</button>
       </div>`);
       const send = (val) => {
-        if (placementAnswerOk(val, q)) okProd[q.level] = true;
-        idx++; step();
+        if (busy) return; busy = true;                     // двойное нажатие не проматывает вопрос
+        prod[q.level] = { q, user: String(val||'').trim(), ok:false };
+        idx++; busy = false; step();
       };
       $('#pgo').onclick   = () => send($('#pans').value);
       $('#pskip').onclick = () => send('');
@@ -4238,13 +4450,22 @@ async function runPlacement(profile) {
     });
   };
 
-  const done = () => {
+  const done = async () => {
+    /* Печатные ответы: сперва местная сверка строк (мгновенно и без сети), остальное —
+       одним запросом на разбор по смыслу. Пустой ответ и «Не знаю» в запрос не идут. */
+    const pending = [];
+    PLACEMENT_LEVELS.forEach(L => {
+      const it = prod[L]; if (!it) return;
+      it.ok = placementAnswerOk(it.user, it.q);
+      if (!it.ok && it.user) pending.push(it);
+    });
+    await placementJudge(pending, profile);
     /* Уровнем считается последняя ПОЛНОСТЬЮ пройденная ступень. При сомнении ставим ниже:
        начать слишком низко — несколько лёгких дней, начать слишком высоко — человек читает
        фразу и не понимает, о чём речь, и бросает. */
     let level = 'A0';
     for (const L of ladder) {
-      if (levelPassed(L)) level = L; else break;
+      if (gramOK(L) && prod[L] && prod[L].ok) level = L; else break;
     }
     finishOnboarding(profile, level);
   };
@@ -4261,7 +4482,10 @@ async function finishOnboarding(profile, cefr) {
     DB.profile.a0Total = a0Total;
     DB.nextStage = 'A0.1.01';
   } else {
-    DB.nextStage = fmtCode(cefr==='C2'?'C1':cefr, 1, 1);
+    /* 4.82: подмена C2→C1 стояла с тех пор, как выше C1 попасть было нельзя (тест
+       заканчивался на C1). Ручной выбор довёл лестницу до C2, и подмена стала бы молчаливым
+       понижением: человек выбрал C2, а получил C1 без единого слова об этом. */
+    DB.nextStage = fmtCode(cefr, 1, 1);
   }
   DB.progress.push({ code:'START', date: today(), words:'', next: DB.nextStage, note:'' });
   Storage.addProfile(DB);          // новый профиль, становится активным
@@ -4870,6 +5094,30 @@ function showImportWords() {
     toast('Импортировано ✓');
   };
 }
+/* 4.82: применение смены уровня. Затрагивается ровно то, что относится к МЕСТУ в курсе;
+   всё накопленное (Словарь, Свод правил, история занятий) остаётся нетронутым. Недостающие
+   слова нового уровня и, если нужно, карту грамматики соберёт mainMenu через coreBuildScreen —
+   там же и видимое ожидание, и честный отказ при отсутствии связи. */
+function applyLevelChange(to, from) {
+  if (!to || to === from) return;
+  const p = DB.profile;
+  try { LessonCache.clearLesson(DB.nextStage); } catch(_) {}
+  try { LessonQueue.clear(); } catch(_) {}
+  L = null;
+  p.cefr = to;
+  if (to === 'A0') {
+    if (!p.a0Total) p.a0Total = getA0Total(p.nativeLang, p.targetLang);
+    DB.nextStage = 'A0.1.01';
+  } else {
+    DB.nextStage = fmtCode(to, 1, 1);
+    GrammarCore.raiseTo(to);                 // повышение закрывает темы нижних уровней
+  }
+  DB.progress.push({ code:'LEVEL', date: today(), words:'', next: DB.nextStage, note: from + '→' + to });
+  Storage.save(DB);
+  toast(t('Уровень изменён ✓'));
+  mainMenu();
+}
+
 function showSettings() {
   const p = DB.profile;
   Screen.show(`
@@ -4883,6 +5131,12 @@ function showSettings() {
       <h2>Проверка перевода</h2>
       <p class="note" style="margin:4px 0 12px">Показывает надписи, которые остались на языке исходника. Пройдите по экранам, затем откройте отчёт — он копится по мере просмотра.</p>
       <button class="btn btn-ghost" id="sI18n">Проверить перевод</button>
+    </div>
+    <div class="card">
+      <h2>Уровень</h2>
+      <p class="note" style="margin:4px 0 10px"><span>${t('Сейчас:')}</span> <b>${esc(currentLevel())}</b></p>
+      <p class="note" style="margin:0 0 12px">${t('Смените уровень, если тест определил его неверно или язык оказался знаком лучше, чем казалось. Словарь, освоенные слова и Свод правил останутся; занятия начнутся с первого урока выбранного уровня. Нужен интернет: словарь нового уровня догружается по сети.')}</p>
+      ${levelButtonsHTML(currentLevel())}
     </div>
     <div class="card">
       <h2>Текущий урок</h2>
@@ -4936,6 +5190,18 @@ function showSettings() {
     toast(I18N.t('Урок сброшен — соберём заново'));
     mainMenu();
   };
+  /* 4.82 (QUEUE-265): смена уровня после создания профиля. До этого уровень назначался
+     один раз навсегда — тестом или кнопкой онбординга, — а исправить промах можно было
+     только удалив профиль вместе со словарём и Сводом правил. Путь вверх по курсу
+     (экзамен за экзаменом) человеку с готовым уровнем не помощь, а препятствие. */
+  document.querySelectorAll('.opt[data-lvl]').forEach(b => b.onclick = () => {
+    const to = b.dataset.lvl, from = currentLevel();
+    askConfirm(
+      t('Сменить уровень?'),
+      t('Занятия начнутся с первого урока выбранного уровня. Пройденные уроки, словарь и Свод правил сохранятся, счёт уроков внутри уровня начнётся заново.'),
+      () => applyLevelChange(to, from),
+      t('Сменить'));
+  });
   $('#sI18n').onclick = () => showI18nReport();
   $('#sExp').onclick = () => Storage.exportFile();
   $('#sImp').onclick = () => $('#sFile').click();
@@ -5687,6 +5953,8 @@ const LessonQueue = {
   _key(){ return (DB.profile && DB.profile.id) || ''; },
   _owner: '',
   _reset(){ const k = this._key(); if (k !== this._owner) { this._ready = {}; this._busy = {}; this._owner = k; } },
+  // 4.82: смена уровня в настройках — заготовленные уроки принадлежат прежнему уровню
+  clear(){ this._ready = {}; this._busy = {}; },
   take(code){
     this._reset();
     const l = this._ready[code];
