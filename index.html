@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v143';
+const APP_VERSION = 'v144';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -589,6 +589,11 @@ const UI_EXTRA = [
     'Проверьте интернет и попробуйте снова.',
     'Подготовка урока занимает до двух минут: приложение собирает задания под ваши слова. Можно не закрывать экран.',
     'Пройденные задания этого урока будут сброшены. Слова и задания останутся те же — заново собирать их не нужно.',
+    /* 4.87: подписи социальных ситуаций урока. */
+    'знакомство и разговор ни о чём','шутка и хорошее настроение','просьба и одолжение',
+    'на улице: спросить дорогу и время','извинение и недоразумение','парикмахерская и салон',
+    'согласие и спор','телефонный разговор','перерыв и разговор с коллегой',
+    'поздравление и пожелание','сочувствие и поддержка','в гостях и за столом',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -877,6 +882,13 @@ const I18N = {
       'Профили':'Profiles','Словарь':'Dictionary','Свод правил':'Rules','Настройки':'Settings',
       'Новые слова':'New words','Слова задания':'Task words','Понадобятся':'You will need',
       '🗂 Ситуация урока:':'🗂 Lesson situation:',
+      /* 4.87: социальные ситуации урока. */
+      'знакомство и разговор ни о чём':'meeting people and small talk','шутка и хорошее настроение':'humour and good spirits',
+      'просьба и одолжение':'asking a favour','на улице: спросить дорогу и время':'in the street: asking the way and the time',
+      'извинение и недоразумение':'apologising and misunderstandings','парикмахерская и салон':'hairdresser and salon',
+      'согласие и спор':'agreeing and disagreeing','телефонный разговор':'on the phone',
+      'перерыв и разговор с коллегой':'a break and a chat with a colleague','поздравление и пожелание':'congratulations and wishes',
+      'сочувствие и поддержка':'sympathy and support','в гостях и за столом':'visiting and at the table',
       'магазин и покупки':'shopping','аптека и врач':'pharmacy and doctor','еда и кафе':'food and cafes',
       'дорога и транспорт':'getting around','погода и время года':'weather and seasons','дом и быт':'home and chores',
       'семья и друзья':'family and friends','время и распорядок дня':'time and daily routine','работа и учёба':'work and study',
@@ -3322,19 +3334,39 @@ function taskLevelBlock(lvl){
    как рамку для фраз, сцен и диалогов; профессиональные интересы профиля она не
    отменяет — они остаются второй темой, и доля их растёт по уровням, как прежде.
    ===================================================================== */
+/* 4.87: список ситуаций расширен социальными. Прежние двенадцать отвечали на вопрос «ГДЕ это
+   происходит» — магазин, аптека, вокзал. Ни одной про то, ЧТО происходит МЕЖДУ людьми: пошутить
+   и понять шутку, познакомиться, попросить об одолжении, извиниться, не согласиться, посочувствовать.
+   Повод — живой отзыв: словарь вокзала не помогает, когда коллега шутит, а именно на таком общении
+   человек и застревает. Социальные ситуации тянут за собой ровно то, чего не хватает в предметных:
+   союзы, наречия, междометия, вежливые обороты — их не выучить списком, они живут только в реплике.
+   Социальные и предметные ЧЕРЕДУЮТСЯ: подряд идущие уроки не должны быть оба «про разговор» или
+   оба «про место». Порядок остаётся за приложением (арифметика по номеру урока), как и прежде. */
 const LESSON_SITUATIONS = [
   { id:'shop',     ru:'магазин и покупки',           en:'shopping: a shop, a market, prices, paying at the till' },
+  { id:'meet',     ru:'знакомство и разговор ни о чём', en:'meeting people and small talk: introductions, weather, weekend, how things are going' },
   { id:'health',   ru:'аптека и врач',               en:'health: a pharmacy, a doctor, feeling unwell, medicine' },
+  { id:'joke',     ru:'шутка и хорошее настроение',  en:'humour between people: a light joke with a colleague, teasing, laughing together, reacting to a joke' },
   { id:'food',     ru:'еда и кафе',                  en:'food: a cafe, ordering a meal, cooking at home' },
+  { id:'favour',   ru:'просьба и одолжение',         en:'asking a favour: asking for help, lending and borrowing, agreeing or turning it down politely' },
   { id:'way',      ru:'дорога и транспорт',          en:'getting around: transport, asking the way, tickets' },
+  { id:'street',   ru:'на улице: спросить дорогу и время', en:'stopping a stranger in the street: asking the time, asking the way to the station, thanking them' },
   { id:'weather',  ru:'погода и время года',         en:'weather and seasons, small talk about the weather' },
+  { id:'sorry',    ru:'извинение и недоразумение',   en:'apologising: being late, a misunderstanding, putting things right, accepting an apology' },
   { id:'home',     ru:'дом и быт',                   en:'home: rooms, furniture, household chores, small repairs' },
+  { id:'salon',    ru:'парикмахерская и салон',      en:'at the hairdresser: booking, explaining what you want, length and style, paying and tipping' },
   { id:'family',   ru:'семья и друзья',              en:'family and friends: relatives, visiting, plans together' },
+  { id:'agree',    ru:'согласие и спор',             en:'agreeing and disagreeing: stating an opinion, objecting politely, finding a compromise' },
   { id:'time',     ru:'время и распорядок дня',      en:'time and daily routine: clock time, appointments, plans' },
+  { id:'phone',    ru:'телефонный разговор',         en:'on the phone: calling someone, asking to be put through, leaving a message, bad reception' },
   { id:'work',     ru:'работа и учёба',              en:'work and study: workplace, a shift, tasks, colleagues' },
+  { id:'break',    ru:'перерыв и разговор с коллегой', en:'a break at work: coffee with colleagues, chatting about anything but work, plans for the evening' },
   { id:'services', ru:'почта, банк, ремонт',         en:'everyday services: post office, bank, repair shop, official desk' },
+  { id:'wish',     ru:'поздравление и пожелание',    en:'congratulations and wishes: a birthday, a holiday, good luck, responding to good news' },
   { id:'leisure',  ru:'отдых и свободное время',     en:'leisure: a walk, sport, a film, a day off' },
-  { id:'clothes',  ru:'одежда и вещи',               en:'clothes and belongings: sizes, colours, choosing and trying on' }
+  { id:'care',     ru:'сочувствие и поддержка',      en:'sympathy and support: someone is unwell or upset, offering help, kind words' },
+  { id:'clothes',  ru:'одежда и вещи',               en:'clothes and belongings: sizes, colours, choosing and trying on' },
+  { id:'guest',    ru:'в гостях и за столом',        en:'visiting people: arriving as a guest, offering and accepting food, toasts, saying goodbye' }
 ];
 /* Порядковый номер урока в сквозной шкале: уровень задаёт смещение, поэтому A1.1.05
    и A2.1.05 получают разные ситуации, а два подряд идущих урока — соседние. */
