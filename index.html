@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v145';
+const APP_VERSION = 'v146';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -594,6 +594,11 @@ const UI_EXTRA = [
     'на улице: спросить дорогу и время','извинение и недоразумение','парикмахерская и салон',
     'согласие и спор','телефонный разговор','перерыв и разговор с коллегой',
     'поздравление и пожелание','сочувствие и поддержка','в гостях и за столом',
+    /* 4.89: разбор результата теста уровня. */
+    'вопр.','грамматика','письмо','верно','неверно',
+    'Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.',
+    'Не согласны? Выберите уровень сами — тест не приговор.',
+    'Продолжить',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -963,6 +968,9 @@ const I18N = {
       'Целевой язык должен отличаться от родного':'The language you learn must differ from your native one',
       'Шаг 2':'Step 2',
       'Как лучше начать изучение':'How should we start with',
+      'Тест уровня':'Placement test','вопр.':'questions','грамматика':'grammar','письмо':'writing','верно':'correct','неверно':'wrong',
+      'Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.':'Written answers could not be reviewed — the connection failed. Those answers were credited in your favour.',
+      'Не согласны? Выберите уровень сами — тест не приговор.':'Not what you expected? Pick your own level — the test is not a verdict.',
       'Пройти короткий тест (рекомендуется)':'Take a short test (recommended)',
       /* 4.82: две кнопки ручного старта (A1 и A0) заменены полным списком уровней A0–C2. */
       '— или выберите свой уровень —':'— or pick your own level —',
@@ -1303,6 +1311,26 @@ const SRS = {
    не словарная единица, а две. Дальше это расходится по уроку: фишка говорит одно, эталон другое,
    и человек не понимает, что запоминать. Отсекаем на входе: правило в промпте есть, но правило,
    которого не проверяет код, не выполняется (4.34). */
+/* =====================================================================
+   4.89 (Л-06) — ЗАПИСЬ ЯДРА НЕ СОБИРАЕТСЯ ИЗ РАЗНЫХ ЕДИНИЦ
+   Живой прогон: слово «abgenützt», перевод «полностью изношенный», звучание «[то-ТАЛЬ АБ-ге-нюцт]».
+   Перевод и транскрипция относятся к словосочетанию «total abgenützt», а слово в записи одно —
+   в другом задании то же слово переведено просто «изношен». Запись собрана из двух разных единиц,
+   и дальше расходится по уроку: карточка говорит одно, эталон другое.
+   Ловится соотношением: транскрипция — звучание ЭТОГО слова, значит слов в ней столько же,
+   сколько в самом слове. Лишнее слово в транскрипции означает, что она принадлежит не ему.
+   Мера грубая и намеренно однобокая: она не проверяет перевод (в переводе слов законно бывает
+   больше — «изношенный» против «worn out»), только звучание против записи.
+   ===================================================================== */
+function translitMismatch(term, translit){
+  const t = bareTranslit(translit);
+  if (!t) return false;                                  // пусто — другая история (4.85)
+  const wordsIn = String(term||'').trim().split(/\s+/).filter(Boolean).length;
+  const wordsTr = t.trim().split(/\s+/).filter(Boolean).length;
+  if (!wordsIn || !wordsTr) return false;
+  return wordsTr > wordsIn;                              // звучание длиннее самого слова
+}
+
 function splitSpelling(term){
   const t = String(term || '');
   /* Граница слова \b в JS считает буквами только латиницу, поэтому «или» ищем по пробелам.
@@ -2254,6 +2282,16 @@ const Screen = {
      приложение сломано. Урок собирается несколькими запросами подряд, это честно долго, и
      сказать об этом надо заранее, а не оставлять человека гадать. Строка появляется не сразу:
      на быстрых ответах она была бы шумом; ждём, пока ожидание само не станет заметным. */
+  /* 4.89: строка на УЖЕ показанном экране ожидания обновляется на месте. Пересобирать экран
+     нельзя: вместе с ним сбросился бы секундомер, а он и есть замер. */
+  isLoader() { try { return !!document.getElementById('loadClock'); } catch(_) { return false; } },
+  loaderStep(msg) {
+    try {
+      const box = document.querySelector('.loader');
+      const el = box && box.children && box.children[1];
+      if (el) el.textContent = I18N.t(msg);
+    } catch(_) {}
+  },
   loader(msg, hint) {
     this.show(`<div class="loader"><div class="spin"></div><div>${esc(I18N.t(msg||'Запрос к Gemini…'))}</div>`
       + `<div id="loadClock" style="margin-top:6px;color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums">0:00</div>`
@@ -2690,6 +2728,10 @@ const Core = {
       if (isNonLexicalCode(term)) return;
       // 4.85 (Л-05): «abgenutzt / abgenützt» — две единицы в одной записи, дальше урок расходится сам с собой
       if (splitSpelling(term)) return;
+      /* 4.89 (Л-06): звучание словосочетания при слове-одиночке — запись собрана из разных единиц.
+         Слово не выбрасываем: оно годное, испорчено только звучание. Чистим поле — его добьёт
+         фоновый проход за транскрипцией, и добьёт уже под это слово. */
+      if (translitMismatch(term, w.translit)) w.translit = '';
       seen.add(k); n++;
       DB.core.push({ term, translation: String(w.translation).trim(), translit: w.translit||'', emoji: w.emoji||'',
         part_of_speech: w.part_of_speech||'', article: w.article||'', forms: w.forms||'',
@@ -4601,6 +4643,12 @@ function placementAnswerOk(input, q) {
    ===================================================================== */
 async function placementJudge(pending, profile) {
   if (!pending.length) return;
+  /* 4.89 (v146): разбор либо состоялся, либо нет — и это надо ЗНАТЬ, а не угадывать по вердикту.
+     До сих пор неудача запроса молча оставляла вердикт строгой сверке строк, а она принимает
+     только почти дословное совпадение с эталоном. Печатный вопрос есть на каждой ступени, без
+     него ступень не засчитывается, — то есть один несостоявшийся запрос обнулял весь тест и
+     человек получал A0. В уроках это правило исправлено ещё в 4.84 («молчание модели — не
+     отрицательный вердикт»), а в тест его не перенесли. Переносим. */
   try {
     Screen.loader(t('Проверяю ваши ответы…'));
     const r = await Gemini.call({
@@ -4620,7 +4668,13 @@ async function placementJudge(pending, profile) {
       const it = pending[+x.id];
       if (it && x.correct === true) it.ok = true;
     });
-  } catch(_) { /* остаётся вердикт местной проверки */ }
+    pending.forEach(it => { it.judged = true; });
+  } catch(_) {
+    /* 4.89: разбор не состоялся. Сомнение по вине механики толкуется в пользу ученика: ответ,
+       который человек ЗАПОЛНИЛ, засчитывается. Пустой ответ и «Не знаю» сюда не попадают —
+       они до запроса не доходят. */
+    pending.forEach(it => { it.ok = true; it.judged = false; it.unjudged = true; });
+  }
 }
 
 async function runPlacement(profile) {
@@ -4640,6 +4694,7 @@ async function runPlacement(profile) {
   const ladder = PLACEMENT_LEVELS.slice();
   const qs = ladder.flatMap(L => by[L]);
   let idx = 0, okGram = {}, prod = {}, stopped = false, lastLevel = null, busy = false, misses = 0;
+  const asked = {};                     // 4.89: сколько вопросов ступени человек фактически увидел
   const gramOK = L => (okGram[L]||0) >= PLACEMENT_NEED_GRAM;
 
   const step = () => {
@@ -4649,6 +4704,7 @@ async function runPlacement(profile) {
       stopped = true; return done();           // 4.83: две непройденные ступени подряд — потолок
     }
     lastLevel = q.level;
+    asked[q.level] = (asked[q.level] || 0) + 1;
     const kind = q.skill === 'vocab' ? t('лексика') : q.skill === 'produce' ? t('напишите сами') : t('грамматика');
     const head = `
       <div class="eyebrow">${t('Тест уровня · вопрос')} ${idx+1} / ${qs.length}</div>
@@ -4706,9 +4762,47 @@ async function runPlacement(profile) {
       if (gramOK(L) && prod[L] && prod[L].ok) { level = L; continue; }
       if (++miss > PLACEMENT_FORGIVEN) break;
     }
-    finishOnboarding(profile, level);
+    /* 4.89: разбор по ступеням. Экран вердикта говорил только «Ваш уровень: A0», и понять,
+       почему именно A0, было нельзя ни человеку, ни разработчику: провалена грамматика?
+       печатный ответ? состоялся ли вообще его разбор? Теперь видно каждую ступень. */
+    const report = ladder.filter(L => (asked[L]||0) > 0).map(L => ({
+      level: L,
+      asked: asked[L] || 0,
+      gram: (okGram[L]||0) + '/' + PLACEMENT_NEED_GRAM,
+      gramOK: gramOK(L),
+      prod: prod[L] ? (prod[L].ok ? 'верно' : 'неверно') : '—',
+      unjudged: !!(prod[L] && prod[L].unjudged)
+    }));
+    placementResultScreen(profile, level, report);
   };
   step();
+}
+
+/* 4.89 (v146): экран результата теста показывает РАЗБОР. Прежде он говорил «Ваш уровень: X» и
+   всё; когда вердикт казался неверным, выяснить причину было нечем — ни человеку, ни по
+   скриншоту. Теперь по каждой пройденной ступени видно: сколько вопросов задано, сколько
+   грамматических верно, что с печатным ответом и состоялся ли его разбор. Строка «разбор не
+   состоялся» — честное признание, что связь подвела и ответ засчитан авансом. */
+function placementResultScreen(profile, level, report) {
+  const rows = (report||[]).map(r => `
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:14px">
+      <span><b>${esc(r.level)}</b> <span style="color:var(--dim)">· ${r.asked} ${lbl('вопр.')}</span></span>
+      <span style="color:${r.gramOK ? 'var(--ok)' : 'var(--err)'}">${lbl('грамматика')} ${esc(r.gram)}</span>
+      <span style="color:${r.prod === 'верно' ? 'var(--ok)' : 'var(--err)'}">${lbl('письмо')}: ${lbl(r.prod)}${r.unjudged ? ' ⚠' : ''}</span>
+    </div>`).join('');
+  const warn = (report||[]).some(r => r.unjudged)
+    ? `<p class="note" style="color:var(--orange)">⚠ ${t('Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.')}</p>` : '';
+  Screen.show(`
+    <div class="eyebrow">${t('Тест уровня')}</div>
+    <h1>${t('Ваш уровень:')} ${esc(level)}</h1>
+    <div class="card">${rows}</div>
+    ${warn}
+    <p class="note">${t('Не согласны? Выберите уровень сами — тест не приговор.')}</p>
+    <button class="btn btn-primary" id="go">${t('Продолжить')}</button>
+    ${levelButtonsHTML(level)}`);
+  $('#go').onclick = () => finishOnboarding(profile, level);
+  document.querySelectorAll('.opt[data-lvl]').forEach(b =>
+    b.onclick = () => finishOnboarding(profile, b.dataset.lvl));
 }
 
 /* ---------- Шаг 3: создание базы ---------- */
@@ -6775,19 +6869,44 @@ function fetchLessonChunk2(target) {
      Урок: длина ответа — это время ожидания. Просить в одном ответе всё, что понадобится
      когда-нибудь, — значит платить ожиданием за то, что подождёт.
      ===================================================================== */
+  /* 4.89 (v146): пошаговый замер. Две попытки ускорить сборку вслепую дали ноль — сначала
+     распараллеливание веток, потом сокращение ответа. Значит время съедает что-то одно, и
+     угадывать больше нельзя: показываем, на каком шаге стоим. Строка честно объясняет человеку
+     ожидание и одновременно попадает на скриншот, то есть служит замером. */
+  const STEP_NAMES = ['задания', 'проверка уровня', 'починка эталонов', 'добор недостающих', 'сборка'];
+  let stepAt = 0, stepT0 = Date.now();
+  const nextStep = () => {
+    if (stepAt > 0) {
+      const spent = Math.round((Date.now() - stepT0) / 1000);
+      T._stepLog = (T._stepLog || []).concat(STEP_NAMES[stepAt-1] + ' ' + spent + 'c');
+    }
+    stepT0 = Date.now();
+    if (stepAt >= STEP_NAMES.length) { console.log('[AILEX] подготовка по шагам:', (T._stepLog||[]).join(' · ')); return; }
+    stepAt++;
+    try {
+      if (typeof L !== 'undefined' && L === T && Screen.isLoader())
+        Screen.loaderStep(t('Создаю урок…') + ' ' + stepAt + '/' + STEP_NAMES.length + ': ' + t(STEP_NAMES[stepAt-1]));
+    } catch(_) {}
+  };
   T.chunk2.promise = (async () => {
+    nextStep();                                               // 1: задания
     const sideRule   = fetchGrammarRule(T, p, lvl, words);      // 4.86: параллельно основному
     const sideReview = fetchReviewSentences(T, p, lvl);         // 4.86: параллельно основному
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
-      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_POOL,
+      topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_ASK,
       rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + situationBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. РАЗБОР СЛОВ ЭТАЛОНА ЗДЕСЬ НЕ НУЖЕН (критично, 4.88): поле glossary НЕ заполняй и транскрипцию эталона не присылай — приложение собирает и то и другое отдельным запросом уже после открытия урока. Ответ должен содержать только сами задания: чем короче ответ, тем быстрее человек начнёт заниматься. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
     '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока"}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки. Транскрипцию эталонов и разбор слов НЕ присылай: приложение добирает их отдельно.}');
-    let constructs = dedupeDrills((r2.items||[]).filter(i=>i.prompt_native && i.expected_target)).slice(0,DRILL_POOL);
+    /* 4.89: просим с запасом (DRILL_ASK), а берём сколько нужно. Добор существовал потому, что
+       проверка уровня и починка эталонов выбрасывают часть заданий, и пул становился неполным —
+       за этим следовал ЕЩЁ ОДИН запрос. Лишние задания в первом ответе стоят дёшево (токенов у
+       нас запас в разы), а обращение — дорого: ключ считает именно обращения. Обрезаем до пула
+       уже ПОСЛЕ отбраковки, а не до неё. */
+    let constructs = dedupeDrills((r2.items||[]).filter(i=>i.prompt_native && i.expected_target));
     if (constructs.length < 5) throw new Error('FEW_DRILLS');
     constructs = dropLeaky(constructs);                       // 4.41: условие без целевых слов
-    constructs = await validateDrillLevel(constructs, lvl);   // QUEUE-66: вторая линия обороны по уровню
+    constructs = await (nextStep(), validateDrillLevel(constructs, lvl));   // 2 · QUEUE-66: вторая линия обороны по уровню
     /* 4.51: третья линия — грамматическая полнота эталона. Правило «живая грамотная фраза»
        стоит в запросе с 4.41 и всё равно нарушается: приходило «Ich weine, Stimme klingt»
        без союза и артикля. Проверяем формально то, что видно: существительное урока стоит
@@ -6798,7 +6917,7 @@ function fetchLessonChunk2(target) {
        одного пропущенного артикля. */
     const beforeFix = constructs.length;
     // 4.66 (QUEUE-190): пары «условие ↔ эталон» с потерей смысла repairTargets берёт сам
-    constructs = await repairTargets(constructs, words);
+    constructs = await (nextStep(), repairTargets(constructs, words));            // 3: починка эталонов
     constructs = constructs.filter(c => !targetDefect(c && c.expected_target, words));
     if (constructs.length < beforeFix) console.warn('эталонов отбраковано:', beforeFix - constructs.length);
     /* 4.54 (QUEUE-173): транскрипция эталона — опора подсказки. Поле приходит через раз,
@@ -6819,7 +6938,8 @@ function fetchLessonChunk2(target) {
       } catch(_){}
     });
     const beforeTopUp = constructs.length;
-    constructs = await topUpDrills(dedupeDrills(constructs), words, lvl, DRILL_POOL);
+    constructs = dedupeDrills(constructs).slice(0, DRILL_POOL);      // 4.89: запас израсходован — берём пул
+    constructs = await (nextStep(), topUpDrills(constructs, words, lvl, DRILL_POOL));   // 4: добор (теперь редкость)
     /* 4.85 (Л-03): добор шёл ПОСЛЕ всех проверок и не проверялся ничем. Наружу это вышло так:
        эталон «Apparat ist beendet.» без артикля — при том, что карточка того же слова на том же
        экране показывала «der Apparat». Приложение спорило само с собой, а человек, языка не
@@ -6845,7 +6965,9 @@ function fetchLessonChunk2(target) {
     /* 4.86: параллельные ветки к этому моменту, как правило, уже готовы — ждём их и открываем
        урок. Обогащение (транскрипция фраз, глоссарий для тапа) не блокирует: без него урок
        работает, а подсказка и тап добирают недостающее по месту. */
+    nextStep();                                               // 5: сборка
     try { await Promise.all([sideRule, sideReview]); } catch(_) {}
+    nextStep();
     T.chunk2.state = 'ready';
     Promise.all([
       fillMissingTranslit(constructs).catch(()=>{}),
@@ -7190,6 +7312,9 @@ const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20] };
    уроке не повторение, а ощущение, что материал кончился. Теперь наборы не пересекаются:
    сборка берёт 0..8, контекст — 9..14. Если фраз пришло меньше — работает прежний круг по
    остатку (материал беднее, но урок идёт). */
+/* 4.89: сколько заданий просим у модели. Больше пула ровно настолько, сколько обычно
+   выбраковывают проверка уровня и починка эталонов, — чтобы не ходить за добором. */
+const DRILL_ASK = 19;
 const DRILL_POOL = 15;
 /* 4.66: ядро правил задания вынесено, чтобы ДОБОР шёл ровно по тем же правилам, что основной
    запрос: иначе добранные фразы жили бы по другим требованиям, и дефект пришёл бы с той стороны. */
