@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v146';
+const APP_VERSION = 'v147';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -599,6 +599,16 @@ const UI_EXTRA = [
     'Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.',
     'Не согласны? Выберите уровень сами — тест не приговор.',
     'Продолжить',
+    /* 4.90 (Л-16): подсказки ожидания по месту — урок, тест, языковая база. */
+    'Вопросы теста готовятся заранее, целиком: во время самого теста связь уже не понадобится.',
+    'Языковая база собирается один раз на язык. Дальше занятия начинаются сразу.',
+    'Есть пробелы на уровнях:',
+    'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.',
+    /* 4.93: корзина профилей. */
+    'Недавно удалённые',
+    'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.',
+    'осталось дней:','Вернуть','Профиль восстановлен ✓',
+    'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -931,6 +941,9 @@ const I18N = {
       'Нет связи с сервером':'No server connection','Связь прервалась':'Connection lost','Похоже, заблокирована сеть':'The network seems blocked',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
+      'Недавно удалённые':'Recently deleted','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
+      'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.':'A profile is kept for three days — you can restore it with all its progress, vocabulary and rules.',
+      'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.':'The profile goes to the bin and is kept for three days — you can restore it with all its progress, vocabulary and rules at any time. After three days it is deleted for good.',
       'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over',
       // --- 4.34: онбординг и мастер ключа. Английский — запасной язык до появления ключа
       // (перевод на родной делает Gemini, а на первом экране ключа ещё нет). ---
@@ -968,6 +981,8 @@ const I18N = {
       'Целевой язык должен отличаться от родного':'The language you learn must differ from your native one',
       'Шаг 2':'Step 2',
       'Как лучше начать изучение':'How should we start with',
+      'Есть пробелы на уровнях:':'Gaps found at levels:',
+      'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.':'Your level was not lowered because of them — the app will cover those topics in your lessons.',
       'Тест уровня':'Placement test','вопр.':'questions','грамматика':'grammar','письмо':'writing','верно':'correct','неверно':'wrong',
       'Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.':'Written answers could not be reviewed — the connection failed. Those answers were credited in your favour.',
       'Не согласны? Выберите уровень сами — тест не приговор.':'Not what you expected? Pick your own level — the test is not a verdict.',
@@ -983,6 +998,8 @@ const I18N = {
       'Владею языком как носитель':'I use the language like a native speaker',
       'Нужен интернет: и тест, и словарная база выбранного уровня собираются по сети.':'You need a connection: both the test and the vocabulary base for the chosen level are built online.',
       'Уровень потом можно сменить в настройках профиля.':'The level can be changed later in the profile settings.',
+      'Вопросы теста готовятся заранее, целиком: во время самого теста связь уже не понадобится.':'The test questions are prepared in full beforehand: no connection is needed during the test itself.',
+      'Языковая база собирается один раз на язык. Дальше занятия начинаются сразу.':'The language base is built once per language. After that, lessons start straight away.',
       'Готовлю вопросы теста…':'Preparing the test…',
       'Проверяю вопросы теста…':'Checking the test questions…',
       'Проверяю ваши ответы…':'Checking your answers…',
@@ -1689,6 +1706,37 @@ const Storage = {
       cefr:(p.db.profile||{}).cefr, active: p.id===v.activeId }));
   },
   activeId(){ const v=this._readVault(); return v ? v.activeId : null; },
+  /* 4.93: что лежит в корзине и сколько ему осталось. Просроченное вычищается здесь же —
+     отдельного обхода не нужно, список смотрят при каждом показе экрана профилей. */
+  listTrash(){
+    const v = this._readVault();
+    if (!v || !Array.isArray(v.trash)) return [];
+    const keep = this.TRASH_KEEP_DAYS * 864e5, now = Date.now();
+    const alive = v.trash.filter(x => x && x.db && (now - (x.at || 0)) <= keep);
+    if (alive.length !== v.trash.length) { v.trash = alive; this._writeVault(v); }
+    return alive.map(x => ({
+      id: x.id,
+      name: (x.db.profile && x.db.profile.name) || '?',
+      nativeLang: (x.db.profile && x.db.profile.nativeLang) || '',
+      targetLang: (x.db.profile && x.db.profile.targetLang) || '',
+      cefr: (x.db.profile && x.db.profile.cefr) || '',
+      daysLeft: Math.max(0, Math.ceil((keep - (now - (x.at || 0))) / 864e5))
+    }));
+  },
+  /* Возврат из корзины: профиль встаёт обратно в сейф со всем, что в нём было, и становится
+     активным. Метка принадлежности слота проставится при первом сохранении (4.90). */
+  restoreFromTrash(id){
+    const v = this._readVault();
+    if (!v || !Array.isArray(v.trash)) return false;
+    const i = v.trash.findIndex(x => x && x.id === id);
+    if (i < 0) return false;
+    const x = v.trash.splice(i, 1)[0];
+    v.profiles = Array.isArray(v.profiles) ? v.profiles : [];
+    v.profiles.push({ id: x.id, db: x.db });
+    v.activeId = x.id;
+    this._writeVault(v);
+    return true;
+  },
   switchTo(id){ const v=this._readVault(); if (v && v.profiles.some(p=>p.id===id)){ v.activeId=id; this._writeVault(v); } },
 
   // load: возвращает базу активного профиля (совместимо со старым кодом)
@@ -1696,20 +1744,41 @@ const Storage = {
     const v = this._readVault();
     if (!v || !v.profiles.length) return null;
     const p = v.profiles.find(x=>x.id===v.activeId) || v.profiles[0];
-    return p ? ensureDbArrays(p.db) : null;   // 4.26: базы, созданные до v64, приходят без core/coreMeta
+    if (!p) return null;
+    const db = ensureDbArrays(p.db);          // 4.26: базы, созданные до v64, приходят без core/coreMeta
+    try { Object.defineProperty(db, '_pid', { value: p.id, enumerable: false, writable: true, configurable: true }); } catch(_) {}
+    return db;
   },
   // save: записывает базу активного профиля обратно в сейф (совместимо: Storage.save(DB))
+  /* =====================================================================
+     4.90 (Л-14) — БАЗА ПИШЕТСЯ ТОЛЬКО В СВОЙ ПРОФИЛЬ
+     Живой случай: удалил английский профиль — пропал немецкий. Механика: `wipe` стирает
+     активный профиль и делает активным первый из оставшихся, но база В ПАМЯТИ остаётся от
+     УДАЛЁННОГО. Любое фоновое сохранение, завершившееся следом (транскрипция, глоссарий,
+     стяжения — они доезжают уже после), писало её в слот выжившего и затирало чужие данные.
+     То же самое возможно при переключении профилей: фоновая задача прежнего профиля
+     завершается, когда активен уже другой.
+     Лечится не аккуратностью вызовов, а замком на самой записи: база помнит, чей она слот,
+     и в чужой слот не ложится. Поле служебное и в выгрузку не попадает.
+     ===================================================================== */
   save(d){
     let v = this._readVault();
     if (!v || !v.profiles.length) { return this.addProfile(d); }       // первый профиль
+    if (d && d._pid && d._pid !== v.activeId) {
+      console.warn('[AILEX] сохранение чужой базы отклонено:', d._pid, '≠', v.activeId);
+      return;                                                          // база не своего профиля
+    }
     let p = v.profiles.find(x=>x.id===v.activeId) || v.profiles[0];
-    p.db = d; this._writeVault(v);
+    p.db = d;
+    try { Object.defineProperty(d, '_pid', { value: p.id, enumerable: false, writable: true, configurable: true }); } catch(_) {}
+    this._writeVault(v);
   },
   // addProfile: создаёт новый профиль и делает его активным; возвращает id
   addProfile(d){
     let v = this._readVault() || { schema:'4.6', activeId:null, profiles:[] };
     const id = this._newId();
     v.profiles.push({ id, db: d }); v.activeId = id; this._writeVault(v);
+    try { Object.defineProperty(d, '_pid', { value: id, enumerable: false, writable: true, configurable: true }); } catch(_) {}
     return id;
   },
   /* wipe: удаляет активный профиль; если остались — переключает на первый.
@@ -1777,13 +1846,38 @@ const Storage = {
       if (ch) localStorage.setItem(this.LANG_CACHE_KEY, JSON.stringify(c));
     } catch(_) {}
   },
+  /* =====================================================================
+     4.93 — УДАЛЁННЫЙ ПРОФИЛЬ ХРАНИТСЯ ТРИ ДНЯ ЦЕЛИКОМ
+     До сих пор удаление переживала только ЯЗЫКОВАЯ база (4.49): словарь языка и карта
+     грамматики одинаковы для любого профиля с той же парой, и качать их заново незачем.
+     А всё, что принадлежит человеку — прогресс, выученные слова, Свод правил, история, —
+     стиралось мгновенно и безвозвратно.
+     Повод: профиль пропал не по воле человека (см. Л-14, дефект перезаписи чужого слота),
+     и восстанавливать было нечего. Но и без всяких дефектов удаление легко делается по ошибке:
+     кнопка одна, подтверждение одно, а стоит за ней месяц занятий.
+     Три дня — тот же срок, что у языковой базы. Логика та же: захотел вернуть — вернул;
+     не вернулся за три дня — значит и правда удалял, и хранить больше нечего.
+     Корзина живёт в том же сейфе и в выгрузку базы не попадает.
+     ===================================================================== */
+  TRASH_KEEP_DAYS: 3,
+  TRASH_MAX: 5,
   wipe(){
     let v = this._readVault();
     if (!v) { localStorage.removeItem(this.DB_KEY); return; }
     try { this.stashLang(this.load()); } catch(_) {}
+    const gone = v.profiles.find(p => p.id === v.activeId);
+    if (gone) {
+      v.trash = (Array.isArray(v.trash) ? v.trash : []);
+      v.trash.unshift({ id: gone.id, db: gone.db, at: Date.now() });
+      v.trash = v.trash.slice(0, this.TRASH_MAX);
+    }
     v.profiles = v.profiles.filter(p => p.id !== v.activeId);
     if (v.profiles.length){ v.activeId = v.profiles[0].id; this._writeVault(v); }
+    else if (v.trash && v.trash.length) { v.activeId = null; this._writeVault(v); localStorage.removeItem(this.DB_KEY); }
     else { localStorage.removeItem(this.VAULT_KEY); localStorage.removeItem(this.DB_KEY); }
+    /* 4.90: база удалённого профиля выбрасывается из памяти сразу. Фоновая задача, которая
+       завершится следом, не должна иметь что записывать. */
+    try { if (typeof DB !== 'undefined') DB = null; } catch(_) {}
     /* Языковые данные и переводы интерфейса намеренно НЕ трогаем: их срок жизни считает
        sweepLang по времени последнего использования. */
   },
@@ -2295,8 +2389,12 @@ const Screen = {
   loader(msg, hint) {
     this.show(`<div class="loader"><div class="spin"></div><div>${esc(I18N.t(msg||'Запрос к Gemini…'))}</div>`
       + `<div id="loadClock" style="margin-top:6px;color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums">0:00</div>`
-      + `<div id="loadHint" style="margin-top:10px;color:var(--dim);font-size:13px;max-width:280px;text-align:center;opacity:0;transition:opacity .4s">`
-      + `${esc(I18N.t(hint || 'Подготовка урока занимает до двух минут: приложение собирает задания под ваши слова. Можно не закрывать экран.'))}</div></div>`);
+      /* 4.90 (Л-16): подсказка про подготовку УРОКА стояла значением по умолчанию и всплывала на
+         ЛЮБОМ экране ожидания — в том числе при создании профиля и сборке теста, где урока нет
+         вовсе. Подсказку сообщает тот, кто знает, чего именно ждут; без неё экран обходится молча. */
+      + (hint ? `<div id="loadHint" style="margin-top:10px;color:var(--dim);font-size:13px;max-width:280px;text-align:center;opacity:0;transition:opacity .4s">`
+              + `${esc(I18N.t(hint))}</div>` : '')
+      + `</div>`);
     try {
       clearInterval(this._clock);
       const t0 = Date.now();
@@ -3176,8 +3274,13 @@ const GrammarCore = {
     const m = this.meta(); if (m.migrated) return;
     const cur = this.lvlFor(), ci = GCORE_LEVELS.indexOf(cur);
     const titles = (DB.rules||[]).map(r => norm(r.title));
+    /* 4.91: ступени, на которых тест нашёл пробел, пройденными НЕ считаются, даже если они
+       ниже уровня. Иначе выйдет ровно то, на что жалуется человек: уровень поставлен верно,
+       а дырка внизу закрыта росчерком и никогда не всплывёт в занятиях. */
+    const gaps = new Set((DB.profile && DB.profile.gaps) || []);
     this.list().forEach(t => {
       const ti = GCORE_LEVELS.indexOf(t.cefr);
+      if (gaps.has(t.cefr)) { t.status = 'не пройдена'; t.lesson = ''; return; }
       if (ti < ci) { t.status = 'пройдена'; t.lesson = 'до 4.30'; return; }
       if (ti === ci && titles.some(x => x && (x === norm(t.title) || x.includes(norm(t.title)) || norm(t.title).includes(x)))) {
         t.status = 'пройдена'; t.lesson = 'до 4.30';
@@ -3203,7 +3306,9 @@ const GrammarCore = {
      пройденное остаётся пройденным, уроки просто идут ниже. */
   raiseTo(lvl){
     const i = GCORE_LEVELS.indexOf(lvl); if (i < 0) return;
+    const gaps = new Set((DB.profile && DB.profile.gaps) || []);   // 4.91: пробелы не закрываем
     this.list().forEach(t => {
+      if (gaps.has(t.cefr)) return;
       if (GCORE_LEVELS.indexOf(t.cefr) < i && t.status !== 'пройдена') {
         t.status = 'пройдена'; t.lesson = 'смена уровня';
       }
@@ -3485,7 +3590,7 @@ function scaffoldOverloaded(sc, lvl){
 
 // экран сборки Ядра: один раз при создании профиля и разово при миграции старого профиля
 async function coreBuildScreen(next){
-  Screen.loader(t('Собираю словарь языка — это один раз…'));
+  Screen.loader(t('Собираю словарь языка — это один раз…'), 'Языковая база собирается один раз на язык. Дальше занятия начинаются сразу.');
   try { await Core.build(msg => Screen.loader(msg)); }
   catch(e){
     Core._failed = true;                                  // не зацикливаемся: урок пойдёт резервным путём
@@ -3841,12 +3946,38 @@ function profileSelect(opts) {
             <span style="flex:0 0 auto;color:var(--dim);font-size:20px;margin-left:2px">›</span>
           </button>`;}).join('')}
       </div>
+      ${(() => {
+        /* 4.93: недавно удалённые. Показываем только если есть что возвращать — на пустой
+           корзине раздел не мозолит глаза. */
+        const tr = Storage.listTrash();
+        if (!tr.length) return '';
+        return `
+        <div style="margin-top:22px">
+          <div class="eyebrow">${t('Недавно удалённые')}</div>
+          <p class="note" style="margin:4px 0 10px">${t('Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.')}</p>
+          ${tr.map(x => `
+            <button class="opt trash-card" data-trash="${esc(x.id)}" style="display:flex;align-items:center;gap:10px;text-align:left">
+              <span style="flex:1;min-width:0">
+                <span style="display:block;font-weight:600">${esc(x.name)}${x.cefr ? ' · ' + esc(x.cefr) : ''}</span>
+                <span style="display:block;font-size:12px;color:var(--dim)">${esc(langPair(x.nativeLang))} → ${esc(langPair(x.targetLang))} · ${lbl('осталось дней:')} ${x.daysLeft}</span>
+              </span>
+              <span style="flex:0 0 auto;color:var(--accent);font-size:13px">${t('Вернуть')}</span>
+            </button>`).join('')}
+        </div>`;
+      })()}
       ${allowCreate ? `<button class="btn btn-ghost" id="newProf" style="margin-top:18px;
           background:rgba(11,16,32,.5);border:1px dashed var(--border);backdrop-filter:blur(6px)">
           <span>＋</span> <span>Создать профиль / добавить язык</span></button>` : ''}
     </div>`,
     { back: allowCreate ? null : mainMenu });
   ambientNet(document.getElementById('netBg'));
+  document.querySelectorAll('.trash-card[data-trash]').forEach(b => b.onclick = () => {
+    if (!Storage.restoreFromTrash(b.dataset.trash)) return;          // 4.93: возврат из корзины
+    DB = ensureDbArrays(Storage.load()); Storage.save(DB);
+    I18N.applyProfileLang(DB.profile);
+    toast(t('Профиль восстановлен ✓'));
+    mainMenu();
+  });
   document.querySelectorAll('.prof-card[data-id]').forEach(b => b.onclick = () => {
     Storage.switchTo(b.dataset.id); DB = ensureDbArrays(Storage.load()); Storage.save(DB);
     I18N.applyProfileLang(DB.profile);
@@ -4461,13 +4592,21 @@ function placementIntro(profile, notice) {
    Прямое следствие: во время самого теста сеть не нужна ни на один вопрос.
    ===================================================================== */
 const PLACEMENT_LEVELS    = ['A0','A1','A2','B1','B2','C1','C2'];   // 4.82: лестница доведена до C2
-const PLACEMENT_PER_LEVEL = 4;    // 2 грамматики + 1 лексика + 1 с печатью ответа (4.40)
+/* 4.90 (П-04): вопросов на ступень стало шесть. Прежде их было четыре, но на зачёт влияли
+   только три (два грамматических и печатный), а лексический не влияет вовсе — и ступень
+   решалась фактически тремя ответами. Один неудачный вопрос из двух грамматических рушил
+   ступень целиком: слишком тонкая опора для вывода об уровне человека.
+   Теперь грамматических четыре и нужны три из них: одна осечка прощается ВНУТРИ ступени,
+   а не только между ступенями (4.83). Вердикт стал устойчивее к случайности — и к нашему же
+   браку в вопросах, который перепроверка (4.82) ловит не всегда. */
+const PLACEMENT_PER_LEVEL = 6;    // 4 грамматики + 1 лексика + 1 с печатью ответа (4.90)
 /* 4.40: уровень засчитан, только если верны ОБА грамматических вопроса И вопрос с печатью
    ответа. Лексика на повышение не влияет вовсе: на родственной паре (румынский→итальянский)
    слова узнаются даром, и вопрос на узнавание не доказывает владения языком. Прежний порог
    «два из трёх при четырёх вариантах» проходился случайным угадыванием примерно в шестнадцати
    случаях из ста на уровень, а на родственной паре — заметно чаще. */
-const PLACEMENT_NEED_GRAM = 2;    // оба грамматических
+const PLACEMENT_GRAM_TOTAL = 4;   // 4.90: сколько грамматических на ступени
+const PLACEMENT_NEED_GRAM = 3;    // 4.90: три из четырёх — одна осечка прощается внутри ступени
 const PLACEMENT_ROUNDS    = 4;    // 4.82: кругов сборки набора, включая первый запрос
 /* 4.83: сколько непройденных ступеней прощается. Повод: человек, свободно читающий и говорящий
    по-английски, не вспомнил, как называется долгий звук в вопросе на чтение A0, — и лестница
@@ -4483,16 +4622,22 @@ const PLACEMENT_SCHEMA =
       {"level":"A0","skill":"grammar","question":"вопрос на чтение: какой звук даёт буква / как читается короткое слово","options":["в1","в2","в3","в4"],"correct_index":0},
       {"level":"A0","skill":"produce","question":"условие на родном: напишите на целевом одно короткое слово","answer":"эталон одним словом","accept":["допустимый вариант"]},
       {"level":"A1","skill":"grammar","question":"условие на родном: ТОЛЬКО структура/порядок слов/спряжение, лексика уровня НИЖЕ A1","options":["в1","в2","в3","в4"],"correct_index":1},
+      {"level":"A1","skill":"grammar","question":"второй, третий и четвёртый грамматические вопросы этого уровня — про РАЗНЫЕ явления, не переформулировка одного","options":["в1","в2","в3","в4"],"correct_index":0},
       {"level":"A1","skill":"vocab","question":"узнавание типичного слова A1","options":["в1","в2","в3","в4"],"correct_index":2},
       {"level":"A1","skill":"produce","question":"условие на родном: напишите фразу на целевом (1-4 слова)","answer":"эталонная фраза","accept":["равноценный вариант"]}
-    ]} — РОВНО ПО 4 вопроса на КАЖДЫЙ запрошенный уровень: 2 grammar + 1 vocab + 1 produce. Меньше четырёх на уровень — брак ответа.
+    ]} — РОВНО ПО 6 вопросов на КАЖДЫЙ запрошенный уровень: 4 grammar + 1 vocab + 1 produce. Меньше шести на уровень — брак ответа.
+    ЧЕТЫРЕ ГРАММАТИЧЕСКИХ — ПРО РАЗНОЕ (критично, 4.90): каждый проверяет СВОЁ явление уровня (порядок слов, спряжение, род и артикль, отрицание, предлоги, время), а не одно и то же в четырёх обличьях.
     ЯЗЫК УСЛОВИЯ (критично, 4.42): поле question — ВСЕГДА на native_lang, на ВСЕХ уровнях без исключения, включая A0 и C2.
     Человек проходит тест, ЧТОБЫ выяснить, знает ли он язык, — условие на целевом языке он прочитать не может по определению.
     Неверно: «Wie wird das 'ie' in 'Biene' ausgesprochen?» / «Scegli la forma corretta del verbo essere».
     Верно: «Как читается „ie“ в слове „Biene“?» / «Выберите правильную форму глагола essere: „Io ___ italiano“».
     На целевом языке остаётся ТОЛЬКО материал, который оценивается: сама буква, слово, фраза с пропуском, варианты ответа.
     ВАРИАНТЫ ОТВЕТА (критично, 4.42): в options не должно быть служебных слов целевого языка — только сам оцениваемый материал.
-    Неверно: «wie 'e'», «wie 'ei'». Верно: «[e]», «[ei]», «[a]», «[i]».
+    ЗВУК ЗАПИСЫВАЕТСЯ БУКВАМИ РОДНОГО ЯЗЫКА (критично, 4.90): если вариант ответа обозначает ЗВУК, а не форму слова, он пишется письменностью native_lang.
+    Человек проходит тест ПОТОМУ ЧТО не знает целевого языка — латиница «i», «u», «o», «y» для него такие же незнакомые значки, как и сама буква в вопросе, и выбрать он не может.
+    Неверно для русского родного: «Какой звук передаёт буква ü?» → «i», «u», «o», «y». Верно: «[ю]», «[у]», «[и]», «[о]».
+    Точность не требуется: берётся ближайший звук родного языка. Значки IPA запрещены — человек их не знает.
+    Это правило касается ТОЛЬКО вариантов-звуков на A0. Там, где выбирается форма слова целевого языка (A1 и выше), варианты остаются на целевом.
     ОДИН ВЕРНЫЙ ВАРИАНТ (критично, 4.82): у вопроса с выбором ровно один вариант верен, остальные три однозначно неверны.
     Вопрос, где верны два варианта или где верного нет, приложение выбрасывает после независимой перепроверки, и весь набор приходится собирать заново.
     A0 — проверка ЧТЕНИЯ, а не грамматики: узнать звук буквы, прочитать короткое слово, понять простейшее слово. Никакой грамматики на A0 быть не должно.
@@ -4523,15 +4668,43 @@ function placementNormalize(list) {
     if (!Array.isArray(q.options) || q.options.length < 2) return;
     const ci = +q.correct_index;
     if (!(ci >= 0 && ci < q.options.length)) return;        // без верного ответа вопрос бесполезен
-    by[L].push({ level:L, skill, question:text, options:q.options.map(o => String(o)), correct_index:ci });
+    const item = { level:L, skill, question:text, options:q.options.map(o => String(o)), correct_index:ci };
+    if (soundOptionsUnreadable(item)) return;              // 4.90: звук чужими буквами — вопрос без ответа
+    by[L].push(item);
   });
   return by;
+}
+
+/* =====================================================================
+   4.90 — ВАРИАНТ-ЗВУК НА A0 ОБЯЗАН БЫТЬ ЧИТАЕМ
+   Живой прогон: «Какой звук передаёт буква ü?» с вариантами i · u · o · y при русском родном.
+   Ответить нельзя: латиница для этого человека — такие же незнакомые значки, как сама буква,
+   ради которой он и проходит тест. Правило то же, что для транскрипции (4.85): звук передаётся
+   письменностью, которую человек читает, приблизительность нормальна, нечитаемое запрещено.
+   Проверка узкая и намеренно осторожная: только ступень A0 (там варианты обозначают звуки),
+   только при расхождении письменностей, и только когда НИ ОДИН вариант не содержит родных букв.
+   Смешанные наборы не трогаем — там может быть законный материал.
+   ===================================================================== */
+function soundOptionsUnreadable(q) {
+  try {
+    if (!q || q.level !== 'A0' || q.skill !== 'grammar') return false;
+    if (!translitNeeded()) return false;                  // письменность общая — читаемо и так
+    const nat = LANG_ID[DB && DB.profile ? DB.profile.nativeLang : ''];
+    const script = nat && String(nat[1] || '');
+    const RE = { 'Cyrillic':/[\u0400-\u04FF]/, 'Greek':/[\u0370-\u03FF]/, 'Hebrew':/[\u0590-\u05FF]/,
+                 'Arabic':/[\u0600-\u06FF]/, 'Georgian':/[\u10A0-\u10FF]/, 'Armenian':/[\u0530-\u058F]/,
+                 'Devanagari':/[\u0900-\u097F]/, 'Hangul':/[\uAC00-\uD7AF]/, 'Thai':/[\u0E00-\u0E7F]/ }[script];
+    if (!RE) return false;                                // письменность не описана — не гадаем
+    const opts = Array.isArray(q.options) ? q.options : [];
+    if (!opts.length) return false;
+    return !opts.some(o => RE.test(String(o||'')));       // ни одного варианта родными буквами
+  } catch(_) { return false; }
 }
 
 /* 4.82: полнота ступени — это СОСТАВ, а не число. Четыре вопроса, из которых три
    грамматических, ступень не проверяют: вердикт складывается из двух грамматических
    и одного печатного. */
-const PLACEMENT_CAP = { grammar: PLACEMENT_NEED_GRAM, vocab: 1, produce: 1 };
+const PLACEMENT_CAP = { grammar: PLACEMENT_GRAM_TOTAL, vocab: 1, produce: 1 };
 function placementLevelReady(qs) {
   const list = qs || [];
   return Object.keys(PLACEMENT_CAP).every(k => list.filter(q => q.skill === k).length >= PLACEMENT_CAP[k]);
@@ -4604,7 +4777,7 @@ async function placementCollect(profile) {
       if (!short().length) return by;            // состав полон и перепроверен
       continue;                                  // выбитые вопросы добираются следующим кругом
     }
-    Screen.loader(t('Готовлю вопросы теста…') + ' ' + have() + '/' + TOTAL);
+    Screen.loader(t('Готовлю вопросы теста…') + ' ' + have() + '/' + TOTAL, 'Вопросы теста готовятся заранее, целиком: во время самого теста связь уже не понадобится.');
     try {
       const r = await Gemini.call(req({ levels: need,
         exclude: PLACEMENT_LEVELS.flatMap(L => by[L].map(q => q.question)).slice(0, 24) }), PLACEMENT_SCHEMA);
@@ -4678,7 +4851,7 @@ async function placementJudge(pending, profile) {
 }
 
 async function runPlacement(profile) {
-  Screen.loader(t('Готовлю вопросы теста…'));
+  Screen.loader(t('Готовлю вопросы теста…'), 'Вопросы теста готовятся заранее, целиком: во время самого теста связь уже не понадобится.');
   let by = null;
   try { by = await placementCollect(profile); }
   catch(e) { by = null; }
@@ -4700,8 +4873,13 @@ async function runPlacement(profile) {
   const step = () => {
     if (stopped || idx >= qs.length) return done();
     const q = qs[idx];
-    if (lastLevel && q.level !== lastLevel && !gramOK(lastLevel) && ++misses > PLACEMENT_FORGIVEN) {
-      stopped = true; return done();           // 4.83: две непройденные ступени подряд — потолок
+    /* 4.91: счётчик считает ступени ПОДРЯД. До сих пор он копил провалы за весь тест, и человек
+       с дыркой на A0 и второй на A2 упирался в потолок, хотя между ними прошёл A1 и мог пройти
+       выше. Потолок — это две непройденные ступени ПОДРЯД; одиночная дырка снизу потолком не
+       является, она пробел, и закрывается уроками (см. gaps ниже). */
+    if (lastLevel && q.level !== lastLevel) {
+      if (gramOK(lastLevel)) misses = 0;
+      else if (++misses >= 2) { stopped = true; return done(); }
     }
     lastLevel = q.level;
     asked[q.level] = (asked[q.level] || 0) + 1;
@@ -4757,11 +4935,26 @@ async function runPlacement(profile) {
        на A0 получал A0, даже если дальше проходил A1, A2 и B1. При сомнении по-прежнему ставим
        ниже: два провала закрывают лестницу, и случайное попадание на верхней ступени уровня
        не даёт. */
+    /* =====================================================================
+       4.91 — ПРОБЕЛ НИЖЕ НЕ ПОТОЛОК СВЕРХУ
+       Живой прогон: человек свободно читает и говорит по-английски, но не вспомнил, как
+       называется звук в слове cat, и написал фразу с ошибкой. Прежнее правило считало это
+       потолком и выдавало A1. Знание языка неровное: дырка на нижней ступени говорит о теме,
+       а не об уровне человека, — и лечится она уроком по этой теме, а не понижением всего курса.
+       Уровнем становится ВЫСШАЯ пройденная ступень, до которой не встретилось двух провалов
+       подряд. Пройденные не полностью ступени НИЖЕ неё запоминаются как ПРОБЕЛЫ: приложение
+       не считает их темы освоенными и подтягивает их в уроках, не занижая уровень. */
     let level = 'A0', miss = 0;
+    const gaps = [];
     for (const L of ladder) {
-      if (gramOK(L) && prod[L] && prod[L].ok) { level = L; continue; }
-      if (++miss > PLACEMENT_FORGIVEN) break;
+      const full = gramOK(L) && prod[L] && prod[L].ok;
+      if (full) { level = L; miss = 0; continue; }
+      if (!prod[L] && !(asked[L] > 0)) break;        // ступень вообще не спрашивали — конец лестницы
+      gaps.push(L);
+      if (++miss >= 2) break;                        // две подряд — потолок найден
     }
+    const li = ladder.indexOf(level);
+    const realGaps = gaps.filter(L => ladder.indexOf(L) < li);   // пробелы — только НИЖЕ уровня
     /* 4.89: разбор по ступеням. Экран вердикта говорил только «Ваш уровень: A0», и понять,
        почему именно A0, было нельзя ни человеку, ни разработчику: провалена грамматика?
        печатный ответ? состоялся ли вообще его разбор? Теперь видно каждую ступень. */
@@ -4773,7 +4966,7 @@ async function runPlacement(profile) {
       prod: prod[L] ? (prod[L].ok ? 'верно' : 'неверно') : '—',
       unjudged: !!(prod[L] && prod[L].unjudged)
     }));
-    placementResultScreen(profile, level, report);
+    placementResultScreen(profile, level, report, realGaps);
   };
   step();
 }
@@ -4783,32 +4976,40 @@ async function runPlacement(profile) {
    скриншоту. Теперь по каждой пройденной ступени видно: сколько вопросов задано, сколько
    грамматических верно, что с печатным ответом и состоялся ли его разбор. Строка «разбор не
    состоялся» — честное признание, что связь подвела и ответ засчитан авансом. */
-function placementResultScreen(profile, level, report) {
+function placementResultScreen(profile, level, report, gaps) {
   const rows = (report||[]).map(r => `
     <div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:14px">
       <span><b>${esc(r.level)}</b> <span style="color:var(--dim)">· ${r.asked} ${lbl('вопр.')}</span></span>
       <span style="color:${r.gramOK ? 'var(--ok)' : 'var(--err)'}">${lbl('грамматика')} ${esc(r.gram)}</span>
       <span style="color:${r.prod === 'верно' ? 'var(--ok)' : 'var(--err)'}">${lbl('письмо')}: ${lbl(r.prod)}${r.unjudged ? ' ⚠' : ''}</span>
     </div>`).join('');
+  /* 4.91: пробел — это не приговор ступени, а тема к подтяжке. Человеку это надо сказать
+     прямо, иначе красная строка в разборе читается как «уровень занижен». */
+  const gapNote = (gaps && gaps.length)
+    ? `<p class="note" style="color:var(--orange)">🔧 ${t('Есть пробелы на уровнях:')} ${esc(gaps.join(', '))}. ${t('Уровень из-за них не понижен — эти темы приложение подтянет в уроках.')}</p>` : '';
   const warn = (report||[]).some(r => r.unjudged)
     ? `<p class="note" style="color:var(--orange)">⚠ ${t('Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.')}</p>` : '';
   Screen.show(`
     <div class="eyebrow">${t('Тест уровня')}</div>
     <h1>${t('Ваш уровень:')} ${esc(level)}</h1>
     <div class="card">${rows}</div>
+    ${gapNote}
     ${warn}
     <p class="note">${t('Не согласны? Выберите уровень сами — тест не приговор.')}</p>
     <button class="btn btn-primary" id="go">${t('Продолжить')}</button>
     ${levelButtonsHTML(level)}`);
-  $('#go').onclick = () => finishOnboarding(profile, level);
+  $('#go').onclick = () => finishOnboarding(profile, level, gaps);
   document.querySelectorAll('.opt[data-lvl]').forEach(b =>
-    b.onclick = () => finishOnboarding(profile, b.dataset.lvl));
+    b.onclick = () => finishOnboarding(profile, b.dataset.lvl, gaps));
 }
 
 /* ---------- Шаг 3: создание базы ---------- */
-async function finishOnboarding(profile, cefr) {
+async function finishOnboarding(profile, cefr, gaps) {
   ONBOARDING = false;                // 4.42: профиль создан — шапка снова показывает этап
   profile.cefr = cefr;
+  /* 4.91: ступени ниже уровня, которые тест НЕ засчитал. Их темы не считаются освоенными —
+     приложение подтянет их в уроках, а уровень при этом остаётся тем, что человек показал. */
+  if (Array.isArray(gaps) && gaps.length) profile.gaps = gaps.slice(0, 6);
   DB = Storage.newDB(profile);
   if (cefr === 'A0') {
     const a0Total = getA0Total(profile.nativeLang, profile.targetLang);
@@ -4828,7 +5029,7 @@ async function finishOnboarding(profile, cefr) {
   toast('Сохранено ✓');
   // 4.26: интересы уже известны — здесь и только здесь собирается Ядро языка (раздел 4.4)
   if (Core.needsBuild()) {
-    Screen.loader(t('Собираю словарь языка — это один раз…'));
+    Screen.loader(t('Собираю словарь языка — это один раз…'), 'Языковая база собирается один раз на язык. Дальше занятия начинаются сразу.');
     try { await Core.build(msg => Screen.loader(msg)); }
     catch(e){ Core._failed = true; toast('Словарь языка соберём позже — урок будет работать', true); }
   }
@@ -4934,11 +5135,17 @@ function mainMenu() {
   const _cl = LessonCache.hydrate(Episodes.latest('lesson'));
   const _ca = Episodes.latest('a0');
   const _cs = Episodes.latest('super');
-  const cachedLesson = (_cl && _cl.code && _cl.i > 0 && !_cl.isSuper) ? _cl : null;
+  /* 4.90: снимок урока считался годным только при i > 0 — то есть после ПЕРВОГО отвеченного
+     задания. Человек, открывший урок и вышедший, не ответив, терял весь собранный материал:
+     приложение его не замечало и следующим нажатием собирало урок заново, минуты. Условие было
+     про «есть ли что продолжать», а должно быть про «есть ли что показывать»: собранные задания
+     ценны сами по себе — они стоили ожидания, за которое человек уже заплатил. */
+  const _clReady = !!(_cl && (_cl.i > 0 || (Array.isArray(_cl.constructs) && _cl.constructs.length)));
+  const cachedLesson = (_cl && _cl.code && _clReady && !_cl.isSuper) ? _cl : null;
   const cachedA0     = (_ca && _ca.code && Array.isArray(_ca.steps) && _ca.steps.length && _ca.stepIdx > 0) ? _ca : null;
   const cachedSuper  = (_cs && _cs.sqScene) ? _cs : null;
   const hasCached = !!cachedLesson;
-  const cachedStep = hasCached ? cachedLesson.i : 0;
+  const cachedStep = hasCached ? Math.max(1, cachedLesson.i) : 0;   // 4.90: «задание 0» не бывает
   const cachedTotal = hasCached ? (cachedLesson.steps||[]).length : 0;
   /* QUEUE-65: одно занятие — одна карточка. Прежде их было две: «Продолжить урок X» возвращала
      на сохранённое место, а «Урок X» вызывала startLesson() и начинала тот же урок ЗАНОВО, молча
@@ -5579,7 +5786,7 @@ function showSettings() {
    работает». Свой диалог работает везде и заодно переводится. */
 $('#sWipe').onclick = () => askConfirm(
   t('Удалить профиль?'),
-  t('Прогресс, словарь и коллекция правил этого профиля будут удалены с устройства. Языковая база сохранится на 3 дня — если создадите профиль с той же парой языков, качать заново не придётся.'),
+  t('Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.'),
   () => { Storage.wipe(); boot(); });
 }
 
@@ -6181,7 +6388,7 @@ async function startLesson(code, _prefetch) {
   }
   if (!_prefetch) LessonCache.clearLesson(code);   // 4.29: этот урок начинается заново — прочие эпизоды не трогаем
   const p = DB.profile, lvl = parseCode(code).lvl;
-  if (!_prefetch) Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…');
+  if (!_prefetch) Screen.loader(I18N.t('Готовлю урок') + ' ' + code + '…', 'Подготовка урока занимает до двух минут: приложение собирает задания под ваши слова. Можно не закрывать экран.');
   // --- баланс лексики: бытовое + интересы (раздел 5.0) ---
   const survN = Math.round(7 * (SURVIVAL_SHARE[lvl] ?? 0.3));
   const known = DB.vocab.map(w => w.term).slice(-300);   // строки — список исключений резервного генератора
@@ -6721,6 +6928,8 @@ function unknownTargetWords(text, words) {
 async function repairTargets(items, words) {
   const list = Array.isArray(items) ? items : [];
   if (!list.length) return list;
+  /* 4.92: запрос уходит ВСЕГДА — вычитка нужна и тогда, когда код дефектов не нашёл.
+     «He go train» кодом не ловится: согласование и предлоги для 72 языков он не проверяет. */
   const bad = [];
   list.forEach((c, i) => {
     if (!c || !c.expected_target) return;
@@ -6731,17 +6940,43 @@ async function repairTargets(items, words) {
     const thin = phraseTooThin(c, (L && L.lvl) || curCefr());   // 4.85 (П-02): фраза короче связной
     if (hits.length || unk.length || gap || bare || thin) bad.push({ i, hits, unk, gap, bare, thin });
   });
-  if (!bad.length) return list;
+  /* =====================================================================
+     4.92 — ЭТАЛОН ВЫЧИТЫВАЕТСЯ ЦЕЛИКОМ, А НЕ ТОЛЬКО ТАМ, ГДЕ КОД НАШЁЛ ДЕФЕКТ
+     Живой прогон, английский A1.1.01: каркас «He go ___», эталон «He go train». По-английски
+     неверно дважды — нет окончания третьего лица и нет предлога. Ученик написал верно
+     («He goes to the train»), получил крестик, а объяснение при этом заявило, что надо было
+     сказать «He goes by train» — то есть модель сама опровергла эталон, который мы ей и дали.
+     Приложение показало неграмотную фразу образцом: это худшее, что оно может сделать.
+     Почему не поймали: код проверяет ТОЛЬКО то, что умеет проверять кодом, — артикли известных
+     существительных, объём смысла, длину. Согласование глагола и выбор предлога кодом для 72
+     языков не проверить, а правило «эталон — живая грамотная фраза» жило в промпте и потому
+     не выполнялось (4.34).
+     Решение: запрос на починку получает ВЕСЬ набор, а не только помеченные пункты. Помеченные
+     идут с пояснением, что именно нашёл код; остальные — на вычитку: неграмотную фразу переписать,
+     грамотную вернуть без изменений. Обращение по-прежнему одно на урок — платы не прибавилось.
+     ===================================================================== */
+  if (!list.some(c => c && c.expected_target)) return list;
   try {
     const p = DB.profile;
+    const flagged = new Map(bad.map(b => [b.i, b]));
     const r = await Gemini.call({
       task: 'fix_targets', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
       cefr: (L && L.lvl) || curCefr(),
-      items: bad.map(b => ({ id: b.i, prompt_native: list[b.i].prompt_native || '',
-                             expected_target: list[b.i].expected_target,
-                             bare_nouns: b.hits, unchecked_words: b.unk, meaning_gap: !!b.gap, empty_prompt: !!b.bare,
-                             too_short: !!b.thin })),
-      rules: 'ТРИ ПРОВЕРКИ по каждому пункту, все обязательны. '
+      items: list.map((c, i) => {
+        const b = flagged.get(i) || {};
+        return { id: i, prompt_native: (c && c.prompt_native) || '',
+                 expected_target: (c && c.expected_target) || '',
+                 bare_nouns: b.hits || [], unchecked_words: b.unk || [],
+                 meaning_gap: !!b.gap, empty_prompt: !!b.bare, too_short: !!b.thin,
+                 flagged: !!flagged.has(i) };
+      }).filter(x => x.expected_target),
+      rules: 'ВЫЧИТКА КАЖДОГО ПУНКТА (критично, 4.92): пункты приходят ВСЕ, а не только помеченные. '
+           + 'По каждому сперва ответь себе: грамотно ли expected_target на target_lang — согласование, '
+           + 'формы глагола, предлоги, порядок слов, обязательные служебные слова. Неграмотную фразу перепиши; '
+           + 'грамотную верни БЕЗ ИЗМЕНЕНИЙ. Пример настоящей ошибки: «He go train» — нет окончания третьего лица '
+           + 'и нет предлога, верно «He goes by train». Такую фразу нельзя показывать ученику как образец. '
+           + 'Пункты с flagged=true код пометил особо — по ним ниже сказано, что именно он нашёл. '
+           + 'ТРИ ПРОВЕРКИ по помеченным пунктам, все обязательны. '
            + '(0) ДЛИНА И СМЫСЛ (4.85). Пункт с too_short=true код пометил особо: эталон короче связной фразы этого уровня. '
            + 'Перепиши пару целиком — условие на родном и эталон — так, чтобы вышло законченное осмысленное предложение '
            + '(на A0-A1 от 4 слов, на A2 от 5, на B1 и выше от 6), с хотя бы одной служебной частью речи: предлогом, союзом, '
@@ -6764,12 +6999,15 @@ async function repairTargets(items, words) {
            + 'Больше НИЧЕГО не меняй: уровень, длина и построение фразы остаются прежними. Если пункт в порядке — верни его без изменений. '
            + 'expected_translit — транскрипция ИТОГОВОЙ фразы буквами native_lang.'
     }, '{"items":[{"id":0,"expected_target":"эталон — исправленный или прежний, если был в порядке","expected_translit":"[транскрипция всей фразы]"}]}');
+    let rewritten = 0;
     ((r && r.items) || []).forEach(f => {
       const i = Number(f && f.id);
       if (!Number.isInteger(i) || !list[i] || !f.expected_target) return;
+      if (norm(list[i].expected_target) !== norm(f.expected_target)) rewritten++;
       list[i].expected_target = f.expected_target;
       if (f.expected_translit) list[i].expected_translit = f.expected_translit;
     });
+    if (rewritten) console.log('[AILEX] вычитка переписала эталонов:', rewritten, 'из', list.length);
   } catch(e) { console.warn('repairTargets:', e && e.message); }
   return list;
 }
@@ -6888,10 +7126,29 @@ function fetchLessonChunk2(target) {
         Screen.loaderStep(t('Создаю урок…') + ' ' + stepAt + '/' + STEP_NAMES.length + ': ' + t(STEP_NAMES[stepAt-1]));
     } catch(_) {}
   };
+  /* =====================================================================
+     4.90 (v147) — ЗАЛП ЗАПРОСОВ БЬЁТ В ЛИМИТ, А ЖДЁМ МЫ ЕГО ДО КОНЦА
+     Замер по шагам (то, ради чего он и вводился): шаг 2 — 11 c, шаг 3 — 35 c, шаг 4 — 48 c,
+     а шаг 5 начался на 1:38 и стоял до 3:43. Четыре шага из пяти укладываются в полторы минуты,
+     всё остальное время — ожидание побочных веток.
+     Причина — в моей же правке 4.86. Три запроса, вылетающие в одну секунду, бьют в МИНУТНЫЙ
+     лимит ключа: приходит 429, дальше повторы с паузами 2 и 4 секунды, потом переход на запасную
+     модель и то же самое. Один такой круг стоит минуты. Косвенное подтверждение: свёрнутое
+     приложение «догружалось» — паузы дожидались своего, пока человек был в другом окне.
+     Два вывода, оба записаны в правило:
+     — параллельность на ключе с лимитом ПО ОБРАЩЕНИЯМ не бесплатна: она превращается в 429;
+     — ждать до конца того, без чего можно показать экран, нельзя. Правило грамматики и
+       предложения повторения нужны позже первых заданий, значит ожидание им не положено.
+     Ветки уходят с задержкой, чтобы не совпасть с основным запросом, и ждём мы их не дольше
+     короткого срока: не успели — урок открывается, они доезжают сами.
+     ===================================================================== */
+  const SIDE_DELAY = 1500;                                    // 4.90: не в одну секунду с основным
+  const SIDE_WAIT  = 12000;                                   // 4.90: дольше не ждём — откроем урок
+  const later = (ms, fn) => new Promise(res => setTimeout(() => res(fn()), ms));
   T.chunk2.promise = (async () => {
     nextStep();                                               // 1: задания
-    const sideRule   = fetchGrammarRule(T, p, lvl, words);      // 4.86: параллельно основному
-    const sideReview = fetchReviewSentences(T, p, lvl);         // 4.86: параллельно основному
+    const sideRule   = later(SIDE_DELAY,     () => fetchGrammarRule(T, p, lvl, words));
+    const sideReview = later(SIDE_DELAY * 2, () => fetchReviewSentences(T, p, lvl));
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
       topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_ASK,
@@ -6948,6 +7205,9 @@ function fetchLessonChunk2(target) {
     /* 4.86: повторная проверка нужна только тогда, когда добор ЧТО-ТО добавил. Безусловный
        запрос стоил ещё одного обращения на каждом уроке — при лимите, который считает обращения,
        это заметная плата за проверку того, что уже проверено. */
+    /* 4.92: добор идёт ПОСЛЕ вычитки, поэтому добранные фразы её ещё не проходили. Раньше
+       повторный заход делался только ради проверки артиклей; теперь он же вычитывает добранное,
+       и пропускать его, когда добор что-то добавил, нельзя. */
     if (constructs.length > beforeTopUp) {
       const beforeTop = constructs.length;
       constructs = await repairTargets(constructs, words);
@@ -6966,7 +7226,21 @@ function fetchLessonChunk2(target) {
        урок. Обогащение (транскрипция фраз, глоссарий для тапа) не блокирует: без него урок
        работает, а подсказка и тап добирают недостающее по месту. */
     nextStep();                                               // 5: сборка
-    try { await Promise.all([sideRule, sideReview]); } catch(_) {}
+    /* 4.90: ждём побочные ветки ограниченное время. Не успели — открываем урок, они допишут
+       T.grammar и T.reviewDrills сами: шаг с правилом идёт после презентации, а повторение —
+       ближе к концу, так что времени у них с запасом. */
+    try {
+      await Promise.race([
+        Promise.all([sideRule, sideReview]).catch(()=>{}),
+        new Promise(res => setTimeout(res, SIDE_WAIT))
+      ]);
+    } catch(_) {}
+    /* 4.90: снимок пишется СРАЗУ по готовности материала. Прежде первое сохранение случалось
+       только при переходе по шагам (renderStep), и урок, показанный но не начатый, пропадал. */
+    try { if (typeof L !== 'undefined' && L === T) LessonCache.save(); } catch(_) {}
+    Promise.all([sideRule, sideReview]).catch(()=>{}).then(() => {
+      try { if (typeof L !== 'undefined' && L === T) LessonCache.save(); } catch(_) {}
+    });
     nextStep();
     T.chunk2.state = 'ready';
     Promise.all([
@@ -6982,7 +7256,7 @@ async function ensureChunk2() {
   if (!L) return false;
   if (L.chunk2.state === 'ready') return true;
   if (L.chunk2.state === 'idle') fetchLessonChunk2();
-  Screen.loader('Создаю урок…');
+  Screen.loader('Создаю урок…', 'Подготовка урока занимает до двух минут: приложение собирает задания под ваши слова. Можно не закрывать экран.');
   try { await L.chunk2.promise; return true; }
   catch(e) {
     if (String(e.message||'').startsWith('KEY:')) { keyWizard(true); return false; }
