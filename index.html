@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v147';
+const APP_VERSION = 'v148';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -609,6 +609,7 @@ const UI_EXTRA = [
     'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.',
     'осталось дней:','Вернуть','Профиль восстановлен ✓',
     'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.',
+    'Письменные ответы дались хуже устных — ступень это не отменило, письму уделим больше внимания в занятиях.',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -981,6 +982,7 @@ const I18N = {
       'Целевой язык должен отличаться от родного':'The language you learn must differ from your native one',
       'Шаг 2':'Step 2',
       'Как лучше начать изучение':'How should we start with',
+      'Письменные ответы дались хуже устных — ступень это не отменило, письму уделим больше внимания в занятиях.':'Written answers went worse than the rest — that did not cancel the step; we will give writing more attention in your lessons.',
       'Есть пробелы на уровнях:':'Gaps found at levels:',
       'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.':'Your level was not lowered because of them — the app will cover those topics in your lessons.',
       'Тест уровня':'Placement test','вопр.':'questions','грамматика':'grammar','письмо':'writing','верно':'correct','неверно':'wrong',
@@ -4944,29 +4946,47 @@ async function runPlacement(profile) {
        Уровнем становится ВЫСШАЯ пройденная ступень, до которой не встретилось двух провалов
        подряд. Пройденные не полностью ступени НИЖЕ неё запоминаются как ПРОБЕЛЫ: приложение
        не считает их темы освоенными и подтягивает их в уроках, не занижая уровень. */
+    /* =====================================================================
+       4.96 — ПИСЬМО НЕ ОТМЕНЯЕТ СТУПЕНЬ, А ЗАПОМИНАЕТСЯ ПРОБЕЛОМ
+       Живой прогон: на A1 грамматика 4 из 4, письменный ответ забракован — и ступень не
+       засчитана, уровень A0. Человек, знающий язык, отправлен к азам из-за одного ответа,
+       который к тому же проверяется хуже всего: сперва строгой сверкой строк, потом разбором
+       по смыслу, который может и не состояться (4.89).
+       Это противоречит правилу 4.91, введённому днём раньше: пробел не понижает уровень.
+       Печатный ответ — такой же пробел, только в письме. Ступень решает грамматика (три из
+       четырёх), а промах в письме записывается отдельно и подтягивается занятиями.
+       Порог остаётся высоким: три верных грамматических из четырёх — это не «больше половины»,
+       а уверенное владение ступенью; случайным угадыванием такое не берётся.
+       ===================================================================== */
     let level = 'A0', miss = 0;
-    const gaps = [];
+    const gaps = [], writeGaps = [];
     for (const L of ladder) {
-      const full = gramOK(L) && prod[L] && prod[L].ok;
-      if (full) { level = L; miss = 0; continue; }
-      if (!prod[L] && !(asked[L] > 0)) break;        // ступень вообще не спрашивали — конец лестницы
+      if (!(asked[L] > 0)) break;                    // ступень вообще не спрашивали — конец лестницы
+      if (gramOK(L)) {
+        level = L; miss = 0;
+        if (prod[L] && !prod[L].ok) writeGaps.push(L);   // 4.96: письмо хромает — но ступень взята
+        continue;
+      }
       gaps.push(L);
       if (++miss >= 2) break;                        // две подряд — потолок найден
     }
     const li = ladder.indexOf(level);
     const realGaps = gaps.filter(L => ladder.indexOf(L) < li);   // пробелы — только НИЖЕ уровня
+    const realWrite = writeGaps.filter(L => ladder.indexOf(L) <= li);   // 4.96: письмо своего уровня и ниже
     /* 4.89: разбор по ступеням. Экран вердикта говорил только «Ваш уровень: A0», и понять,
        почему именно A0, было нельзя ни человеку, ни разработчику: провалена грамматика?
        печатный ответ? состоялся ли вообще его разбор? Теперь видно каждую ступень. */
     const report = ladder.filter(L => (asked[L]||0) > 0).map(L => ({
       level: L,
       asked: asked[L] || 0,
-      gram: (okGram[L]||0) + '/' + PLACEMENT_NEED_GRAM,
+      /* 4.95 (Л-19): показывали «верных / порог» — и выходило «4/3», что читается как сбой.
+         Показываем «верных из заданных», а цвет по-прежнему по порогу. */
+      gram: (okGram[L]||0) + '/' + PLACEMENT_GRAM_TOTAL,
       gramOK: gramOK(L),
       prod: prod[L] ? (prod[L].ok ? 'верно' : 'неверно') : '—',
       unjudged: !!(prod[L] && prod[L].unjudged)
     }));
-    placementResultScreen(profile, level, report, realGaps);
+    placementResultScreen(profile, level, report, realGaps, realWrite);
   };
   step();
 }
@@ -4976,7 +4996,7 @@ async function runPlacement(profile) {
    скриншоту. Теперь по каждой пройденной ступени видно: сколько вопросов задано, сколько
    грамматических верно, что с печатным ответом и состоялся ли его разбор. Строка «разбор не
    состоялся» — честное признание, что связь подвела и ответ засчитан авансом. */
-function placementResultScreen(profile, level, report, gaps) {
+function placementResultScreen(profile, level, report, gaps, writeGaps) {
   const rows = (report||[]).map(r => `
     <div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:14px">
       <span><b>${esc(r.level)}</b> <span style="color:var(--dim)">· ${r.asked} ${lbl('вопр.')}</span></span>
@@ -4987,6 +5007,10 @@ function placementResultScreen(profile, level, report, gaps) {
      прямо, иначе красная строка в разборе читается как «уровень занижен». */
   const gapNote = (gaps && gaps.length)
     ? `<p class="note" style="color:var(--orange)">🔧 ${t('Есть пробелы на уровнях:')} ${esc(gaps.join(', '))}. ${t('Уровень из-за них не понижен — эти темы приложение подтянет в уроках.')}</p>` : '';
+  /* 4.96: промах в письме — не приговор ступени, а отдельная тема. Человеку это надо сказать
+     прямо, иначе красная строка «письмо: неверно» рядом с зачтённой ступенью читается как сбой. */
+  const writeNote = (writeGaps && writeGaps.length)
+    ? `<p class="note" style="color:var(--orange)">✍️ ${t('Письменные ответы дались хуже устных — ступень это не отменило, письму уделим больше внимания в занятиях.')}</p>` : '';
   const warn = (report||[]).some(r => r.unjudged)
     ? `<p class="note" style="color:var(--orange)">⚠ ${t('Разбор письменных ответов не состоялся — связь подвела. Такие ответы засчитаны в вашу пользу.')}</p>` : '';
   Screen.show(`
@@ -4994,6 +5018,7 @@ function placementResultScreen(profile, level, report, gaps) {
     <h1>${t('Ваш уровень:')} ${esc(level)}</h1>
     <div class="card">${rows}</div>
     ${gapNote}
+    ${writeNote}
     ${warn}
     <p class="note">${t('Не согласны? Выберите уровень сами — тест не приговор.')}</p>
     <button class="btn btn-primary" id="go">${t('Продолжить')}</button>
@@ -6409,6 +6434,16 @@ async function startLesson(code, _prefetch) {
   if (!words) {                       // Ядро исчерпано или не построено → резервный путь
     try { words = await legacyVocabPortion(p, lvl, survN, known); }
     catch(e) {
+      /* =====================================================================
+         4.94 — ФОНОВАЯ ЗАГОТОВКА НЕ ВЫНОСИТ СВОИ СБОИ НА ЭКРАН
+         Живой случай: человек вошёл в профиль, дособралась языковая база, открылось меню — и
+         поверх меню, без единого нажатия, выпал экран «Не получилось подготовить урок».
+         Он ничего не открывал: это упала ФОНОВАЯ заготовка следующего урока (4.81).
+         Признак `_prefetch` глушил экран ожидания, но не экран сбоя, — и запас, который затевался
+         ради того, чтобы человек НЕ ждал, стал сам себя объявлять поломкой.
+         Правило: работа, которую человек не заказывал, не имеет права занимать его экран —
+         ни ожиданием, ни ошибкой. Не вышло — тихо не вышло, попробуем в следующий раз. */
+      if (_prefetch) throw e;                       // фоновая сборка молчит: разберётся вызвавший
       if (String(e.message).startsWith('KEY:')) return keyWizard(true);
       return lessonLoadError(()=>startLesson(code), e);
     }
@@ -6971,10 +7006,20 @@ async function repairTargets(items, words) {
                  flagged: !!flagged.has(i) };
       }).filter(x => x.expected_target),
       rules: 'ВЫЧИТКА КАЖДОГО ПУНКТА (критично, 4.92): пункты приходят ВСЕ, а не только помеченные. '
-           + 'По каждому сперва ответь себе: грамотно ли expected_target на target_lang — согласование, '
-           + 'формы глагола, предлоги, порядок слов, обязательные служебные слова. Неграмотную фразу перепиши; '
-           + 'грамотную верни БЕЗ ИЗМЕНЕНИЙ. Пример настоящей ошибки: «He go train» — нет окончания третьего лица '
+           + 'По каждому проверь ОБЕ стороны пары. '
+           + '(а) expected_target на target_lang: согласование, формы глагола, предлоги, порядок слов, '
+           + 'обязательные служебные слова. Пример настоящей ошибки: «He go train» — нет окончания третьего лица '
            + 'и нет предлога, верно «He goes by train». Такую фразу нельзя показывать ученику как образец. '
+           /* 4.95 (Л-18): вычитка смотрела только на целевую сторону, и наружу полезли условия
+              вроде «Я покупаю врача книгу», «Врачи идут на велосипедах», «Книги стоят деньги».
+              Условие на родном человек читает ПЕРВЫМ: если оно бессмысленно, задание бессмысленно
+              целиком, каким бы грамотным ни был эталон. */
+           + '(б) prompt_native на native_lang: это должна быть НОРМАЛЬНАЯ фраза родного языка, какую человек '
+           + 'действительно скажет, — с верными падежами, предлогами и порядком слов. Дословный подстрочник '
+           + 'с целевого запрещён. Примеры настоящих ошибок: «Я покупаю врача книгу» (верно: «Я покупаю книгу для врача»), '
+           + '«Врачи идут на велосипедах» (верно: «Врачи ездят на велосипедах»), «Книги стоят деньги» (верно: «Книги стоят дорого»). '
+           + 'Если пара осмысленна только на одной стороне — перепиши ОБЕ так, чтобы они значили одно и то же. '
+           + 'Грамотную и осмысленную пару верни БЕЗ ИЗМЕНЕНИЙ. '
            + 'Пункты с flagged=true код пометил особо — по ним ниже сказано, что именно он нашёл. '
            + 'ТРИ ПРОВЕРКИ по помеченным пунктам, все обязательны. '
            + '(0) ДЛИНА И СМЫСЛ (4.85). Пункт с too_short=true код пометил особо: эталон короче связной фразы этого уровня. '
@@ -6998,7 +7043,7 @@ async function repairTargets(items, words) {
            + 'на родном языке и своими словами; без этого задание нерешаемо. '
            + 'Больше НИЧЕГО не меняй: уровень, длина и построение фразы остаются прежними. Если пункт в порядке — верни его без изменений. '
            + 'expected_translit — транскрипция ИТОГОВОЙ фразы буквами native_lang.'
-    }, '{"items":[{"id":0,"expected_target":"эталон — исправленный или прежний, если был в порядке","expected_translit":"[транскрипция всей фразы]"}]}');
+    }, '{"items":[{"id":0,"expected_target":"эталон — исправленный или прежний, если был в порядке","expected_translit":"[транскрипция всей фразы]","prompt_native":"условие на родном — исправленное или прежнее, если было в порядке"}]}');
     let rewritten = 0;
     ((r && r.items) || []).forEach(f => {
       const i = Number(f && f.id);
@@ -7006,6 +7051,11 @@ async function repairTargets(items, words) {
       if (norm(list[i].expected_target) !== norm(f.expected_target)) rewritten++;
       list[i].expected_target = f.expected_target;
       if (f.expected_translit) list[i].expected_translit = f.expected_translit;
+      // 4.95 (Л-18): исправленное условие на родном принимается вместе с эталоном
+      if (f.prompt_native && String(f.prompt_native).trim()) {
+        if (norm(list[i].prompt_native || '') !== norm(f.prompt_native)) rewritten++;
+        list[i].prompt_native = String(f.prompt_native).trim();
+      }
     });
     if (rewritten) console.log('[AILEX] вычитка переписала эталонов:', rewritten, 'из', list.length);
   } catch(e) { console.warn('repairTargets:', e && e.message); }
@@ -7853,15 +7903,59 @@ function glossBatches(holes){
   });
   return out;
 }
+/* =====================================================================
+   4.95 (Л-17) — РАЗБОР СЛОВА СНАЧАЛА БЕРЁТСЯ ИЗ ЯДРА
+   Живой прогон v147: тап почти по каждому слову давал «Не удалось получить разбор» —
+   `Buch`, `habe`, `für`, `das`, `zum`, `fährt`, `Bahnhof`. Это последствие 4.88: глоссарий
+   убран из основного запроса и переложен на фоновый сбор. Фоновый сбор не доехал (одна
+   неудачная сеть — и разбора нет НИ У ОДНОГО слова), после чего каждый тап шёл в сеть
+   поодиночке и падал там же.
+   Между тем половина этих слов у приложения уже есть: `das`, `für`, `zum`, `habe` — закрытый
+   класс языка, `Buch` и `Bahnhof` — словарь уровня. Всё это лежит в Ядре с переводом и
+   звучанием, и спрашивать его у модели незачем ни фоном, ни по тапу.
+   Порядок: своё → сеть → тап как исключение. Правило шире: прежде чем спрашивать модель,
+   приложение обязано посмотреть, не знает ли оно ответ само.
+   ===================================================================== */
+function glossaryFromCore(item, key) {
+  try {
+    const text = String((item && item[key]) || '');
+    if (!text) return 0;
+    const core = (DB && Array.isArray(DB.core)) ? DB.core : [];
+    const vocab = (DB && Array.isArray(DB.vocab)) ? DB.vocab : [];
+    if (!core.length && !vocab.length) return 0;
+    const known = new Map();
+    [...core, ...vocab].forEach(w => {
+      const t = norm(w && (w.term || w.word));
+      if (!t || known.has(t)) return;
+      known.set(t, { term: (w.term || w.word), translit: w.translit || '', translation: w.translation || '' });
+    });
+    const have = new Set((Array.isArray(item.glossary) ? item.glossary : [])
+      .flatMap(g => tokenize(String((g && g.term) || ''))));
+    let added = 0;
+    item.glossary = Array.isArray(item.glossary) ? item.glossary : [];
+    tokenize(text).forEach(w => {
+      if (have.has(w)) return;
+      const k = known.get(w);
+      if (!k || !k.translation) return;              // без перевода запись бесполезна (4.67)
+      item.glossary.push({ term: k.term, translit: k.translit, translation: k.translation });
+      have.add(w); added++;
+    });
+    return added;
+  } catch(_) { return 0; }
+}
+
 async function fillGlossaryGaps(items, textField, _pass) {
   const list = Array.isArray(items) ? items : [];
   const key = textField || 'expected_target';        // 4.67: у предложений повторения поле `sentence`
   const found = [];
+  let fromCore = 0;
   list.forEach((it, i) => {
     resolveLocalCombos(it, key);          // 4.80: разделённые приставки — сначала локально, без сети
+    if (!_pass) fromCore += glossaryFromCore(it, key);   // 4.95: своё знание — раньше сети
     const miss = glossaryMissing(it, key);
     if (miss.length) found.push({ i, sentence: it[key], words: miss });
   });
+  if (fromCore) console.log('[AILEX] разбор из Ядра, без сети:', fromCore, 'слов');
   if (!found.length) return list;
   const batches = glossBatches(found);
   console.log('[AILEX] слов вне глоссария:', found.reduce((s,h)=>s+h.words.length,0),
