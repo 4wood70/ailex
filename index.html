@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v148';
+const APP_VERSION = 'v149';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -610,6 +610,8 @@ const UI_EXTRA = [
     'осталось дней:','Вернуть','Профиль восстановлен ✓',
     'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.',
     'Письменные ответы дались хуже устных — ступень это не отменило, письму уделим больше внимания в занятиях.',
+    'На устройстве нет голоса для этого языка — ориентируйтесь на транскрипцию.',
+    'Озвучка не сработала:',
     'напишите сами',
     'Напишите ответ',
     'Ответить',
@@ -983,6 +985,8 @@ const I18N = {
       'Шаг 2':'Step 2',
       'Как лучше начать изучение':'How should we start with',
       'Письменные ответы дались хуже устных — ступень это не отменило, письму уделим больше внимания в занятиях.':'Written answers went worse than the rest — that did not cancel the step; we will give writing more attention in your lessons.',
+      'На устройстве нет голоса для этого языка — ориентируйтесь на транскрипцию.':'Your device has no voice for this language — use the transliteration instead.',
+      'Озвучка не сработала:':'Speech failed:',
       'Есть пробелы на уровнях:':'Gaps found at levels:',
       'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.':'Your level was not lowered because of them — the app will cover those topics in your lessons.',
       'Тест уровня':'Placement test','вопр.':'questions','грамматика':'grammar','письмо':'writing','верно':'correct','неверно':'wrong',
@@ -1647,7 +1651,12 @@ function ttsRefresh() {
 }
 try {
   ttsRefresh();
-  if (window.speechSynthesis) speechSynthesis.onvoiceschanged = ttsRefresh;
+  /* 4.97: подписка через addEventListener, а не присваиванием. Присваивание — единственная
+     ячейка на всё приложение: кто написал последним, тот и остался, а остальные молча
+     перестали получать событие. */
+  if (window.speechSynthesis && speechSynthesis.addEventListener)
+    speechSynthesis.addEventListener('voiceschanged', ttsRefresh);
+  else if (window.speechSynthesis) speechSynthesis.onvoiceschanged = ttsRefresh;
 } catch(_) {}
 /* Голос считается подходящим, если совпадает基 языковая часть кода: у «am-ET» это «am». */
 function hasVoice(c) {
@@ -1989,6 +1998,38 @@ function isBadTranslit(str, nat) {
 }
 // Словарная форма: существительное с артиклем рода. Источник — Ядро языка (v64) и Словарь,
 // где артикль лежит отдельным полем; запроса к Gemini не требуется.
+/* =====================================================================
+   4.97 (Л-25) — АРТИКЛЬ В КОРОТКОЙ МЕТКЕ
+   Живой прогон: развилка квеста предлагала «Brot kaufen» и «Uhr kaufen» — существительные
+   голые. То же самое, что в задании на узнавание (Л-20), только метка приходит от модели,
+   а не из Ядра, и просить артикль в промпте недостаточно (4.34).
+   Короткую метку можно дополнить кодом: слова в ней стоят в словарной форме, склонения нет,
+   и известное Ядру существительное получает свой артикль. Условия намеренно узкие — метка не
+   длиннее четырёх слов, слово известно Ядру, артикль у него есть, и рядом ещё не стоит
+   определитель. В бегущем тексте так делать НЕЛЬЗЯ: там формы падежные, и «der Brot» вместо
+   «dem Brot» научит неверному. Поэтому правило живёт только здесь, а не в общем показе. */
+function labelWithArticles(label) {
+  try {
+    const txt = String(label || '').trim();
+    if (!txt) return label;
+    const toks = txt.split(/\s+/);
+    if (toks.length > 4) return txt;                       // не метка, а фраза — не трогаем
+    const core = (DB && Array.isArray(DB.core)) ? DB.core : [];
+    if (!core.length) return txt;
+    const arts = articleSet();
+    const out = [];
+    toks.forEach((tk, i) => {
+      const bare = tk.replace(/[.,!?;:»«"'()]+$/g, '');
+      const tail = tk.slice(bare.length);
+      const prev = out.length ? norm(out[out.length-1].replace(/[^\p{L}]/gu,'')) : '';
+      const hit = core.find(w => norm(w && w.term) === norm(bare));
+      if (hit && hit.article && !arts.has(prev)) out.push(hit.article + ' ' + bare + tail);
+      else out.push(tk);
+    });
+    return out.join(' ');
+  } catch(_) { return label; }
+}
+
 function dictForm(term) {
   /* 4.55 (v108): принимает и запись слова, и голую строку. Экраны новых слов, Словаря и списка
      слов главы печатали `w.term` как есть, поэтому существительное из Ядра, у которого артикль
@@ -2294,14 +2335,92 @@ const Gemini = {
 };
 
 /* ---------- TTS / STT (раздел 5.0 «Чтение и звучание», 5.B) ---------- */
+/* =====================================================================
+   4.97 (Л-22) — МОЛЧАЩИЙ ДИНАМИК ОБЪЯСНЯЕТСЯ, А НЕ МОЛЧИТ
+   Живой прогон: кнопки озвучки не издают ни звука — ни в словах, ни во фразах. Приложение
+   просило синтезатор произнести текст с меткой языка и на этом успокаивалось. Но метка языка
+   не равна наличию ГОЛОСА: на телефоне может не быть немецкого голоса вовсе, и тогда
+   `speak` уходит в пустоту, ничего не сообщая. Человек видит кнопку, жмёт, ничего не
+   происходит — и делает единственный доступный вывод: приложение сломано.
+   Теперь голос выбирается явно из списка установленных, а если подходящего нет — человеку
+   говорят об этом прямо и отсылают к транскрипции. Список голосов на Android приходит с
+   задержкой, поэтому первое обращение при пустом списке ждёт события и повторяет попытку.
+   Правило: кнопка, которая ничего не делает, обязана сказать почему. Молчание читается
+   как поломка — и в этом случае читается верно. */
+function voiceFor(bcp) {
+  try {
+    ttsRefresh();                                       // 4.97: список мог подъехать только что
+    const all = TTS_VOICES.length ? TTS_VOICES : ((speechSynthesis.getVoices && speechSynthesis.getVoices()) || []);
+    if (!all.length) return undefined;                  // список ещё не пришёл — решает вызывающий
+    const want = String(bcp || '').toLowerCase();
+    const base = want.split('-')[0];
+    return all.find(v => String(v.lang||'').toLowerCase() === want)
+        || all.find(v => String(v.lang||'').toLowerCase().replace('_','-') === want)
+        || all.find(v => String(v.lang||'').toLowerCase().split(/[-_]/)[0] === base)
+        || null;                                        // голоса нет — так и скажем
+  } catch(_) { return undefined; }
+}
+let _voiceWarned = false;
 function speak(text, langCode, rate) {
   const bcp = langBcp(langCode);
   if (!bcp) return;          // нет надёжной озвучки → только транскрипция
   try {
-    speechSynthesis.cancel();
+    const v = voiceFor(bcp);
+    if (v === undefined) {
+      /* 4.97: список голосов ещё не пришёл. Ждём события — но подпиской, а не присваиванием:
+         прежняя редакция затирала общий обработчик, и приложение переставало узнавать о
+         появлении голосов вообще. Ждём ограниченно: не пришли за две секунды — значит на
+         устройстве голосов нет, и человеку об этом говорят. */
+      try {
+        const once = () => { try { speechSynthesis.removeEventListener('voiceschanged', once); } catch(_) {}
+                             ttsRefresh(); speak(text, langCode, rate); };
+        if (speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', once);
+        setTimeout(() => { try { speechSynthesis.removeEventListener('voiceschanged', once); } catch(_) {}
+                           ttsRefresh();
+                           if (!TTS_VOICES.length && !_voiceWarned) {
+                             _voiceWarned = true;
+                             toast(t('На устройстве нет голоса для этого языка — ориентируйтесь на транскрипцию.'), true);
+                           } }, 2000);
+      } catch(_) {}
+      return;
+    }
+    if (v === null) {
+      if (!_voiceWarned) {
+        _voiceWarned = true;
+        toast(t('На устройстве нет голоса для этого языка — ориентируйтесь на транскрипцию.'), true);
+      }
+      return;
+    }
+    /* 4.97: «cancel() сразу перед speak()» — известная ловушка Chrome на Android: очередь
+       остаётся в подвешенном состоянии, и новая реплика не звучит вовсе. Отменяем только
+       когда есть что отменять. */
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = bcp; u.rate = rate || 0.92;
+    u.lang = bcp; u.voice = v; u.rate = rate || 0.92;
+    /* 4.97: молчание должно называть себя. Синтезатор сообщает причину отказа сам — раньше
+       мы её выбрасывали, и человек видел лишь то, что кнопка не работает. Причина выводится
+       на экран так же, как коды ошибок сети (4.90): она нужна для разбора по скриншоту. */
+    u.onerror = ev => {
+      const why = String((ev && (ev.error || ev.name)) || 'unknown');
+      console.warn('[AILEX] озвучка не сработала:', why, '· голос:', v && v.name, '· язык:', bcp);
+      if (why === 'interrupted' || why === 'canceled') return;   // это мы сами и прервали
+      if (!_voiceWarned) {
+        _voiceWarned = true;
+        toast(t('Озвучка не сработала:') + ' ' + why, true);
+      }
+    };
     speechSynthesis.speak(u);
+    /* Chrome на Android умеет «проглотить» реплику молча: очередь пуста, ошибки нет, звука нет.
+       Проверяем через мгновение — если синтезатор даже не начал, говорим об этом. */
+    setTimeout(() => {
+      try {
+        if (!speechSynthesis.speaking && !speechSynthesis.pending && !_voiceWarned) {
+          _voiceWarned = true;
+          console.warn('[AILEX] озвучка не стартовала · голос:', v && v.name, '· язык:', bcp);
+          toast(t('Озвучка не сработала:') + ' no-start', true);
+        }
+      } catch(_) {}
+    }, 400);
   } catch(e){}
 }
 /* Кнопка повтора озвучки целевой фразы в блоках обратной связи.
@@ -7937,6 +8056,7 @@ function glossaryFromCore(item, key) {
       if (have.has(w)) return;
       const k = known.get(w);
       if (!k || !k.translation) return;              // без перевода запись бесполезна (4.67)
+      if (translitNeeded() && !bareTranslit(k.translit)) return;   // 4.97 (Л-23): и без звучания тоже
       item.glossary.push({ term: k.term, translit: k.translit, translation: k.translation });
       have.add(w); added++;
     });
@@ -8822,7 +8942,13 @@ function drillRecog(s) {
     <div class="card">
       <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🎯 узнавание</span></div>
       <p class="note" style="margin:0 0 8px;color:var(--accent)">🎯 Какое слово соответствует: <b>«${esc(w.translation)}»</b>?</p>
-      ${opts.map(o=>`<button class="opt" data-t="${esc(o.term)}">${esc(o.term)}</button>`).join('')}
+      ${/* 4.97 (Л-20): вариант ответа — СЛОВАРНАЯ форма, то есть существительное со своим
+            артиклем. Прежде здесь стояло голое `term`, и человек выбирал «Uhr», «Brot»,
+            «Apotheke» — то есть заучивал слово без рода. Артикль в немецком не украшение:
+            без него слово в речи не употребить, а выучить его отдельно позже уже почти
+            невозможно. Артикль лежит в записи Ядра отдельным полем, спрашивать нечего.
+            Сверка ответа идёт по `data-t` — там прежний `term`, поэтому проверка не меняется. */
+        opts.map(o=>`<button class="opt" data-t="${esc(o.term)}">${esc(dictForm(o))}</button>`).join('')}
       <div class="feedback" id="fb"></div>
       <button class="btn btn-primary" id="next" style="margin-top:12px" disabled>Дальше</button>
     </div>`);
@@ -8833,7 +8959,9 @@ function drillRecog(s) {
       b.classList.add('right');
       document.querySelectorAll('.opt').forEach(x=>x.disabled=true);
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term);
+      /* 4.97: верный ответ показывается словарной формой и со звучанием — это та запись,
+         которую человек должен запомнить. */
+      $('#fb').innerHTML = `✅ <b>${esc(dictForm(w))}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term);
       speak(w.term, DB.profile.targetLang);
       $('#next').disabled = false;
     } else {
@@ -9955,7 +10083,7 @@ async function runQuest(cfg) {
         Q.branchesUsed++;
         $('#fb').innerHTML += `<div style="margin-top:12px;font-weight:600">${lbl('Развилка — что делаем дальше?')}</div>`
           + `<div style="font-size:12.5px;color:var(--dim);margin:2px 0 8px">${lbl('Выберите продолжение — история пойдёт по нему.')}</div>`
-          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
+          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(labelWithArticles(c.label_target))}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
@@ -10445,9 +10573,43 @@ async function fetchTranslitOnly(word, sentence, _depth){
   return '';
 }
 
+/* 4.97 (Л-21): тап по слову сперва ищет ответ в Ядре и Словаре. Экран «Фразы на каждый день»
+   глоссария не имеет вовсе, поэтому там КАЖДЫЙ тап уходил в сеть и при заминке возвращал
+   «Не удалось получить разбор» — иногда уже на следующем экране, когда человек про него забыл.
+   Между тем «Danke», «gut», «Tag» лежат в Ядре с переводом и звучанием. Правило то же, что в
+   4.95 для глоссария: прежде чем спрашивать модель, посмотреть, не знает ли приложение ответ сам.
+   Запись Ядра даёт словарную форму и перевод, но не разбор ФОРМЫ в этом предложении, поэтому
+   ответ помечается как краткий: карточка покажет его сразу, а полный разбор подтянется следом. */
+function wordCardFromCore(token) {
+  try {
+    const t = norm(token);
+    if (!t) return null;
+    const pool = [...((DB && DB.core) || []), ...((DB && DB.vocab) || [])];
+    const hit = pool.find(w => norm(w && (w.term || w.word)) === t)
+             || pool.find(w => {           // запись может нести артикль: «die Uhr» при тапе по «Uhr»
+                  const parts = String((w && (w.term || w.word)) || '').trim().split(/\s+/);
+                  return parts.length === 2 && articleSet().has(norm(parts[0])) && norm(parts[1]) === t;
+                });
+    if (!hit || !hit.translation) return null;
+    /* 4.97 (Л-23): запись Ядра без транскрипции местным ответом НЕ считается. Иначе выходит
+       обмен одного дефекта на другой: тап отвечает мгновенно, но без звучания — а звучание
+       и есть половина ответа, когда письменность чужая (4.85). Такое слово уходит в сеть,
+       как и прежде: лучше подождать и получить полную карточку, чем получить половину сразу.
+       Там, где письменности общие, транскрипция не нужна вовсе, и запись годна без неё. */
+    if (translitNeeded() && !bareTranslit(hit.translit)) return null;
+    return { surface: token, dict: dictForm(hit) || hit.term || hit.word,
+             translit: hit.translit || '', translation: hit.translation,
+             morph: '', _local: true };
+  } catch(_) { return null; }
+}
+
 async function fetchWordCard(token, sentence, strict) {
   const p = DB.profile;
   let out = null;
+  if (!strict) {
+    const local = wordCardFromCore(token);
+    if (local) return local;                       // 4.97: своё знание — мгновенно и без сети
+  }
   try {
     out = await Gemini.call({
       task:'translate_word', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
@@ -10691,9 +10853,33 @@ function bareTranslit(t) {
   return String(t == null ? '' : t).trim()
     .replace(/^[\[\](){}<>«»""'']+/, '').replace(/[\[\](){}<>«»""'']+$/, '').trim();
 }
-function showTranslit(t) {
+/* =====================================================================
+   4.97 (Л-24) — НЕЧИТАЕМАЯ ТРАНСКРИПЦИЯ НЕ ПОКАЗЫВАЕТСЯ
+   Живой прогон: «das Brot [das Brot] — хлеб». В скобках должно стоять ЗВУЧАНИЕ, а стоит само
+   слово латиницей — для человека, читающего кириллицей, это ровно ноль сведений, да ещё и
+   выдаёт себя за ответ: пустое поле он бы заметил, а это принял за транскрипцию.
+   Запрет на нечитаемую запись есть с 4.85, но стоял он на ВХОДЕ в Ядро. Всё, что приходит
+   мимо Ядра — подсказки квеста, глоссарий задания, карточки тапа, — шло на экран как есть.
+   Проверка переносится в точку показа: она одна на всё приложение, и мимо неё нечитаемое
+   на экран не попадёт, откуда бы ни пришло. Пустая скобка лучше ложной: отсутствие видно
+   и чинится дозапросом, подделка не видна никому.
+   ===================================================================== */
+function showTranslit(t, term) {
   const s = bareTranslit(t);
-  return s ? '[' + s + ']' : '';
+  if (!s) return '';
+  try {
+    if (translitNeeded()) {
+      const nat = LANG_ID[(DB && DB.profile && DB.profile.nativeLang) || ''];
+      const script = nat && String(nat[1] || '');
+      const RE = { 'Cyrillic':/[\u0400-\u04FF]/, 'Greek':/[\u0370-\u03FF]/, 'Hebrew':/[\u0590-\u05FF]/,
+                   'Arabic':/[\u0600-\u06FF]/, 'Georgian':/[\u10A0-\u10FF]/, 'Armenian':/[\u0530-\u058F]/,
+                   'Devanagari':/[\u0900-\u097F]/, 'Hangul':/[\uAC00-\uD7AF]/, 'Thai':/[\u0E00-\u0E7F]/,
+                   'Kana':/[\u3040-\u30FF]/ }[script];
+      if (RE && !RE.test(s)) return '';               // записано не той письменностью — не звучание
+    }
+    if (term && norm(s) === norm(term)) return '';    // повтор самого слова — тоже не звучание
+  } catch(_) {}
+  return '[' + s + ']';
 }
 
 /* 4.70 (QUEUE-199): словарная форма не печатается дважды. Правило «не повторяй словарную форму
@@ -11858,7 +12044,7 @@ async function runSuperquestAct(cfg) {
         Q.branchesUsedInAct++;
         $('#fb').innerHTML += `<div style="margin-top:12px;font-weight:600">${lbl('Развилка — что делаем дальше?')}</div>`
           + `<div style="font-size:12.5px;color:var(--dim);margin:2px 0 8px">${lbl('Выберите продолжение — история пойдёт по нему.')}</div>`
-          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(c.label_target)}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
+          + sc.choices.slice(0,2).map((c,ci)=>`<button class="opt branch ${ci?'branch-b':'branch-a'}" data-c="${esc(c.id)}"><b>${esc(labelWithArticles(c.label_target))}</b>${c.label_native?`<small>${esc(c.label_native)}</small>`:''}</button>`).join('');
         document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ Q.choice=b.dataset.c; advance(sc,false,false); });
         $('#check').style.display='none';
       } else {
