@@ -297,7 +297,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v149';
+const APP_VERSION = 'v150';
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -942,6 +942,8 @@ const I18N = {
       'Профиль создан':'Profile created','Работа над ошибками':'Working on mistakes','Квест завершён':'Quest complete',
       'База AILEX_StatusDB':'AILEX_StatusDB database','Ключ Gemini':'Gemini key','Ключ доступа к Gemini':'Gemini access key',
       'Нет связи с сервером':'No server connection','Связь прервалась':'Connection lost','Похоже, заблокирована сеть':'The network seems blocked',
+      'Проверка озвучки':'Speech check','Проверить озвучку':'Test speech',
+      'Если кнопки 🔊 молчат, нажмите — приложение произнесёт короткую фразу и покажет, что ответил синтезатор устройства.':'If the 🔊 buttons stay silent, tap here — the app will say a short phrase and show what the device synthesiser reported.',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
       'Недавно удалённые':'Recently deleted','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
@@ -1645,6 +1647,9 @@ const langBcp  = c => { const l = LANGS.find(l=>l.c===c); return (l && l.bcp) ||
    нажатие на букву молчало без всякого объяснения. Хуже того, по этой же логике выдавался
    диктант там, где звучать нечему. Теперь спрашиваем устройство. Список голосов приходит
    асинхронно, поэтому кешируем и обновляем по событию. */
+/* 4.98: короткая фраза для проверки озвучки — на целевом языке, чтобы голос был тот самый. */
+const TTS_PROBE = { de:'Guten Tag', en:'Hello', it:'Buongiorno', fr:'Bonjour', es:'Buenos días',
+                    pl:'Dzień dobry', tr:'Merhaba', pt:'Bom dia', nl:'Goedendag', sv:'God dag' };
 let TTS_VOICES = [];
 function ttsRefresh() {
   try { TTS_VOICES = speechSynthesis.getVoices() || []; } catch(_) { TTS_VOICES = []; }
@@ -5884,8 +5889,53 @@ function showSettings() {
       <h2>Ключ Gemini</h2>
       <button class="btn btn-ghost btn-mini" id="sKey" style="margin-top:8px">Заменить ключ</button>
     </div>
+    <div class="card">
+      <h2>Проверка озвучки</h2>
+      <p class="note" style="margin:4px 0 12px">Если кнопки 🔊 молчат, нажмите — приложение произнесёт короткую фразу и покажет, что ответил синтезатор устройства.</p>
+      <button class="btn btn-ghost" id="sTts">Проверить озвучку</button>
+      <div id="ttsReport" class="note" style="margin-top:10px;white-space:pre-wrap"></div>
+    </div>
     <button class="btn btn-ghost" id="sWipe" style="color:var(--err)">Удалить профиль и начать заново</button>`,
     { back: mainMenu });
+  /* =====================================================================
+     4.98 — ПРОВЕРКА ОЗВУЧКИ ОТВЕЧАЕТ ЗА ОДИН ЭКРАН
+     Кнопки 🔊 молчали, и — что важнее — молчала сама диагностика: синтезатор не сообщал об
+     ошибке, потому что с его точки зрения ошибки не было. Такое бывает, когда реплика уходит
+     в устройство и там теряется: нулевая громкость медиа, урезанный голос, окружение браузера.
+     Догадки на этом кончаются: нужен снимок состояния, а не очередная гипотеза (правило 4.89).
+     Проверка показывает всё, что приложение знает о синтезаторе: сколько голосов видит, какой
+     выбран, какие события пришли и сколько длилась реплика. Один экран — один ответ.
+     ===================================================================== */
+  const ttsSay = (line) => { const el = $('#ttsReport'); if (el) el.textContent += (el.textContent ? '\n' : '') + line; };
+  if ($('#sTts')) $('#sTts').onclick = () => {
+    const el = $('#ttsReport'); if (el) el.textContent = '';
+    try {
+      if (!window.speechSynthesis) { ttsSay('Синтезатор недоступен в этом окружении.'); return; }
+      ttsRefresh();
+      const bcp = langBcp(p.targetLang) || '—';
+      const all = (speechSynthesis.getVoices && speechSynthesis.getVoices()) || [];
+      ttsSay('Язык: ' + bcp + ' · голосов у устройства: ' + all.length);
+      const mine = all.filter(v => String(v.lang||'').toLowerCase().split(/[-_]/)[0] === String(bcp).toLowerCase().split('-')[0]);
+      ttsSay('Голосов этого языка: ' + mine.length + (mine.length ? ' · ' + mine.slice(0,3).map(v=>v.name).join(', ') : ''));
+      const v = voiceFor(bcp);
+      ttsSay('Выбран: ' + (v ? (v.name + ' [' + v.lang + ']' + (v.localService ? ' · на устройстве' : ' · из сети')) : (v === null ? 'нет подходящего' : 'список ещё не пришёл')));
+      if (!v) return;
+      const u = new SpeechSynthesisUtterance(TTS_PROBE[p.targetLang] || 'Hallo');
+      u.lang = bcp; u.voice = v; u.rate = 0.92;
+      const t0 = Date.now();
+      u.onstart = () => ttsSay('▶ началась речь');
+      u.onend   = () => ttsSay('■ закончилась за ' + Math.round((Date.now()-t0)/100)/10 + ' с'
+                             + ((Date.now()-t0) < 300 ? ' — слишком быстро, звук до динамика не дошёл' : ''));
+      u.onerror = e => ttsSay('✖ отказ: ' + String((e && (e.error||e.name)) || 'unknown'));
+      if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+      setTimeout(() => {
+        if (!speechSynthesis.speaking && !speechSynthesis.pending)
+          ttsSay('⏱ через секунду речь не идёт — устройство реплику не приняло');
+      }, 1000);
+      ttsSay('Если событий ниже нет и звука нет — проверьте громкость МЕДИА (не звонка) и что телефон не в беззвучном режиме.');
+    } catch(e) { ttsSay('Сбой проверки: ' + (e && e.message)); }
+  };
   $('#sSave').onclick = async () => {
     p.name = $('#sName').value.trim() || p.name;
     const ni = $('#sInt').value.trim();
@@ -9334,6 +9384,7 @@ function drillReviewContext(s, rd) {
     </div>`);
   Hints.show('drill', HintTexts.drill);
   bindAutoGrow('ans');
+  glossaryFromCore(rd, 'sentence');            // 4.98 (Л-28): разбор из Ядра до показа
   attachTapAll(document, tapWordsFor(rd.glossary));   // 4.28: тап-перевод слов фразы
   /* 4.64 (QUEUE-185): карточка нужной формы приходит вместе с заданием — в глоссарии
      предложения, где транскрипция стоит при самой форме. Запрос в сеть остаётся только для
@@ -9466,6 +9517,7 @@ function drillContext(s) {
       </div>
     </div>`);
   bindAutoGrow('ans');
+  glossaryFromCore(item, 'expected_target');   // 4.98 (Л-28): разбор из Ядра до показа
   attachTapAll(document, tapWordsFor(item.glossary));   // 4.28: тап-перевод слов фразы
   /* 4.72 (QUEUE-217): ПОДСКАЗКА ПОЛНАЯ С ПЕРВОГО НАЖАТИЯ.
      Здесь стояла двухуровневая лампочка: первый тап показывал скелет из двух букв («Ac ·······»),
@@ -9663,6 +9715,19 @@ function drillConstruct(s) {
   c.prompt_native = stripAnswerLeak(c.prompt_native, c.expected_target);
   let mustRetype = false, correctForm = c.expected_target;
   // словарик новых слов задания (с переводом+транскрипцией) + автосохранение в словарь
+  /* =====================================================================
+     4.98 (Л-28) — РАЗБОР СЛОВ ЗАДАНИЯ ГОТОВ ДО ПОКАЗА
+     Живой прогон: тап по фишке («er», «der Zug», «jetzt») ждал по 15–30 секунд или не
+     возвращался вовсе, и собрать фразу из шести незнакомых слов означало три минуты ожидания.
+     Причина — моя правка 4.88: глоссарий убран из основного запроса и переложен на фоновый
+     проход. Не доехал фоновый проход — и у задания нет разбора НИ ОДНОГО слова, после чего
+     каждый тап идёт в сеть поодиночке.
+     Но почти все эти слова приложение уже знает: «er», «jetzt», «weil» — закрытый класс,
+     «der Zug» — словарь уровня. Достраиваем разбор из Ядра прямо перед показом задания:
+     это мгновенно и не стоит ни одного обращения. В сеть остаётся уходить только за тем,
+     чего в Ядре действительно нет.
+     ===================================================================== */
+  glossaryFromCore(c, 'expected_target');
   const gloss = Array.isArray(c.glossary) ? c.glossary.filter(g=>g && g.term) : [];
   gloss.forEach(g => {
     /* 4.77 (QUEUE-242): совпадение искалось по написанию БЕЗ снятия артикля, поэтому
@@ -9762,7 +9827,12 @@ function drillConstruct(s) {
     } catch(e){}
     $('#check').disabled = false;
     if (!res) { toast('Связь барахлит — ответ засчитан', true); firstTry(key, true, 'writing'); return passOK(null); }
-    if (res.correct) { firstTry(key, true, 'writing'); return passOK(res, a); }
+    /* 4.98 (Л-27): модель засчитывает ответ И ТУТ ЖЕ пишет замечание — «willein это опечатка,
+       нужно will ein». Прежде фраза ученика всё равно шла образцом, и приложение показывало
+       опечатку как верную запись, а строкой ниже само её опровергало.
+       Правило 4.54 (хвалим фразу ученика, когда она засчитана как ТОЧНАЯ) здесь не работало:
+       вердикт модели точным не является. Есть замечание — образцом идёт эталон. */
+    if (res.correct) { firstTry(key, true, 'writing'); return passOK(res, res.note ? null : a); }
     /* 4.78 (QUEUE-246): ПРОТИВОРЕЧИЕ ВНУТРИ ЗАДАНИЯ — СБОЙ ПРИЛОЖЕНИЯ, А НЕ ОШИБКА УЧЕНИКА.
        Случай с прогона: в лексику по интересам (ЧПУ) попало `der Ständer` с переводом «станок»,
        хотя это стойка/подставка. Приложение построило вокруг неверного перевода задание
@@ -10591,15 +10661,16 @@ function wordCardFromCore(token) {
                   return parts.length === 2 && articleSet().has(norm(parts[0])) && norm(parts[1]) === t;
                 });
     if (!hit || !hit.translation) return null;
-    /* 4.97 (Л-23): запись Ядра без транскрипции местным ответом НЕ считается. Иначе выходит
-       обмен одного дефекта на другой: тап отвечает мгновенно, но без звучания — а звучание
-       и есть половина ответа, когда письменность чужая (4.85). Такое слово уходит в сеть,
-       как и прежде: лучше подождать и получить полную карточку, чем получить половину сразу.
-       Там, где письменности общие, транскрипция не нужна вовсе, и запись годна без неё. */
-    if (translitNeeded() && !bareTranslit(hit.translit)) return null;
+    /* 4.98 (Л-28): правило 4.97 переосмыслено живым прогоном. Оно требовало ПОЛНОЙ записи и
+       отправляло в сеть всё, у чего нет транскрипции, — а сеть на слове стоит 15–30 секунд,
+       и человек оставался вовсе без ответа. Ожидание оказалось дороже неполноты.
+       Теперь перевод показывается сразу, а недостающая транскрипция помечается и добирается
+       следом: карточка дополняется, когда звучание приедет. Половина ответа сразу и целое
+       через секунду лучше, чем целое через полминуты. */
     return { surface: token, dict: dictForm(hit) || hit.term || hit.word,
              translit: hit.translit || '', translation: hit.translation,
-             morph: '', _local: true };
+             morph: '', _local: true,
+             _needTranslit: !!(translitNeeded() && !bareTranslit(hit.translit)) };
   } catch(_) { return null; }
 }
 
