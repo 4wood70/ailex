@@ -286,6 +286,30 @@ a{color:var(--cyan)}
   </div>
   <div class="screen" id="screen"></div>
 </div>
+<!-- 4.100 (Л-48): ЗАСТАВКА РИСУЕТСЯ РАЗМЕТКОЙ, А НЕ СКРИПТОМ.
+     Прогон v152 сразу после перезагрузки телефона: шапка на месте, под ней чёрное поле,
+     и так надолго. Причина не в ошибке — заставку создавала ПОСЛЕДНЯЯ строка скрипта, то
+     есть до конца разбора и выполнения всего файла (1,15 МБ одним куском) её попросту не
+     существовало. На холодном старте занятого устройства это секунды тишины, в которые
+     человек видит чёрный экран и не знает, работает приложение или нет.
+     Разметка показывается браузером сразу, до единой строки кода, — поэтому и заставка
+     теперь здесь. Скрипт, дойдя до запуска, снимает её и продолжает как прежде.
+     Само время холодного старта этим не лечится: размер файла — отдельная работа в очереди. -->
+<div id="preSplash" style="position:fixed;inset:0;z-index:150;background:radial-gradient(120% 90% at 50% 40%,#0A1424 0%,#060A12 70%);
+     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="width:52px;height:52px;border-radius:14px;background:#0B1020;border:1px solid #1A2540;
+      display:grid;place-items:center;box-shadow:0 0 30px rgba(65,184,255,.35)">
+      <span style="font-family:'Chakra Petch';font-weight:700;font-size:30px;
+        background:linear-gradient(135deg,#41B8FF,#8A5CFF 50%,#FF8A3C);-webkit-background-clip:text;
+        background-clip:text;color:transparent">A</span>
+    </div>
+    <div style="font-family:'Chakra Petch';font-weight:700;font-size:34px;letter-spacing:.12em;color:#E8EDF7">AI<span
+      style="background:linear-gradient(135deg,#41B8FF,#8A5CFF 50%,#FF8A3C);-webkit-background-clip:text;
+      background-clip:text;color:transparent">LEX</span></div>
+  </div>
+  <div style="font-family:'Chakra Petch';font-size:12px;letter-spacing:.28em;color:#5A6680;text-transform:uppercase">Запуск…</div>
+</div>
 <div id="toast"></div>
 <script>
 /* ===================================================================
@@ -297,7 +321,80 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v152';
+const APP_VERSION = 'v153';
+
+/* =====================================================================
+   4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
+   Прогон v152: приложение открылось, шапка нарисовалась, под ней пусто. Наружу — ничего:
+   ни экрана, ни сообщения, ни следа. Разбор показал, что перехвата ошибок в приложении не
+   было ВООБЩЕ: любое исключение при запуске обрывало отрисовку и пропадало в консоли, которой
+   на телефоне никто не видит. То есть самый тяжёлый отказ — единственный, о котором приложение
+   не говорило ни слова.
+   Это та же ошибка, что разобрана в 4.74 и 4.97 для тапа и для озвучки, только в корне
+   приложения: немой отказ — худший из отказов, потому что человек не знает даже, что случилось.
+   Ставится САМЫМ ПЕРВЫМ делом, до всех определений: перехват обязан пережить падение любого
+   куска кода ниже, включая то, что не успело объявиться. Пишем прямо в DOM, без своих функций
+   и без разметки приложения — на них полагаться в этот момент уже нельзя.
+   ===================================================================== */
+(function installCrashTrap(){
+  var shown = false;
+  function paint(what, err){
+    if (shown) return; shown = true;
+    try {
+      var msg = String((err && (err.message || err.reason && err.reason.message)) || err || '');
+      var stack = String((err && err.stack) || (err && err.reason && err.reason.stack) || '');
+      var line = stack.split('\n').slice(1, 3).join('\n');
+      var box = document.createElement('div');
+      box.setAttribute('style', 'position:fixed;inset:0;z-index:9999;overflow:auto;padding:20px 18px;'
+        + 'background:#060A12;color:#E6EDF7;font:14px/1.5 system-ui,sans-serif');
+      box.innerHTML = '<div style="font-size:18px;font-weight:700;margin-bottom:10px">Приложение не смогло запуститься</div>'
+        + '<div style="color:#8FA3BF;margin-bottom:14px">Данные на устройстве целы. Покажите этот текст — по нему видно причину.</div>'
+        + '<div style="background:#0B1020;border:1px solid #1A2540;border-radius:12px;padding:12px;'
+        + 'font:12px/1.45 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word">'
+        + 'AILEX ' + APP_VERSION + ' · ' + what + '\n' + msg + (line ? '\n' + line : '') + '</div>'
+        + '<button id="crashReload" style="margin-top:16px;width:100%;padding:13px;border-radius:12px;border:0;'
+        + 'background:#2F6BFF;color:#fff;font-size:15px;font-weight:600">Перезапустить</button>';
+      document.body.appendChild(box);
+      var b = document.getElementById('crashReload');
+      if (b) b.onclick = function(){ location.reload(); };
+    } catch(_) {}
+  }
+  window.addEventListener('error', function(e){ paint('ошибка выполнения', e && (e.error || e)); });
+  window.addEventListener('unhandledrejection', function(e){ paint('необработанный отказ', e); });
+  window.__crash = paint;                    // запуск зовёт его сам, когда ловит своё исключение
+
+  /* 4.100 (Л-49) — ЗАПУСК ОТЧИТЫВАЕТСЯ ОТМЕТКАМИ ВРЕМЕНИ.
+     Прогон v152: экран остаётся пустым надолго, потом приложение открывается само, и понять,
+     на каком шаге оно стояло, неоткуда. Рассуждать тут бесполезно — шагов между разбором файла
+     и первым экраном четыре, и каждый мог быть виноват. Отметки ставятся на каждом и хранятся
+     в памяти; если через восемь секунд после разбора ни один экран не нарисован, заставка сама
+     показывает, докуда дошло. Это тот же принцип, что в 4.89: вместо догадки — замер, снятый
+     там, где отказ происходит, а не там, где его удобно предполагать. */
+  window.__marks = [];
+  window.__mark = function(name){
+    try {
+      window.__marks.push([name, Math.round(performance.now())]);
+      var pre = document.getElementById('preSplash');
+      if (name === 'экран нарисован' && pre) pre.remove();
+    } catch(_) {}
+  };
+  window.__mark('разметка получена');
+  setTimeout(function(){
+    try {
+      var painted = window.__marks.some(function(m){ return m[0] === 'экран нарисован'; });
+      if (painted) return;
+      var pre = document.getElementById('preSplash');
+      if (!pre) return;
+      var log = window.__marks.map(function(m){ return m[0] + ' — ' + m[1] + ' мс'; }).join('\n');
+      var d = document.createElement('div');
+      d.setAttribute('style','margin-top:22px;max-width:320px;font:12px/1.5 ui-monospace,monospace;'
+        + 'color:#8FA3BF;white-space:pre-wrap;text-align:left;background:#0B1020;border:1px solid #1A2540;'
+        + 'border-radius:12px;padding:12px');
+      d.textContent = 'Запуск идёт дольше обычного. Докуда дошло:\n' + log;
+      pre.appendChild(d);
+    } catch(_) {}
+  }, 8000);
+})();
 
 /* 4.33 — ПЛАТФОРМА APPLE: РЕЖИМ «ПОГОВОРИТЬ» НЕДОСТУПЕН (QUEUE-78).
    Голосовой ввод диалога держится на Web Speech API. В WebKit он работает ТОЛЬКО
@@ -606,6 +703,7 @@ const UI_EXTRA = [
     'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.',
     /* 4.93: корзина профилей. */
     'Недавно удалённые',
+    'Слова урока','Закрыть',
     'Не удалось открыть профиль',
     'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.',
     'осталось дней:','Вернуть','Профиль восстановлен ✓',
@@ -947,7 +1045,7 @@ const I18N = {
       'Если кнопки 🔊 молчат, нажмите — приложение произнесёт короткую фразу и покажет, что ответил синтезатор устройства.':'If the 🔊 buttons stay silent, tap here — the app will say a short phrase and show what the device synthesiser reported.',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
-      'Недавно удалённые':'Recently deleted','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
+      'Недавно удалённые':'Recently deleted','Слова урока':'Lesson words','Закрыть':'Close','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
       'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.':'A profile is kept for three days — you can restore it with all its progress, vocabulary and rules.',
       'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.':'The profile goes to the bin and is kept for three days — you can restore it with all its progress, vocabulary and rules at any time. After three days it is deleted for good.',
       'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over',
@@ -2485,6 +2583,7 @@ const Screen = {
 
     const s = $('#screen');
     s.innerHTML = html;
+    try { window.__mark('экран нарисован'); } catch(_) {}   // 4.100 (Л-49): снимает заставку разметки
     localizeDOM(s);
     setTimeout(() => i18nAudit(s), 1500);        // 4.44: перечень непереведённых надписей — в консоль
     I18N.pump();               // 4.34: новые надписи экрана уходят в очередь на перевод
@@ -3771,7 +3870,9 @@ async function coreBuildScreen(next){
 }
 
 function boot() {
-  Storage.migrate();                                   // прежнюю одиночную базу — в первый профиль
+  try { window.__mark('запуск начат'); } catch(_) {}
+  Storage.migrate();
+  try { window.__mark('база прочитана'); } catch(_) {}                                   // прежнюю одиночную базу — в первый профиль
   Episodes.migrate();                                  // 4.29: снимок прежнего формата — в эпизоды
   if (!Storage.getKey()) return keyWizard();
   const profs = Storage.listProfiles();
@@ -4151,6 +4252,9 @@ function profileSelect(opts) {
 /* ---------- Заставка при запуске (Splash): логотип + нейросеть ----------
    Короткая (~2.5 с), показывается каждый раз, тап — пропустить. */
 function splashScreen(done) {
+  /* 4.100 (Л-48): статическая заставка из разметки держала экран, пока разбирался скрипт.
+     Скрипт дошёл до запуска — снимаем её, дальше как прежде. */
+  try { const pre = document.getElementById('preSplash'); if (pre) pre.remove(); } catch(_) {}
   const ov = document.createElement('div');
   ov.id = 'splash';
   ov.style.cssText = 'position:fixed;inset:0;z-index:200;background:radial-gradient(120% 90% at 50% 40%,#0A1424 0%,#060A12 70%);'
@@ -5303,7 +5407,21 @@ function mainMenu() {
   TranslitAudit.run();                                       // 4.66: транскрипции, записанные прежним путём
   const p = DB.profile, acc = masteryPercent();
   const lp = levelProgress();
-  const next = DB.nextStage;
+  /* 4.100 (Л-56): ПУСТОЕ ПОЛЕ СЛЕДУЮЩЕГО УРОКА РОНЯЛО ВСЁ МЕНЮ.
+     Найдено прогоном в настоящем DOM при сборке v153. `DB.nextStage` брался как есть, и первое
+     же обращение `next.startsWith('A0.')` на пустом поле выбрасывало исключение — молча, до
+     единой отрисованной строки. Снаружи это ровно тот чёрный экран под шапкой, который мы
+     ловим: приложение живо, база цела, а меню не нарисовано и причина не названа.
+     Поле пустует не в теории: профиль, восстановленный из корзины, перенесённый импортом или
+     оборванный на середине создания, приходит без него. Отсутствие одного поля не должно
+     стоить человеку доступа ко всему приложению — подставляем первый урок его ступени и
+     чиним базу на месте, а не падаем. */
+  let next = DB.nextStage;
+  if (!next || typeof next !== 'string') {
+    next = (p && p.cefr ? p.cefr : 'A1') + '.1.01';
+    console.warn('[AILEX] следующий урок не задан — восстановлен как', next);
+    DB.nextStage = next; try { Storage.save(DB); } catch(_) {}
+  }
   /* 4.81 (QUEUE-252): слежение за запасом автоматическое — главное меню и есть та точка, через
      которую человек проходит перед каждым уроком. Вызов не ожидается: меню рисуется сразу,
      сборка идёт фоном. */
@@ -7183,7 +7301,31 @@ async function repairTargets(items, words) {
        лазейкой: ею подменили ЗНАЧЕНИЕ слова. Признак кодовый и дешёвый: скобок в условии почти
        не бывает, поэтому каждую стоит показать вычитке; решает она, пояснение это или прикрытие. */
     const paren = /[(（][^)）]{1,40}[)）]/.test(String(c.prompt_native || ''));
-    if (hits.length || unk.length || gap || bare || thin || paren) bad.push({ i, hits, unk, gap, bare, thin, paren });
+    /* 4.100 (Л-55): СЛОВО ЭТАЛОНА, ЗНАЧЕНИЯ КОТОРОГО В УСЛОВИИ НЕТ.
+       Живой прогон: условие «Палка для ходьбы стоит ЗДЕСЬ как помощь», а в наборе слов `dort` —
+       «там». Собрать нельзя: ученик ищет «здесь», а ему дали «там», и он либо угадывает, либо
+       решает, что ошибся сам. Правило симметрии вписано в вычитку (4.99, Л-40) и снова оказалось
+       просьбой — модель его не применила.
+       Теперь код считает признак сам и по тем же переводам, что показывает ученику: берём слово
+       эталона, у которого перевод известен (глоссарий задания, Словарь, Ядро), и смотрим, есть
+       ли этот перевод в условии — с допуском на словоизменение родного языка. Нет — значит одно
+       из двух неверно, и разбираться должна вычитка: у неё перед глазами обе стороны пары. */
+    let lost = [];
+    try {
+      const pn = norm(String(c.prompt_native || ''));
+      const known = [...(Array.isArray(c.glossary) ? c.glossary : []),
+                     ...((DB && DB.core) || []), ...(words || [])];
+      if (pn) tokenize(String(c.expected_target || '')).forEach(t => {
+        if (!t || t.length < 3) return;
+        const rec = known.find(k => k && k.term && sameStem(stripArtG(k.term), t));
+        const tr = norm(String((rec && rec.translation) || '')).replace(/\(.*?\)/g, ' ').trim().split(/[\s,;]+/)[0];
+        if (!tr || tr.length < 3) return;
+        const cut = tr.slice(0, Math.max(3, tr.length - 2));
+        if (pn.indexOf(cut) < 0 && lost.indexOf(t) < 0) lost.push(t + ' = ' + tr);
+      });
+    } catch(_) {}
+    if (hits.length || unk.length || gap || bare || thin || paren || lost.length)
+      bad.push({ i, hits, unk, gap, bare, thin, paren, lost });
   });
   /* =====================================================================
      4.92 — ЭТАЛОН ВЫЧИТЫВАЕТСЯ ЦЕЛИКОМ, А НЕ ТОЛЬКО ТАМ, ГДЕ КОД НАШЁЛ ДЕФЕКТ
@@ -7214,6 +7356,7 @@ async function repairTargets(items, words) {
                  bare_nouns: b.hits || [], unchecked_words: b.unk || [],
                  meaning_gap: !!b.gap, empty_prompt: !!b.bare, too_short: !!b.thin,
                  paren_in_prompt: !!b.paren,
+                 meanings_missing_in_prompt: b.lost || [],
                  flagged: !!flagged.has(i) };
       }).filter(x => x.expected_target),
       rules: 'ВЫЧИТКА КАЖДОГО ПУНКТА (критично, 4.92): пункты приходят ВСЕ, а не только помеченные. '
@@ -7249,6 +7392,11 @@ async function repairTargets(items, words) {
            + '`essen` с `Literatur` не сочетается ни на одном из двух языков, и скобка поставлена, чтобы это скрыть. '
            + 'Если в скобке стоит ДРУГОЕ слово вместо основного — фраза не строится: перепиши ПАРУ целиком под глагол, который со словом урока действительно сочетается, и скобку убери. '
            + 'Прикрыть несочетаемость пояснением ЗАПРЕЩЕНО: ученик заучит, что это слово так употребляется. '
+           /* 4.100 (Л-55): слово эталона, значения которого в условии нет. */
+           + '(д) ЗНАЧЕНИЕ КАЖДОГО СЛОВА ЭТАЛОНА ЕСТЬ В УСЛОВИИ (критично, 4.100): meanings_missing_in_prompt перечисляет слова эталона вида «слово = перевод», перевода которых код в prompt_native не нашёл. '
+           + 'Живой пример: условие «Палка для ходьбы стоит ЗДЕСЬ как помощь» при эталоне с `dort` — «там». Ученику дали не то слово, которое он ищет: собрать фразу по условию невозможно. '
+           + 'Проверь каждое: если значения в условии действительно нет — исправь ОДНУ из сторон (замени слово в эталоне на подходящее по смыслу либо поправь prompt_native), и согласуй glossary. '
+           + 'Список может содержать ложные срабатывания — служебные слова, идиомы, слова, передаваемые в родном языке другой конструкцией; такие пропускай без правки. '
            + 'ТРИ ПРОВЕРКИ по помеченным пунктам, все обязательны. '
            + '(0) ДЛИНА И СМЫСЛ (4.85). Пункт с too_short=true код пометил особо: эталон короче связной фразы этого уровня. '
            + 'Перепиши пару целиком — условие на родном и эталон — так, чтобы вышло законченное осмысленное предложение '
@@ -8026,22 +8174,35 @@ const TranslitAudit = {
   }
 };
 
+/* 4.100 (Л-50): ТА ЖЕ ЧИНКА РАБОТАЕТ И ДЛЯ ОТДЕЛЬНЫХ СЛОВ.
+   Живой прогон: экран «Новые слова» без единой транскрипции, хотя подпись экрана её обещает.
+   Разбор: добор искал записи с `expected_target` и пустым `expected_translit` — то есть только
+   ФРАЗЫ заданий. У слов урока поля зовутся иначе (`term` / `translit`), под фильтр они не
+   попадали, и дыра не закрывалась никогда: модель прислала слово без звучания — так оно и
+   останется. Для человека без озвучки в языке это значит, что прочесть слово нечем.
+   Разница была не в существе, а в именах полей; чинится одной функцией на оба случая. */
 async function fillMissingTranslit(items) {
   const list = Array.isArray(items) ? items : [];
-  const miss = list.filter(c => c && c.expected_target && !c.expected_translit);
+  const F = c => c && c.expected_target ? 'phrase' : (c && c.term ? 'word' : null);
+  const miss = list.filter(c => {
+    const k = F(c);
+    if (!k) return false;
+    return k === 'phrase' ? !bareTranslit(c.expected_translit) : !bareTranslit(c.translit);
+  });
   if (!miss.length) return list;
   try {
     const p = DB.profile;
     const r = await Gemini.call({
       task: 'transliterate_phrases', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang),
-      phrases: miss.map((c, i) => ({ id: i, phrase: c.expected_target })),
+      phrases: miss.map((c, i) => ({ id: i, phrase: F(c) === 'phrase' ? c.expected_target : dictForm(c) })),
       rules: 'Для каждой фразы верни транскрипцию буквами native_lang, передающую ЗВУЧАНИЕ фразы. '
            + 'IPA запрещён. Сверь звук за звуком: каждый согласный оригинала обязан быть отражён.'
     }, '{"items":[{"id":0,"translit":"[транскрипция фразы родными буквами]"}]}');
     ((r && r.items) || []).forEach(f => {
       const i = Number(f && f.id);
       if (!Number.isInteger(i) || !miss[i] || !f.translit) return;
-      miss[i].expected_translit = f.translit;
+      if (F(miss[i]) === 'phrase') miss[i].expected_translit = f.translit;
+      else miss[i].translit = trimTranslit(f.translit, miss[i].term);   // 4.70: без повтора самого слова
     });
   } catch(e) { console.warn('fillMissingTranslit:', e && e.message); }
   return list;
@@ -8501,7 +8662,24 @@ function assignRecogWords(words, count) {
 
 /* Построение 21 задания. Возвращает готовый список шагов с проставленной нумерацией. */
 function planDrillSteps(words, total) {
+  /* 4.100 (Л-53): УЗНАТЬ — НЕ ТО ЖЕ, ЧТО НАПИСАТЬ ПО ПАМЯТИ.
+     Решение Константина 13.09.2026. Живой прогон: `das Reiseziel` показано на экране «Новые
+     слова» один раз, а вторым заданием урока приложение требует написать его по памяти, без
+     возможности вернуться и посмотреть. Это не строгость, а невыполнимость: составное слово,
+     увиденное однажды, не воспроизводится — и человек застревает на задании, к которому его
+     подвели тридцатью секундами раньше.
+     Узнавание и воспроизведение — разные умения, и порядок между ними односторонний: узнать
+     можно сразу, написать — только после того, как слово несколько раз попалось на глаза.
+     Поэтому первые два задания урока — всегда узнавание, где слово ВИДНО; задания на
+     воспроизведение начинаются с третьего. Квоты и общее число заданий не меняются, меняется
+     расстановка — та же правка, что в 4.47, только по другому основанию. */
   const types = interleaveTypes({ recog: 5, context: 6, construct: 9 });
+  for (let need = 0; need < 2; need++) {
+    if (types[need] === 'recog') continue;
+    const j = types.indexOf('recog', need + 1);
+    if (j < 0) break;
+    types.splice(j, 1); types.splice(need, 0, 'recog');
+  }
   const recogWords = assignRecogWords(words, 5);
   let ri = 0, ci = 0, bi = 0;
   return types.map((t, i) => {
@@ -8860,6 +9038,28 @@ function drillLangFeature(s) {
   $('#go').onclick = () => { LangFeatures.markShown(f); L.i++; renderStep(); };
   document.querySelectorAll('.tts[data-t]').forEach(x => x.onclick = () => speak(x.dataset.t, DB.profile.targetLang));
 }
+/* =====================================================================
+   4.100 (Л-51) — ФОРМЫ НЕПРАВИЛЬНОГО ГЛАГОЛА ТОЖЕ НАДО УМЕТЬ ПРОЧЕСТЬ
+   Решение Константина 13.09.2026. Экран показывает `fahren` со звучанием и переводом, а рядом
+   `fährt, fuhr, ist gefahren` — мёртвой строкой: ни озвучки, ни транскрипции, ни разбора. При
+   этом именно формы неправильного глагола и запоминаются тяжелее всего, а прочесть `fuhr` или
+   `gefahren` по правилам чтения нельзя — их надо услышать.
+   Каждая форма становится обычным тап-словом: тап даёт карточку с переводом, звучанием и
+   примером — той же машиной, что и везде (`attachTapAll`), поэтому ничего нового заводить не
+   пришлось. Разбор формы приложение уже умеет: `fährt` находит `fahren` и объясняет, чем эта
+   форма отличается. Отдельная кнопка звучания у каждой формы — для случая, когда нужен только
+   звук и открывать карточку незачем.
+   ===================================================================== */
+function formChipsHTML(forms){
+  const lang = (DB.profile && DB.profile.targetLang) || '';
+  return String(forms || '').split(/\s*,\s*/).filter(Boolean).map(f => {
+    const head = f.split(/\s+/).filter(Boolean).pop() || f;    // «ist gefahren» → тапаем `gefahren`
+    return `<span class="tapword tapall" data-word="${esc(head)}">${esc(f)}</span>`
+         + (hasTTS(lang) ? `<button class="tts" data-t="${esc(f)}" aria-label="Озвучить"
+              style="background:none;border:0;padding:0 2px;font-size:13px;vertical-align:middle">🔊</button>` : '');
+  }).join(', ');
+}
+
 function drillPresent() {
   Screen.show(`
     <div class="eyebrow">${tgtTag()}${esc(L.code)} · Presentation</div>
@@ -8871,7 +9071,7 @@ function drillPresent() {
         <div class="vocab-row">
           <span class="emoji">${esc(w.emoji||'•')}</span>
           <span class="w"><b>${esc(_d)}</b><span class="tr">${esc(showTranslit(w.translit))}</span>
-            <small>${esc(w.translation)}${w.is_irregular&&(w.forms||w.irregular_forms)?' · ⚠️ '+esc(w.forms||w.irregular_forms):''}</small></span>
+            <small>${esc(w.translation)}${w.is_irregular&&(w.forms||w.irregular_forms)?' · ⚠️ '+formChipsHTML(w.forms||w.irregular_forms):''}</small></span>
           ${hasTTS(DB.profile.targetLang)?`<button class="tts" data-t="${esc(_d)}">🔊</button>`:''}
         </div>`;}).join('')}
     </div>
@@ -8881,6 +9081,7 @@ function drillPresent() {
       : lbl('Транскрипция родными буквами — ваша главная опора для чтения и произношения.')}</p>
     <button class="btn btn-primary" id="go">К заданиям</button>`);
   document.querySelectorAll('.tts').forEach(b=>b.onclick=()=>speak(b.dataset.t, DB.profile.targetLang));
+  attachTapAll(document, tapWordsFor([]));      // 4.100 (Л-51): формы глагола — тап-слова
   Hints.show('newWords', HintTexts.newWords);
   // пункт 3: слово показано → отмечаем «увидено»; импортированные переходят из «новое» в «изучается»
   L.words.forEach(w => { const v = DB.vocab.find(x=>norm(x.term)===norm(w.term)); if (v) { v.seen = true; if (v.source==='import' && v.status==='новое') v.status='изучается'; } w.seen = true; });
@@ -9493,7 +9694,7 @@ function drillReviewContext(s, rd) {
       <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>${WORDS_BTN}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
@@ -9504,6 +9705,7 @@ function drillReviewContext(s, rd) {
   /* 4.64 (QUEUE-185): карточка нужной формы приходит вместе с заданием — в глоссарии
      предложения, где транскрипция стоит при самой форме. Запрос в сеть остаётся только для
      уроков, собранных билдом без этого поля. */
+  wireWordsBtn();      // 4.100 (Л-53б): список слов урока поверх задания
   $('#hint').onclick = async () => {
     L.hints++; $('#fb').className='feedback ok';
     // 4.64: глоссарий предложения + запись Словаря — всё локально, сети здесь делать нечего
@@ -9583,7 +9785,7 @@ function drillReviewContext(s, rd) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (typoOK ? `<br><span style="color:var(--orange);font-size:13px">✍️ ${lbl('Верно, опечатка:')} ${highlightDiff(a, fullSentence)}</span>` : '')
-        + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
+        + noteForAnswer(res, a, fullSentence);     // 4.100 (Л-54): замечание не к своему же эталону
       attachTapAll($('#fb'), tapWordsFor(rd.glossary));
       speak(shown, DB.profile.targetLang);
       lockHint();      // 4.77: ответ показан — подсказке больше нечего добавить
@@ -9627,7 +9829,7 @@ function drillContext(s) {
       <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="Напишите предложение целиком" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>${WORDS_BTN}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
@@ -9651,6 +9853,7 @@ function drillContext(s) {
      пустое поле, показанное как содержимое. В «собери фразу» этого нет: там подсказка берётся
      из готового эталона и сети не требует, поэтому чинится только сломанная ветка.
      Правило: прежнее содержимое запоминается и возвращается, если показать нечего. */
+  wireWordsBtn();      // 4.100 (Л-53б): список слов урока поверх задания
   $('#hint').onclick = async () => {
     L.hints++;
     const prev = { html: $('#fb').innerHTML, cls: $('#fb').className };
@@ -9742,7 +9945,7 @@ function drillContext(s) {
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (typoOK ? `<br><span style="color:var(--orange);font-size:13px">✍️ ${lbl('Верно, опечатка:')} ${highlightDiff(a, fullSentence)}</span>` : '')
-        + (res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '');
+        + noteForAnswer(res, a, fullSentence);     // 4.100 (Л-54): замечание не к своему же эталону
       attachTapAll($('#fb'), tapWordsFor(item.glossary));
       speak(shown, DB.profile.targetLang);
       lockHint();      // 4.77: ответ показан — подсказке больше нечего добавить
@@ -9790,12 +9993,13 @@ function drillWrite(s) {
       <input type="text" id="ans" placeholder="${esc(t('Напишите слово на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off">
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>${WORDS_BTN}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
     </div>`);
   /* 4.72 (QUEUE-217): и здесь подсказка полная. Прежде показывались транскрипция и ПЕРВАЯ БУКВА —
      то есть ровно то, что человек и так знает, без написания, за которым он и обращается. */
+  wireWordsBtn();      // 4.100 (Л-53б): список слов урока поверх задания
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     $('#fb').innerHTML = `💡 <b>${esc(dictForm(w))}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>`
       + sayBtn(w.term) + ` — ${esc(w.translation||'')}`;
@@ -9902,7 +10106,7 @@ function drillConstruct(s) {
       <textarea id="ans" class="ans-grow" lang="${esc(langTag())}" spellcheck="false" placeholder="${esc(t('Ваш ответ на')+' '+langName(DB.profile.targetLang))}" autocomplete="off" autocapitalize="off"></textarea>
       <div class="feedback" id="fb"></div>
       <div class="btn-row" style="margin-top:12px">
-        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>
+        <button class="btn btn-ghost btn-ico" id="hint" title="Подсказка" aria-label="Подсказка">💡</button>${WORDS_BTN}
         ${L.grammar?`<button class="btn btn-ghost btn-ico" id="rule" title="Правило" aria-label="Правило">📐</button>`:''}
         <button class="btn btn-primary" id="check">Проверить</button>
       </div>
@@ -9917,6 +10121,7 @@ function drillConstruct(s) {
      «Не удалось получить разбор». Своё знание раньше сети — то же правило, что в 4.95. */
   attachTapAll(document, tapWordsFor(gloss));   // 4.28: тап-перевод слов набора
   // подсказка: ПОЛНЫЙ правильный ответ — фраза целиком + транскрипция + перевод + озвучка (версия 4.14)
+  wireWordsBtn();      // 4.100 (Л-53б): список слов урока поверх задания
   $('#hint').onclick = () => { L.hints++; $('#fb').className='feedback ok';
     const tr = c.expected_translit ? ` <span style="color:var(--orange)">${esc(c.expected_translit)}</span>` : '';
     $('#fb').innerHTML = `💡 Полный ответ: <b>${esc(correctForm)}</b>${tr}` + sayBtn(correctForm) + `<br><span style="font-size:13px">${esc(c.prompt_native||'')}</span>`;
@@ -9989,7 +10194,7 @@ function drillConstruct(s) {
   function passOK(res, own) {
     $('#fb').className='feedback ok';
     const shown = (own && String(own).trim()) ? String(own).trim() : correctForm;
-    const note = res && res.note ? `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(res.note)}</span>` : '';
+    const note = noteForAnswer(res, ans, sc.expected_target);   // 4.100 (Л-54)
     $('#fb').innerHTML = `✅ <b>${esc(shown)}</b>` + sayBtn(shown) + note;
     speak(shown, DB.profile.targetLang);
     if (res && res.articleSlip) {   // пункт 14: копим промахи по артиклям в адаптивное правило
@@ -11811,9 +12016,88 @@ function checkerContradictsTask(res, c){
     return !share;
   } catch(_) { return false; }
 }
+/* 4.100 (Л-52): ПОДСКАЗКА НЕ БЫВАЕТ БЕДНЕЕ ТОГО, ЧТО ПРИЛОЖЕНИЕ УЖЕ ПОКАЗЫВАЛО.
+   Живой прогон: задание «___ ___ ist jetzt sehr wichtig», слово `das Reiseziel`. На экране
+   «Новые слова» оно показано как «цель путешествия», а подсказка 💡 выдала «путешествия» —
+   огрызок, по которому ответ не восстановить: «путешествия» чего? Слово составное, догадаться
+   не из чего, и человек застревает на задании, к которому приложение его само подвело.
+   Карточка формы вправе давать ДРУГОЙ перевод — контекстную форму («верёвку» против «верёвка»),
+   это разобрано в 4.71. Но она не вправе давать ОБРЕЗОК: если перевод слова урока содержит
+   перевод карточки целиком и при этом длиннее, перед нами не форма, а потеря части значения.
+   В этом случае показываем перевод слова урока — он прошёл вычитку и уже был на экране. */
+function richerTranslation(cardTr, recTr){
+  const a = String(cardTr || '').trim(), b = String(recTr || '').trim();
+  if (!b) return a;
+  if (!a) return b;
+  if (b.length > a.length && norm(b).indexOf(norm(a)) >= 0) return b;
+  return a;
+}
+/* =====================================================================
+   4.100 (Л-54) — ЗА ЭТАЛОН ОТВЕЧАЕТ ПРИЛОЖЕНИЕ, А НЕ УЧЕНИК
+   Живой прогон: задание «Путешествие очень полезно для здоровья», набор слов выдан приложением:
+   `Das Reisen, für, die Gesundheit, gesund, ist, sehr`. Человек собрал из них ровно то, что
+   требовалось, получил ✅ — и тут же замечание: «Более типично звучит „Reisen ist sehr gesund“,
+   тавтология „gesund für die Gesundheit“ избыточна». Тавтологию сочинило приложение: она стоит
+   в эталоне и в наборе слов, другого ответа собрать было нельзя.
+   Замечание к ответу, который СОВПАДАЕТ с эталоном, всегда адресовано не туда. Оно учит
+   недоверию к собственному правильному ответу и ничего не исправляет: ученик не может собрать
+   иначе, слова выданы. Чинить надо эталон — для этого есть вычитка (4.92, 4.99) — а пока не
+   починили, молчать честнее, чем пенять человеку за чужую ошибку.
+   ===================================================================== */
+function noteForAnswer(res, given, reference){
+  const n = res && res.note ? String(res.note) : '';
+  if (!n) return '';
+  try {
+    const a = tokenize(String(given || '')).join(' '), b = tokenize(String(reference || '')).join(' ');
+    if (a && a === b) return '';                 // ответ и есть эталон — замечание не по адресу
+  } catch(_) {}
+  return `<br><span style="color:var(--orange);font-size:13px">💡 ${esc(n)}</span>`;
+}
+
+/* =====================================================================
+   4.100 (Л-53б) — СЛОВА УРОКА ДОСТУПНЫ С ЛЮБОГО ЗАДАНИЯ
+   Решение Константина 13.09.2026. Экран «Новые слова» показывается один раз в начале урока, и
+   вернуться к нему нельзя. Дальше приложение просит подставить слово по памяти — а посмотреть
+   негде. Это не строгость, а тупик: цель задания на A1 — артикль, форма и порядок слов, а не
+   припоминание написания; заставляя вспоминать, приложение проверяет не то, чему учит.
+   Подглядывание здесь не порок, а условие выполнимости. Список открывается поверх задания и
+   закрывается тапом — без ухода с экрана, без потери набранного ответа.
+   ===================================================================== */
+function lessonWordsSheet(){
+  const ws = (typeof L !== 'undefined' && L && Array.isArray(L.words)) ? L.words : [];
+  if (!ws.length) return;
+  const lang = (DB.profile && DB.profile.targetLang) || '';
+  const rows = ws.map(w => `
+    <div class="vocab-row">
+      <span class="emoji">${esc(w.emoji||'•')}</span>
+      <span class="w"><b>${esc(dictForm(w))}</b><span class="tr">${esc(showTranslit(w.translit))}</span>
+        <small>${esc(w.translation||'')}</small></span>
+      ${hasTTS(lang)?`<button class="tts" data-t="${esc(dictForm(w))}">🔊</button>`:''}
+    </div>`).join('');
+  const ov = document.createElement('div');
+  ov.id = 'wordsSheet';
+  ov.setAttribute('style','position:fixed;inset:0;z-index:300;background:rgba(4,8,16,.82);'
+    + 'display:flex;align-items:flex-end;justify-content:center;padding:0');
+  ov.innerHTML = `<div style="width:100%;max-width:560px;max-height:78vh;overflow:auto;
+      background:var(--bg,#0B1020);border:1px solid var(--border,#1A2540);border-radius:18px 18px 0 0;padding:16px">
+      <div class="eyebrow" style="margin-bottom:8px">${t('Слова урока')}</div>
+      ${rows}
+      <button class="btn btn-ghost" id="wsClose" style="margin-top:12px">${t('Закрыть')}</button>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelectorAll('.tts').forEach(b => b.onclick = () => speak(b.dataset.t, lang));
+  const close = () => { try { ov.remove(); } catch(_) {} };
+  ov.onclick = e => { if (e.target === ov) close(); };
+  const btn = ov.querySelector('#wsClose'); if (btn) btn.onclick = close;
+}
+function wireWordsBtn(){
+  document.querySelectorAll('#wordsBtn').forEach(b => b.onclick = lessonWordsSheet);
+}
+const WORDS_BTN = `<button class="btn btn-ghost btn-ico" id="wordsBtn" title="Слова урока" aria-label="Слова урока">📋</button>`;
+
 function wordHintHTML(answer, card, rec){
   const tr = formTranslitOf(card, answer) || '';
-  const tn = (card && card.translation) || (rec && rec.translation) || '';
+  const tn = richerTranslation((card && card.translation), (rec && rec.translation));
   return `💡 <b>${esc(answer)}</b> <span style="color:var(--orange)">${esc(showTranslit(tr))}</span>`
        + sayBtn(answer) + ` — ${esc(tn)}` + dictFormLineHTML(card, answer);
 }
@@ -12758,6 +13042,7 @@ function startDialogue() {
 }
 
 /* ---------- запуск ---------- */
+try { window.__mark('скрипт выполнен'); } catch(_) {}
 I18N.init();
 syncSysStatus();
 // автоперевод интерфейса на язык устройства (если не ru/en и есть ключ) — фоном
