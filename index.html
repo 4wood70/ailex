@@ -321,7 +321,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v153';
+const APP_VERSION = 'v154';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -1813,12 +1813,26 @@ const Storage = {
     return null;
   },
 
+  /* 4.101 (Л-57): ОДНА БИТАЯ ЗАПИСЬ НЕ ЗАКРЫВАЕТ ДОСТУП КО ВСЕМ ОСТАЛЬНЫМ.
+     Замер с устройства (v153, 14.09.2026): «Cannot read properties of null (reading 'profile')»
+     в перечислении профилей. В хранилище лежала запись без базы — `p.db` пуст. Так остаётся
+     профиль, создание которого оборвалось на середине: вчера это сделал отказ по лимиту ключа
+     прямо во время сборки Ядра. Дальше `p.db.profile` выбрасывал исключение, и человек терял
+     доступ КО ВСЕМ профилям сразу — включая целые, лежащие рядом.
+     Битая запись пропускается, а не роняет перечисление: список показывает исправные, и
+     приложение открывается. Сама запись остаётся в хранилище и не трогается — вычищать её
+     молча нельзя, это чужие данные; но и заслонять собою остальные она не вправе. */
   listProfiles(){
     const v = this._readVault();
     if (!v || !Array.isArray(v.profiles)) return [];
-    return v.profiles.map(p => ({ id:p.id, name:(p.db.profile||{}).name||'Профиль',
-      nativeLang:(p.db.profile||{}).nativeLang, targetLang:(p.db.profile||{}).targetLang,
-      cefr:(p.db.profile||{}).cefr, active: p.id===v.activeId }));
+    const out = [];
+    v.profiles.forEach(p => {
+      const pr = p && p.db && p.db.profile;
+      if (!pr) { console.warn('[AILEX] запись профиля без базы пропущена:', p && p.id); return; }
+      out.push({ id:p.id, name:pr.name || 'Профиль', nativeLang:pr.nativeLang,
+        targetLang:pr.targetLang, cefr:pr.cefr, active: p.id===v.activeId });
+    });
+    return out;
   },
   activeId(){ const v=this._readVault(); return v ? v.activeId : null; },
   /* 4.93: что лежит в корзине и сколько ему осталось. Просроченное вычищается здесь же —
@@ -1831,10 +1845,10 @@ const Storage = {
     if (alive.length !== v.trash.length) { v.trash = alive; this._writeVault(v); }
     return alive.map(x => ({
       id: x.id,
-      name: (x.db.profile && x.db.profile.name) || '?',
-      nativeLang: (x.db.profile && x.db.profile.nativeLang) || '',
-      targetLang: (x.db.profile && x.db.profile.targetLang) || '',
-      cefr: (x.db.profile && x.db.profile.cefr) || '',
+      name: (x.db && x.db.profile && x.db.profile.name) || '?',      // 4.101 (Л-57): корзина тоже
+      nativeLang: (x.db && x.db.profile && x.db.profile.nativeLang) || '',
+      targetLang: (x.db && x.db.profile && x.db.profile.targetLang) || '',
+      cefr: (x.db && x.db.profile && x.db.profile.cefr) || '',
       daysLeft: Math.max(0, Math.ceil((keep - (now - (x.at || 0))) / 864e5))
     }));
   },
