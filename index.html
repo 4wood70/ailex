@@ -321,7 +321,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v154';
+const APP_VERSION = 'v155';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -2693,6 +2693,17 @@ const I18N_SRC = new WeakMap();
    «назад» (QUEUE-47) — отчёт показывал только тот экран, на котором человек стоял, и
    пройденные экраны в него не попадали вовсе. */
 const I18N_MISS_KEY = 'AILEX_I18N_MISS';
+/* 4.103 (Л-59): ПЕРЕВОД ИНТЕРФЕЙСА НЕ СОХРАНЯЛСЯ НИКОГДА.
+   Читался он из `AILEX_UI_CACHE`, а записывался через `UI_CACHE_KEY` — имя, которое нигде
+   не объявлено. Запись стоит внутри try, поэтому исключение глоталось молча: кэш не ложился,
+   и на каждом запуске перевод интерфейса для нерусского профиля собирался заново — лишние
+   обращения к ключу, тот самый ресурс, который бережёт 4.100. Найдено проверкой скрипта на
+   необъявленные имена. Ключ тот же, что читается, — ничего не мигрирует. */
+const UI_CACHE_KEY = 'AILEX_UI_CACHE';
+/* 4.103 (Л-60): флаг идущего экзамена. `goHome` спрашивал подтверждение при EXAM_ACTIVE, но
+   флаг не ставился нигде — подтверждения не было никогда, и «домой» посреди экзамена молча
+   сжигал попытку. Ставится при нажатии «Начать экзамен», снимается на экране результата. */
+let EXAM_ACTIVE = false;
 const I18N_MISS = new Set((() => {
   try { return JSON.parse(localStorage.getItem(I18N_MISS_KEY) || '[]'); } catch(_) { return []; }
 })());
@@ -10208,7 +10219,13 @@ function drillConstruct(s) {
   function passOK(res, own) {
     $('#fb').className='feedback ok';
     const shown = (own && String(own).trim()) ? String(own).trim() : correctForm;
-    const note = noteForAnswer(res, ans, sc.expected_target);   // 4.100 (Л-54)
+    /* 4.103 (Л-58): здесь стояло `noteForAnswer(res, ans, sc.expected_target)` — строка,
+       перенесённая из квеста, где задание зовётся `sc`. В «собери фразу» его имя `c`, и
+       верный ответ ронял приложение: «sc is not defined» при нажатии «Проверить». То есть
+       падало ровно на ПРАВИЛЬНОМ ответе. Прогон в DOM этого не видел — до урока он не доходит,
+       — поэтому с этой редакции весь скрипт перед сборкой проверяется на необъявленные имена. */
+    const typed = ($('#ans') && $('#ans').value) || own || '';
+    const note = noteForAnswer(res, typed, c.expected_target);   // 4.100 (Л-54)
     $('#fb').innerHTML = `✅ <b>${esc(shown)}</b>` + sayBtn(shown) + note;
     speak(shown, DB.profile.targetLang);
     if (res && res.articleSlip) {   // пункт 14: копим промахи по артиклям в адаптивное правило
@@ -12859,7 +12876,7 @@ function startExam(examCode) {
     <p class="sub">По одному вопросу на экран, без подсказок. Порог сдачи — 85%. Результат объявлю после последнего ответа.</p>
     <button class="btn btn-accent" id="go">Начать экзамен</button>
     <button class="btn btn-ghost" id="back">Позже</button>`, { back: mainMenu });
-  $('#go').onclick = () => examStep(E);
+  $('#go').onclick = () => { EXAM_ACTIVE = true; examStep(E); };   // 4.103 (Л-60)
   $('#back').onclick = mainMenu;
 }
 function examStep(E) {
@@ -12886,6 +12903,7 @@ function examStep(E) {
   }
 }
 function examResult(E) {
+  EXAM_ACTIVE = false;                 // 4.103 (Л-60): экзамен окончен — выход больше ничего не стоит
   const pct = E.ok / E.qs.length;
   const lvlKey = E.code;
   const passed = pct >= EXAM_PASS;
