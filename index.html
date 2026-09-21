@@ -344,7 +344,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v156';
+const APP_VERSION = 'v157';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -383,7 +383,23 @@ const APP_VERSION = 'v156';
     } catch(_) {}
   }
   window.addEventListener('error', function(e){ paint('ошибка выполнения', e && (e.error || e)); });
-  window.addEventListener('unhandledrejection', function(e){ paint('необработанный отказ', e); });
+  /* v157 (Л-61): отказ ФОНОВОГО запроса к модели — не падение приложения. Порция заданий
+     готовится в фоне, пока человек решает первые шаги; если ключ упёрся в лимит (429), обещание
+     отклонялось раньше, чем его кто-то ждал, и перехват закрывал работающий урок экраном
+     «не смогло запуститься». Сетевые и модельные отказы уходят в консоль: экран, которому
+     этот ответ нужен, сам покажет «Не получилось подготовить урок» с кнопкой «Повторить».
+     Настоящие ошибки кода по-прежнему рисуются — ради них перехват и стоит. */
+  var NET_FAIL = /^(HTTP \d{3}\b|KEY:|NO_KEY|GEMINI_FAIL|BAD_JSON|EMPTY|FEW_DRILLS|FEW_WORDS|NO_ITEMS)|AbortError|aborted|Failed to fetch|NetworkError|Load failed|network/i;
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e && e.reason;
+    var m = String((r && r.message) || r || '');
+    if ((r && r.name === 'AbortError') || NET_FAIL.test(m)) {
+      try { e.preventDefault(); } catch(_) {}
+      try { console.warn('[AILEX] фоновый запрос не удался:', m); } catch(_) {}
+      return;
+    }
+    paint('необработанный отказ', e);
+  });
   window.__crash = paint;                    // запуск зовёт его сам, когда ловит своё исключение
 
   /* 4.100 (Л-49) — ЗАПУСК ОТЧИТЫВАЕТСЯ ОТМЕТКАМИ ВРЕМЕНИ.
@@ -7761,6 +7777,10 @@ function fetchLessonChunk2(target) {
     fillMissingTranslit(constructs).catch(()=>{})
       .then(() => { try { if (typeof L !== 'undefined' && L === T) LessonCache.save(); } catch(_) {} });
   })().catch(e => { T.chunk2.state = 'error'; T.chunk2.err = e; throw e; });
+  /* v157 (Л-61): порция готовится в фоне, и ждать её может ещё никто не начать. Пустой
+     обработчик помечает отказ как замеченный; тот, кто позже ждёт порцию (ensureChunk2),
+     получает тот же отказ и показывает экран с «Повторить». */
+  T.chunk2.promise.catch(() => {});
   return T.chunk2.promise;
 }
 
