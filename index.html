@@ -273,6 +273,29 @@ a{color:var(--cyan)}
 .tapword:active{opacity:.55}
 .tapall{cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.2);transition:opacity .15s}
 .tapall:active{opacity:.55}
+/* 4.105 (QUEUE-300): сборка фразы из плашек. Плашка обязана показывать, что она нажимается:
+   без отклика набор слов читается как подпись, а не как кнопки. */
+.chips-task{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 12px;display:flex;flex-direction:column;gap:9px}
+.chips-task.chips-bad{border-color:rgba(255,138,60,.5)}
+.chips-task.chips-ok{flex-direction:row;align-items:center;gap:9px;padding:9px 12px;background:rgba(61,214,140,.07);border-color:rgba(61,214,140,.35)}
+.chips-tick{color:var(--ok);font-weight:700;flex:0 0 auto}
+.chips-done{flex:1 1 auto;color:var(--dim);font-size:14.5px;min-width:0}
+.chips-q{display:flex;align-items:flex-start;gap:8px;font-weight:600;font-size:15.5px;line-height:1.35}
+.chips-num{flex:0 0 20px;height:20px;border-radius:6px;background:var(--panel);border:1px solid var(--line);color:var(--faint);font-size:11px;display:grid;place-items:center;margin-top:1px}
+.chips-warn{margin-left:auto;color:var(--orange);font-weight:700}
+.chips-line{min-height:52px;background:var(--bg);border:1px dashed var(--line);border-radius:11px;padding:6px;display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start}
+.chips-line.is-bad{border-color:var(--orange)}
+.chips-empty{color:var(--faint);font-size:13.5px;padding:11px 6px}
+.chips-bank{display:flex;flex-wrap:wrap;gap:6px}
+.chips-reveal{display:flex;flex-direction:column;gap:3px;padding-left:28px}
+.chip{min-height:44px;padding:9px 13px;border-radius:11px;font-size:15.5px;font-family:inherit;color:var(--ink);cursor:pointer;
+  transition:border-color .15s ease,background .15s ease,transform .1s ease,box-shadow .15s ease}
+.chip-bank{background:var(--panel);border:1px solid var(--line)}
+.chip-line{background:#16243F;border:1px solid var(--blue)}
+.chip:hover:not(:disabled){border-color:var(--orange);transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,138,60,.14)}
+.chip:active:not(:disabled){transform:translateY(1px) scale(.98)}
+.chip:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.chip:disabled{cursor:default;opacity:.75}
 .chapter-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
 </style>
 </head>
@@ -321,7 +344,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v155';
+const APP_VERSION = 'v156';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -703,6 +726,18 @@ const UI_EXTRA = [
     'Уровень из-за них не понижен — эти темы приложение подтянет в уроках.',
     /* 4.93: корзина профилей. */
     'Недавно удалённые',
+    'Сборка из плашек',
+    'собери фразу',
+    'Соберите фразы на',
+    'Задания',
+    'Нажимайте слова ниже',
+    'Верный порядок:',
+    'Выделено слово, с которого порядок пошёл не так.',
+    'Верные свернулись. Осталось поправить:',
+    'Все фразы верны.',
+    'Верный порядок показан.',
+    'Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.',
+    'Соберите все фразы — потом проверка.',
     'Слова урока','Закрыть',
     'Не удалось открыть профиль',
     'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.',
@@ -1045,7 +1080,7 @@ const I18N = {
       'Если кнопки 🔊 молчат, нажмите — приложение произнесёт короткую фразу и покажет, что ответил синтезатор устройства.':'If the 🔊 buttons stay silent, tap here — the app will say a short phrase and show what the device synthesiser reported.',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
-      'Недавно удалённые':'Recently deleted','Слова урока':'Lesson words','Закрыть':'Close','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
+      'Недавно удалённые':'Recently deleted','Сборка из плашек':'Build from tiles','собери фразу':'build the phrase','Соберите фразы на':'Build the phrases in','Задания':'Tasks','Нажимайте слова ниже':'Tap the words below','Верный порядок:':'Correct order:','Выделено слово, с которого порядок пошёл не так.':'The highlighted word is where the order went wrong.','Верные свернулись. Осталось поправить:':'Correct ones collapsed. Left to fix:','Все фразы верны.':'All phrases are correct.','Верный порядок показан.':'The correct order is shown.','Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.':'Tap a word to put it in the line. Tap it in the line to send it back.','Соберите все фразы — потом проверка.':'Build all the phrases first, then check.','Слова урока':'Lesson words','Закрыть':'Close','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
       'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.':'A profile is kept for three days — you can restore it with all its progress, vocabulary and rules.',
       'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.':'The profile goes to the bin and is kept for three days — you can restore it with all its progress, vocabulary and rules at any time. After three days it is deleted for good.',
       'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over',
@@ -6833,10 +6868,14 @@ async function startLesson(code, _prefetch) {
      и тогда урок остаётся о 21 задании: молчащий диктант хуже отсутствующего. */
   const hasDictation = hasTTS(DB.profile.targetLang);
   const totalDrills  = hasDictation ? 22 : 21;
-  const drills = planDrillSteps(words, totalDrills);
-  drills.slice(0, 11).forEach(d => steps.push(d));
+  const drills = planDrillSteps(words, totalDrills, lvl);
+  /* 4.105: «Фразы на каждый день» встают после одиннадцатого ЗАДАНИЯ, а не шага: экран плашек
+     несёт несколько заданий сразу, и счёт по шагам сдвинул бы вставку. */
+  let _cut = drills.length, _acc = 0;
+  for (let k = 0; k < drills.length; k++) { _acc += (drills[k].tasks || 1); if (_acc >= 11) { _cut = k + 1; break; } }
+  drills.slice(0, _cut).forEach(d => steps.push(d));
   if (((parseCode(code)||{}).n || 1) % 2 === 1) steps.push({ t:'phrases' });   // повседневные выражения — через урок (4.14)
-  drills.slice(11).forEach(d => steps.push(d));
+  drills.slice(_cut).forEach(d => steps.push(d));
   steps.push({ t:'quest', n:`<span>Задание</span> 21/${totalDrills} · Final Challenge` });
   if (hasDictation) steps.push({ t:'dictation', n:`<span>Задание</span> 22/22` });
 
@@ -7604,9 +7643,9 @@ function fetchLessonChunk2(target) {
     const r2 = await Gemini.call({
       task:'generate_construction_drills', target_lang: langId(p.targetLang), native_lang: langId(p.nativeLang), cefr:lvl,
       topic:p.interests, lesson_words: words.map(cardForPrompt), known_vocab: known.slice(-60).map(dictForm), known_rules: (DB.rules||[]).map(r=>r.title).slice(-40), count:DRILL_ASK,
-      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + situationBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. РАЗБОР СЛОВ ЭТАЛОНА ЗДЕСЬ НЕ НУЖЕН (критично, 4.88): поле glossary НЕ заполняй и транскрипцию эталона не присылай — приложение собирает и то и другое отдельным запросом уже после открытия урока. Ответ должен содержать только сами задания: чем короче ответ, тем быстрее человек начнёт заниматься. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
+      rules:'Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ' + 'ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА (критично, 4.41): expected_target обязан быть предложением, которое носитель признает правильным. ' + 'Глагол ставится в нужное лицо и число («Thomas schickt», НЕ «Thomas schicken»), существительное получает свой артикль там, где язык его требует («das Magazin», НЕ «Magazin»). ' + 'Словарная форма глагола в эталоне ЗАПРЕЩЕНА, если фраза требует спряжения. Неграмотный эталон недопустим ни при каких условиях: приложение показывает его ученику как образец, и ученик запомнит ошибку как правило. ' + 'НАБОР СЛОВ-ОПОР приложение строит САМО, разбирая expected_target на слова, — поэтому слова окажутся у ученика ровно в тех формах, в каких стоят в эталоне. Это упражнение на ПОРЯДОК СЛОВ и структуру, а не на образование форм. ' + 'ФОРМУЛИРОВКУ ЗАДАНИЯ ЗАДАЁТ ПРИЛОЖЕНИЕ: поле instruction не используется, не пиши в него «переведите» — перевод уже дан в prompt_native, ученик только собирает. ' + lessonThemeBlock() + situationBlock() + taskLevelBlock(lvl) + 'СИММЕТРИЯ (критично): prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово задания ОБЯЗАНО присутствовать в эталоне и наоборот. Если в задании есть уточнение (на поезд, быстро, металл, очень) — оно ОБЯЗАНО быть в эталоне. Запрещено давать задание с деталью которой нет в эталоне. ПЕРЕВОД: на A1–A2 prompt_native переводи корректно по-русски сохраняя все смысловые слова. Служебные глаголы которые в русском опускаются (sein) — опускай. Порядок слов — русский. Если конструкция не переводится прямо — добавь пояснение в скобках. instruction — короткая внятная инструкция что сделать. ЧИСТОЕ УСЛОВИЕ (критично, 4.28): prompt_native — СТРОГО на native_lang, БЕЗ единого слова target_lang. ЗАПРЕЩЕНО оставлять в prompt_native непереведённые целевые слова (например «нужен рюкзак для Weltreise» — неверно; «нужен рюкзак для кругосветного путешествия» — верно) и ЗАПРЕЩЕНО помещать в prompt_native саму целевую фразу целиком. Целевые слова живут ТОЛЬКО в expected_target и glossary; условие — только перевод смысла на родной. КВОТА НОВОЙ ЛЕКСИКИ (критично, 4.28): expected_target строй из УЖЕ ИЗВЕСТНЫХ слов (known_vocab/lesson_words); НЕ БОЛЕЕ 1 нового слова (которого нет в known_vocab) на фразу. Если нового слова нет — тем лучше. Новое слово ОБЯЗАНО быть в glossary с переводом. РАЗБОР СЛОВ ЭТАЛОНА ЗДЕСЬ НЕ НУЖЕН (критично, 4.88): поле glossary НЕ заполняй и транскрипцию эталона не присылай — приложение собирает и то и другое отдельным запросом уже после открытия урока. Ответ должен содержать только сами задания: чем короче ответ, тем быстрее человек начнёт заниматься. ДОПУСТИМЫЕ ПОРЯДКИ СЛОВ (критично, 4.105): в accepted_orders перечисли ДРУГИЕ грамматически верные и естественные порядки ТЕХ ЖЕ САМЫХ слов, что в expected_target, — если язык их допускает (нем. «Ich kaufe heute die Skier» → [«Heute kaufe ich die Skier»]). Слова не добавлять, не убирать и не менять их формы; переставлять можно только их порядок. Сам expected_target в список не включай. Других верных порядков нет — пустой массив. Не больше трёх. Приложение даёт ученику собрать фразу из этих слов и засчитывает любой порядок из списка, поэтому пропущенный верный порядок означает, что ученику засчитают ошибку за правильный ответ. Также верни everyday_phrases — 3 разговорные фразы-клише по уровню CEFR, каждая: phrase + translit (родными буквами) + translation + when (когда говорят, на родном) + reply (ответная реплика если фраза предполагает ответ: {phrase, translit, translation}).'
     },
-    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока"}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки. Транскрипцию эталонов и разбор слов НЕ присылай: приложение добирает их отдельно.}');
+    '{"items":[{"instruction":"короткая инструкция что сделать на родном","prompt_native":"что именно сказать/перевести (на родном)","expected_target":"эталонная фраза на целевом, точно соответствующая prompt_native","focus_word":"слово урока","accepted_orders":["другой верный порядок тех же слов, если есть"]}] — ровно ' + DRILL_POOL + ' объектов,"everyday_phrases":[{"phrase":"фраза-клише на целевом","translit":"[транскрипция]","translation":"перевод","when":"когда употребляется (на родном)","reply":{"phrase":"ответная реплика на целевом если применимо, иначе null","translit":"[транскрипция ответа]","translation":"перевод ответа"}}] — 3 штуки. Транскрипцию эталонов и разбор слов НЕ присылай: приложение добирает их отдельно.}');
     /* 4.89: просим с запасом (DRILL_ASK), а берём сколько нужно. Добор существовал потому, что
        проверка уровня и починка эталонов выбрасывают часть заданий, и пул становился неполным —
        за этим следовал ЕЩЁ ОДИН запрос. Лишние задания в первом ответе стоят дёшево (токенов у
@@ -8053,7 +8092,10 @@ const LessonCache = {
    разные диапазоны (узнавание — раньше, сборка — позже, контекст — посередине, с перекрытием),
    и порядок получается сортировкой. Детерминированно: возврат к сохранённой точке даёт тот же
    урок. Профиль сложности сохраняется от простого к сложному, но блоками уже не идёт. */
-const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20] };
+const DRILL_SPAN = { recog: [1, 12], context: [2, 17], construct: [6, 20],
+  /* 4.105 (QUEUE-300): экраны плашек — в первой половине урока, письменные сборки — во второй.
+     Лестница внутри урока: узнал слово → собрал из готовых → написал сам. */
+  chips: [3, 10], constructLate: [11, 20] };
 /* 4.54 (QUEUE-161): фраз в порции 2 стало пятнадцать. Раньше их было девять, «слово в
    контексте» брало items[0..5], «сборка фразы» — items[0..8], и шесть фраз урока человек
    видел ДВАЖДЫ: сначала с пропуском, потом на сборку. Повтор одной и той же фразы в одном
@@ -8109,7 +8151,7 @@ function phraseTooThin(item, lvl){
   } catch(_) { return false; }
 }
 const DRILL_CORE_RULES = EXPLAIN_RULES + GRAMMAR_LIMIT_RULES + 'ДЛИНА И СВЯЗНОСТЬ ФРАЗЫ (критично, 4.85): expected_target — законченное осмысленное предложение, а не пара слов. На A0-A1 не меньше 4 слов, на A2 не меньше 5, на B1 и выше не меньше 6; верхний предел — 8 слов на A1, 10 на A2, 14 и больше на B1+. В КАЖДОЙ фразе обязана работать хотя бы одна служебная часть речи: предлог, союз, числительное или обстоятельство места либо времени («на станке», «в цехе», «сегодня», «шестьдесят штук», «потому что»). Именно они и тренируются: отдельно их не выучить. ФРАЗА ОСМЫСЛЕННА НА ОБОИХ ЯЗЫКАХ: prompt_native обязан быть нормальной фразой родного языка, какую человек действительно скажет. «Аппарат завершён», «Он инициирует процесс» — так не говорят; годится «Станок закончил работу», «Он запускает процесс на станке номер пять». Если из выданных слов осмысленной фразы не выходит, добавь известные ученику слова и служебные части, но не склеивай бессмыслицу. Задания на активное построение фраз родной→целевой (production). Запрещён обратный перевод. Каждое задание использует хотя бы одно слово урока. ЭТАЛОН — ЖИВАЯ ГРАМОТНАЯ ФРАЗА: expected_target обязан быть предложением, которое носитель признает правильным; глагол в нужном лице и числе, существительное со своим артиклем. ОДНО СЛОВО, А НЕ ДВА СОВПАВШИХ (критично, 4.72): если написание слова совпадает у РАЗНЫХ слов языка (нем. «Schleifen» — и «шлифование» от глагола, и «петли» во множественном числе; «See» — озеро и море), условие и эталон обязаны говорить об ОДНОМ И ТОМ ЖЕ. Взять в prompt_native одно значение, а в expected_target построить фразу по другому — значит объявить ошибкой верный ответ. Если развести значения в коротком задании нельзя, возьми другое слово. СИММЕТРИЯ: prompt_native и expected_target СТРОГО соответствуют друг другу — каждое смысловое слово условия обязано быть в эталоне и наоборот. ЧИСТОЕ УСЛОВИЕ: prompt_native строго на native_lang, без единого слова target_lang. GLOSSARY — КАЖДОЕ слово эталона в той форме, в какой оно стоит, включая служебные, каждое: слово + транскрипция родными буквами + перевод; у разделившегося глагола обе части отдельными объектами.';
-const DRILL_ITEM_SCHEMA = '{"items":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталонная фраза на целевом","expected_translit":"[транскрипция всей фразы родными буквами]","focus_word":"слово урока","glossary":[{"term":"слово из эталона в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}';
+const DRILL_ITEM_SCHEMA = '{"items":[{"instruction":"короткая инструкция на родном","prompt_native":"что сказать (на родном)","expected_target":"эталонная фраза на целевом","expected_translit":"[транскрипция всей фразы родными буквами]","focus_word":"слово урока","accepted_orders":["другой верный порядок тех же слов, если есть"],"glossary":[{"term":"слово из эталона в той же форме","translit":"[транскрипция этой формы]","translation":"перевод"}]}]}';
 const CONTEXT_OFFSET = 9;
 function drillItemAt(kind, i) {
   const arr = (L && L.constructs) || [];
@@ -8686,7 +8728,7 @@ function assignRecogWords(words, count) {
 }
 
 /* Построение 21 задания. Возвращает готовый список шагов с проставленной нумерацией. */
-function planDrillSteps(words, total) {
+function planDrillSteps(words, total, lvl) {
   /* 4.100 (Л-53): УЗНАТЬ — НЕ ТО ЖЕ, ЧТО НАПИСАТЬ ПО ПАМЯТИ.
      Решение Константина 13.09.2026. Живой прогон: `das Reiseziel` показано на экране «Новые
      слова» один раз, а вторым заданием урока приложение требует написать его по памяти, без
@@ -8698,20 +8740,54 @@ function planDrillSteps(words, total) {
      Поэтому первые два задания урока — всегда узнавание, где слово ВИДНО; задания на
      воспроизведение начинаются с третьего. Квоты и общее число заданий не меняются, меняется
      расстановка — та же правка, что в 4.47, только по другому основанию. */
-  const types = interleaveTypes({ recog: 5, context: 6, construct: 9 });
+  /* =====================================================================
+     4.105 (QUEUE-300) — СБОРКА ФРАЗЫ ИЗ ПЛАШЕК
+     Решение Константина 20.09.2026 (спека 4.104, раздел 5.AI). На A1 пять из девяти сборок
+     идут плашками: письмо на чужой раскладке ещё тяжело, а порядок слов уже можно строить.
+     Плашки собраны в два экрана — по три и по две фразы, одна проверка на экран: одна фраза
+     на весь экран давала слишком мало работы за нажатие. Общее число заданий не меняется —
+     экран из трёх фраз считается тремя заданиями, нумерация честная («Задания 5–7 / 22»).
+     Экраны плашек стоят в первой половине урока и никогда не подряд; письменные сборки —
+     во второй половине, когда слова уже несколько раз встречались.
+     A2 и выше пока без плашек: на A2 они нужны только на трудных конструкциях (рамка,
+     придаточное, инверсия), а признака «трудная конструкция» в задании ещё нет — это
+     следующий шаг. A0 устроен другим контрактом и сюда не входит.
+     ===================================================================== */
+  const chipsOn = (lvl === 'A1');
+  const types = chipsOn
+    ? interleaveTypes({ recog: 5, context: 6, chips: 2, constructLate: 4 })
+    : interleaveTypes({ recog: 5, context: 6, construct: 9 });
   for (let need = 0; need < 2; need++) {
     if (types[need] === 'recog') continue;
     const j = types.indexOf('recog', need + 1);
     if (j < 0) break;
     types.splice(j, 1); types.splice(need, 0, 'recog');
   }
+  /* Два экрана плашек не идут подряд: между ними обязано встать задание другого рода. */
+  for (let k = 1; k < types.length; k++) {
+    if (types[k] === 'chips' && types[k - 1] === 'chips') {
+      const j = types.findIndex((t, m) => m > k && t !== 'chips');
+      if (j > 0) { const x = types.splice(j, 1)[0]; types.splice(k, 0, x); }
+    }
+  }
   const recogWords = assignRecogWords(words, 5);
-  let ri = 0, ci = 0, bi = 0;
-  return types.map((t, i) => {
-    const num = '<span>Задание</span> ' + (i + 1) + '/' + total;
-    if (t === 'recog')   return { t: 'recog',     phase: 'Узнавание',        n: num, w: recogWords[ri++], pool: 'lesson' };
-    if (t === 'context') return { t: 'context',   phase: 'Слово в контексте', n: num, ci: ci++ };
-    return                      { t: 'construct', phase: 'Сборка фразы',      n: num, ci: bi++ };
+  const CHIPS_SIZES = [3, 2];               // пять фраз плашками: экран из трёх и экран из двух
+  let ri = 0, ci = 0, chipsIdx = 0, screen = 0, lateIdx = 5, task = 0;
+  return types.map((t) => {
+    if (t === 'chips') {
+      const size = CHIPS_SIZES[screen++] || 2;
+      const from = task + 1, to = task + size;
+      task = to;
+      const cis = []; for (let m = 0; m < size; m++) cis.push(chipsIdx++);
+      return { t: 'chips', phase: 'Сборка из плашек', n: '<span>Задания</span> ' + from + '–' + to + '/' + total,
+               cis: cis, tasks: size };
+    }
+    task++;
+    const num = '<span>Задание</span> ' + task + '/' + total;
+    if (t === 'recog')   return { t: 'recog',     phase: 'Узнавание',        n: num, w: recogWords[ri++], pool: 'lesson', tasks: 1 };
+    if (t === 'context') return { t: 'context',   phase: 'Слово в контексте', n: num, ci: ci++, tasks: 1 };
+    if (t === 'constructLate') return { t: 'construct', phase: 'Сборка фразы', n: num, ci: lateIdx++, tasks: 1 };
+    return                      { t: 'construct', phase: 'Сборка фразы',      n: num, ci: chipsIdx++, tasks: 1 };
   });
 }
 
@@ -9006,6 +9082,10 @@ function renderStep() {
       return drillConstruct(s);
     }
     return ensureChunk2().then(ok => { if (!ok) return; s.c = drillItemAt('construct', s.ci); if (s.c) drillConstruct(s); else { L.i++; renderStep(); } });
+  }
+  if (s.t==='chips') {                   // 4.105 (QUEUE-300): сборка фразы из плашек
+    if (L.constructs && L.constructs.length) return drillChips(s);
+    return ensureChunk2().then(ok => { if (ok) drillChips(s); });
   }
   if (s.t==='quest')     return runQuest({
       title:'Задание 21 · Интерактивный рассказ-квест',
@@ -10237,6 +10317,206 @@ function drillConstruct(s) {
     $('#check').textContent=I18N.t('Дальше'); $('#check').disabled=false;
     $('#check').onclick = () => { L.i++; renderStep(); };
   }
+}
+
+/* =====================================================================
+   4.105 (QUEUE-300) — СБОРКА ФРАЗЫ ИЗ ПЛАШЕК
+   Спека 4.104, раздел 5.AI; живой прототип принят Константином 20.09.2026.
+   • Ввод тапом: тап по слову внизу ставит его в строку, тап в строке — возвращает.
+   • До трёх фраз на экране и одна проверка на все: одна фраза на экран давала мало работы
+     за нажатие. Верные после проверки схлопываются в строку, раскрытыми остаются только
+     те, что надо поправить.
+   • Одна повторная попытка. После второй ошибки — верный порядок и выделенное первое
+     расхождение. Строку выводит код, сравнивая позиции, без обращения к модели и без
+     грамматических утверждений, которые код для 72 языков доказать не может.
+   • Проверка ПОЛНОСТЬЮ местная: вместе с заданием приходит СПИСОК допустимых порядков
+     (accepted_orders), потому что верных порядков бывает несколько, а сравнение с одним
+     эталоном забраковало бы верный ответ (4.101). Порядок с другим набором слов из списка
+     выбрасывается — модель могла прислать не перестановку, а другую фразу.
+   • Перевода отдельного слова во время сборки нет: тап занят постановкой, смысл фразы
+     стоит сверху. После проверки тап освобождается — собранная фраза ведёт себя как любой
+     верный ответ: слово открывает карточку, рядом динамик.
+   ===================================================================== */
+function chipsOrderKey(text){ return tokenize(String(text || '')).join(' '); }
+function chipsBag(text){ return tokenize(String(text || '')).slice().sort().join(' '); }
+
+function acceptedOrdersOf(c){
+  const base = String((c && c.expected_target) || '').trim();
+  const bag = chipsBag(base);
+  const out = [], seen = new Set();
+  [base].concat(Array.isArray(c && c.accepted_orders) ? c.accepted_orders : []).forEach(o => {
+    const k = chipsOrderKey(o);
+    if (!k || seen.has(k)) return;
+    if (chipsBag(o) !== bag) return;          // другой набор слов — это не перестановка
+    seen.add(k); out.push(String(o).trim());
+  });
+  return out;
+}
+
+/* Плашки строятся из эталона: слово — плашка, артикль держится одной плашкой со своим
+   существительным (4.55). Первое слово эталона пишется с заглавной только потому, что стоит
+   первым: если в другом допустимом порядке оно стоит в середине, берём написание оттуда
+   («Ich» → «ich» при «Heute kaufe ich …»), иначе на плашке останется ложная подсказка,
+   какое слово ставить первым. */
+function chipsFrom(expected, accepted){
+  const clean = x => x.replace(/^[«»"'(¿¡]+|[.,!?;:«»"')]+$/g, '');
+  const toks = String(expected || '').trim().split(/\s+/).map(clean).filter(Boolean);
+  const midForm = {};
+  (accepted || []).slice(1).forEach(o => {
+    String(o).trim().split(/\s+/).map(clean).filter(Boolean).forEach((w, i) => {
+      if (i > 0 && !midForm[norm(w)]) midForm[norm(w)] = w;
+    });
+  });
+  if (toks.length && midForm[norm(toks[0])]) toks[0] = midForm[norm(toks[0])];
+  const out = [];
+  for (let i = 0; i < toks.length; i++) {
+    const cur = toks[i], nxt = toks[i + 1];
+    let glued = false;
+    try { glued = !!nxt && articleSet().has(norm(cur)); } catch(_) {}
+    if (glued) { out.push({ show: cur + ' ' + nxt, tap: nxt }); i++; }
+    else out.push({ show: cur, tap: cur });
+  }
+  return out;
+}
+
+function chipsSentence(parts, expected){
+  const s = parts.join(' ').trim();
+  if (!s) return '';
+  const end = (String(expected || '').trim().match(/[.!?…]+$/) || ['.'])[0];
+  return s.charAt(0).toUpperCase() + s.slice(1) + end;
+}
+
+function drillChips(s) {
+  const items = (s.cis || []).map(i => drillItemAt('construct', i)).filter(Boolean);
+  if (!items.length) { L.i++; return renderStep(); }
+
+  const T = items.map(c => {
+    c.prompt_native = stripAnswerLeak(c.prompt_native, c.expected_target);
+    glossaryFromCore(c, 'expected_target');
+    const accepted = acceptedOrdersOf(c);
+    const chips = chipsFrom(c.expected_target, accepted);
+    let bank = shuffle(chips.map((_, i) => i));
+    /* Перемешанный набор не должен совпасть с ответом: иначе задание решается одним
+       проходом слева направо, без единой мысли о порядке. */
+    if (chips.length > 1 && bank.every((v, i) => v === i)) bank = bank.slice(1).concat(bank[0]);
+    return { c, accepted, chips, bank, placed: [], status: '', revealed: false, mark: -1, best: accepted[0] || c.expected_target };
+  });
+  const gloss = T.reduce((acc, x) => acc.concat(Array.isArray(x.c.glossary) ? x.c.glossary : []), []);
+  let attempt = 0, phase = 'input';
+
+  Screen.show(`
+    <div class="eyebrow">${tgtTag()}${esc(L.code)} · ${lbl('Сборка из плашек')}</div>
+    <div class="card">
+      <div class="drill-head"><span class="n">${s.n}</span><span class="ph">🧩 ${lbl('собери фразу')}</span></div>
+      <p class="note" style="margin:0 0 10px;color:var(--accent)">🎯 ${esc(t('Соберите фразы на') + ' ' + langName(DB.profile.targetLang) + ':')}</p>
+      <div id="chipsBox" style="display:flex;flex-direction:column;gap:12px"></div>
+      <p class="note" id="chipsHint" style="margin:10px 0 0"></p>
+      <div class="btn-row" style="margin-top:12px">
+        ${L.grammar ? `<button class="btn btn-ghost btn-ico" id="rule" title="Правило" aria-label="Правило">📐</button>` : ''}
+        ${WORDS_BTN}
+        <button class="btn btn-primary" id="check">${esc(t('Проверить'))}</button>
+      </div>
+    </div>`);
+  if (L.grammar) $('#rule').onclick = () => { L.hints++; showRulePopup(L.grammar); };
+  wireWordsBtn();
+
+  function taskHTML(x, k) {
+    const num = `<span class="chips-num">${k + 1}</span>`;
+    if (x.status === 'ok') {
+      const phrase = chipsSentence(x.placed.map(i => x.chips[i].show), x.c.expected_target);
+      return `<div class="chips-task chips-ok">
+          <span class="chips-tick" aria-hidden="true">✓</span>
+          <span class="chips-done target">${tapAllWordsHTML(phrase)}</span>${sayBtn(phrase)}
+        </div>`;
+    }
+    const bad = x.status === 'bad';
+    const line = x.placed.length
+      ? x.placed.map((ci, pos) => `<button type="button" class="chip chip-line" data-t="${k}" data-p="${pos}" ${x.revealed ? 'disabled' : ''}>${esc(x.chips[ci].show)}</button>`).join('')
+      : `<span class="chips-empty">${esc(t('Нажимайте слова ниже'))}</span>`;
+    const bank = (!x.revealed && x.bank.length)
+      ? `<div class="chips-bank">${x.bank.map(ci => `<button type="button" class="chip chip-bank" data-t="${k}" data-b="${ci}">${esc(x.chips[ci].show)}</button>`).join('')}</div>`
+      : '';
+    let reveal = '';
+    if (x.revealed) {
+      const words = String(x.best).trim().split(/\s+/);
+      const shown = words.map((w, i) => i === x.mark
+        ? `<b style="color:var(--orange);text-decoration:underline;text-decoration-thickness:2px">${esc(w)}</b>`
+        : esc(w)).join(' ');
+      reveal = `<div class="chips-reveal">
+          <div style="font-size:12px;color:var(--dim)">${esc(t('Верный порядок:'))}</div>
+          <div style="font-weight:600;font-size:16px">${shown} ${sayBtn(x.best)}</div>
+          <div style="font-size:13px;color:var(--orange)">${esc(t('Выделено слово, с которого порядок пошёл не так.'))}</div>
+        </div>`;
+    }
+    return `<div class="chips-task${bad ? ' chips-bad' : ''}">
+        <div class="chips-q">${num}<span>«${esc(x.c.prompt_native || '')}»</span>${bad ? '<span class="chips-warn" aria-hidden="true">!</span>' : ''}</div>
+        <div class="chips-line${bad ? ' is-bad' : ''}">${line}</div>
+        ${bank}${reveal}
+      </div>`;
+  }
+
+  function paint() {
+    const box = $('#chipsBox'); if (!box) return;
+    box.innerHTML = T.map(taskHTML).join('');
+    box.querySelectorAll('[data-b]').forEach(b => b.onclick = () => {
+      if (phase === 'done' || phase === 'answer') return;
+      const x = T[+b.dataset.t], ci = +b.dataset.b;
+      const at = x.bank.indexOf(ci); if (at < 0) return;
+      x.bank.splice(at, 1); x.placed.push(ci);
+      if (x.status === 'bad') x.status = '';
+      paint();
+    });
+    box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+      if (phase === 'done' || phase === 'answer') return;
+      const x = T[+b.dataset.t], pos = +b.dataset.p;
+      const ci = x.placed.splice(pos, 1)[0]; x.bank.push(ci);
+      if (x.status === 'bad') x.status = '';
+      paint();
+    });
+    attachTapAll(box, tapWordsFor(gloss));     // только у свёрнутых и показанных фраз: у плашек тап свой
+    const left = T.filter(x => x.status !== 'ok').length;
+    const hint = $('#chipsHint');
+    if (hint) hint.textContent =
+        phase === 'retry'  ? t('Верные свернулись. Осталось поправить:') + ' ' + left
+      : phase === 'done'   ? t('Все фразы верны.')
+      : phase === 'answer' ? t('Верный порядок показан.')
+      : t('Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.');
+    const btn = $('#check');
+    if (btn) btn.textContent = (phase === 'done' || phase === 'answer') ? t('Дальше') : t('Проверить');
+  }
+
+  $('#check').onclick = () => {
+    if (phase === 'done' || phase === 'answer') { L.i++; return renderStep(); }
+    if (T.some(x => x.status !== 'ok' && x.bank.length)) { toast(t('Соберите все фразы — потом проверка.'), true); return; }
+    attempt++;
+    T.forEach((x, k) => {
+      if (x.status === 'ok') return;
+      const mine = x.placed.map(i => x.chips[i].show).join(' ');
+      const key = chipsOrderKey(mine);
+      const ok = x.accepted.some(a => chipsOrderKey(a) === key);
+      x.status = ok ? 'ok' : 'bad';
+      if (attempt === 1) firstTry('st' + L.i + '_' + k, ok);
+      if (!ok && attempt >= 2) {
+        /* Ближайший из допустимых порядков — тот, с которым совпадает самое длинное начало:
+           расхождение показываем относительно того, что человек, видимо, и собирал. */
+        const u = tokenize(mine);
+        let best = x.accepted[0] || x.c.expected_target, bestLen = -1;
+        x.accepted.forEach(a => {
+          const v = tokenize(a); let n = 0;
+          while (n < u.length && n < v.length && u[n] === v[n]) n++;
+          if (n > bestLen) { bestLen = n; best = a; }
+        });
+        x.best = best; x.mark = Math.max(0, bestLen); x.revealed = true;
+        L.errors.construction++;
+        if (x.c.focus_word) { noteWordError(x.c.focus_word); scheduleRetry(x.c.focus_word); }
+      }
+    });
+    const left = T.filter(x => x.status === 'bad').length;
+    phase = left === 0 ? 'done' : (attempt >= 2 ? 'answer' : 'retry');
+    if (phase === 'done') { try { speak(chipsSentence(T[T.length - 1].placed.map(i => T[T.length - 1].chips[i].show), T[T.length - 1].c.expected_target), DB.profile.targetLang); } catch(_) {} }
+    paint();
+  };
+  paint();
 }
 
 /* =====================================================================
