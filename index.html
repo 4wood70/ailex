@@ -344,7 +344,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v158';
+const APP_VERSION = 'v159';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -754,7 +754,7 @@ const UI_EXTRA = [
     'Нажимайте слова ниже',
     'Верный порядок:',
     'Выделено слово, с которого порядок пошёл не так.',
-    'Верные свернулись. Осталось поправить:',
+    'Попробуйте ещё раз.',
     'Все фразы верны.',
     'Верный порядок показан.',
     'Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.',
@@ -1101,7 +1101,7 @@ const I18N = {
       'Если кнопки 🔊 молчат, нажмите — приложение произнесёт короткую фразу и покажет, что ответил синтезатор устройства.':'If the 🔊 buttons stay silent, tap here — the app will say a short phrase and show what the device synthesiser reported.',
       'Подсказки':'Hints','Справка':'Help','Экзамен':'Exam','Чекпойнт':'Checkpoint',
       'Ваша фраза…':'Your phrase…','Или напишите ответ…':'Or type your reply…','Поиск языка…':'Search language…',
-      'Недавно удалённые':'Recently deleted','Нет подключения к интернету':'No internet connection','Проверьте соединение и нажмите «Проверить ещё раз» — или продолжите урок позже: прогресс сохранится.':'Check your connection and tap “Check again” — or continue the lesson later: your progress is saved.','Сравните с правильным вариантом:':'Compare with the correct version:','Ответ не проверен — идём дальше.':'The answer was not checked — moving on.','Сборка из плашек':'Build from tiles','собери фразу':'build the phrase','Соберите фразы на':'Build the phrases in','Задания':'Tasks','Нажимайте слова ниже':'Tap the words below','Верный порядок:':'Correct order:','Выделено слово, с которого порядок пошёл не так.':'The highlighted word is where the order went wrong.','Верные свернулись. Осталось поправить:':'Correct ones collapsed. Left to fix:','Все фразы верны.':'All phrases are correct.','Верный порядок показан.':'The correct order is shown.','Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.':'Tap a word to put it in the line. Tap it in the line to send it back.','Соберите все фразы — потом проверка.':'Build all the phrases first, then check.','Слова урока':'Lesson words','Закрыть':'Close','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
+      'Недавно удалённые':'Recently deleted','Нет подключения к интернету':'No internet connection','Проверьте соединение и нажмите «Проверить ещё раз» — или продолжите урок позже: прогресс сохранится.':'Check your connection and tap “Check again” — or continue the lesson later: your progress is saved.','Сравните с правильным вариантом:':'Compare with the correct version:','Ответ не проверен — идём дальше.':'The answer was not checked — moving on.','Сборка из плашек':'Build from tiles','собери фразу':'build the phrase','Соберите фразы на':'Build the phrases in','Задания':'Tasks','Нажимайте слова ниже':'Tap the words below','Верный порядок:':'Correct order:','Выделено слово, с которого порядок пошёл не так.':'The highlighted word is where the order went wrong.','Попробуйте ещё раз.':'Try again.','Все фразы верны.':'All phrases are correct.','Верный порядок показан.':'The correct order is shown.','Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.':'Tap a word to put it in the line. Tap it in the line to send it back.','Соберите все фразы — потом проверка.':'Build all the phrases first, then check.','Слова урока':'Lesson words','Закрыть':'Close','Не удалось открыть профиль':'Could not open profile','осталось дней:':'days left:','Вернуть':'Restore','Профиль восстановлен ✓':'Profile restored ✓',
       'Профиль хранится три дня — можно вернуть со всем прогрессом, словарём и Сводом правил.':'A profile is kept for three days — you can restore it with all its progress, vocabulary and rules.',
       'Профиль уйдёт в корзину и будет храниться три дня — всё это время его можно вернуть со всем прогрессом, словарём и Сводом правил. Через три дня он удалится окончательно.':'The profile goes to the bin and is kept for three days — you can restore it with all its progress, vocabulary and rules at any time. After three days it is deleted for good.',
       'Имя':'Name','Возраст':'Age','Удалить профиль и начать заново':'Delete profile and start over',
@@ -7419,9 +7419,82 @@ function unknownTargetWords(text, words) {
    определители и соответствует ли фраза условию на родном. Запрос тот же самый и по-прежнему
    один на урок.
    ===================================================================== */
+/* =====================================================================
+   v159 — НЕМЕЦКИЕ ФОРМЫ, КОТОРЫЕ ЭТАЛОН НЕ ИМЕЕТ ПРАВА СОДЕРЖАТЬ, ЧИНИТ КОД
+   Прогон 24.09.2026, A1.1.01, дважды за день: эталон «Er wisse, ich komme» вместо «Er weiß,
+   dass ich komme». «wisse» — форма косвенной речи газетного стиля (Konjunktiv I), на A1 её
+   нет вовсе. Константин писал верное «Er weiß», получал ошибку, а образцом ему показывали
+   неграмотную фразу. Вычитка (4.92) эту пару пропустила — правило «формы глагола верны»
+   снова оказалось просьбой.
+   Проверяется это кодом без всякого понимания смысла: у набора глаголов форма на -e в
+   единственном числе не бывает изъявительной НИКОГДА (wisse, sei, könne, müsse, wolle,
+   dürfe, solle, möge), поэтому замена однозначна — нужно только лицо подлежащего: первое
+   местоимение в той же части предложения (до запятой). Нет местоимения — не трогаем:
+   «Sei vorsichtig!» — верное повелительное.
+   habe/werde сюда сознательно не входят: при «ich» это верные формы.
+   Второе — слияния предлога с артиклем (in das → ins, an dem → am …). В живой речи они
+   обязательны; раздельная форма верна только в придаточном («das Haus, in dem …»), поэтому
+   после запятой не трогаем.
+   Работает только для немецкого и до B1 включительно: на C1 косвенная речь законна.
+   ===================================================================== */
+const DE_KONJ1 = {
+  wisse:{ich:'weiß',  s3:'weiß'},  sei:{ich:'bin', s3:'ist'},   könne:{ich:'kann', s3:'kann'},
+  müsse:{ich:'muss',  s3:'muss'},  wolle:{ich:'will', s3:'will'}, dürfe:{ich:'darf', s3:'darf'},
+  solle:{ich:'soll',  s3:'soll'},  möge:{ich:'mag',  s3:'mag'}
+};
+const DE_FUSE = { 'in dem':'im', 'in das':'ins', 'an dem':'am', 'an das':'ans',
+                  'zu dem':'zum', 'zu der':'zur', 'von dem':'vom', 'bei dem':'beim' };
+function deFormsApply(cefr) {
+  try { return DB && DB.profile && DB.profile.targetLang === 'de' && !/^C/.test(String(cefr || curCefr() || '')); }
+  catch(_) { return false; }
+}
+function fixGermanForms(text, cefr) {
+  const src = String(text || '');
+  if (!src || !deFormsApply(cefr)) return src;
+  const keepCase = (orig, rep) => /^\p{Lu}/u.test(orig) ? rep.charAt(0).toUpperCase() + rep.slice(1) : rep;
+  // 1) Konjunktiv I → изъявительное; части предложения режем по знакам препинания
+  let out = src.split(/([,;:.!?]+)/).map(part => {
+    if (/^[,;:.!?]+$/.test(part)) return part;
+    const subj = (part.match(/(?:^|[^\p{L}])(ich|du|er|sie|es|man|wir|ihr)(?=[^\p{L}]|$)/iu) || [])[1];
+    const who = subj && subj.toLowerCase() === 'ich' ? 'ich' : 's3';
+    /* Нет местоимения — не трогаем: это может быть повелительное «Sei vorsichtig!», где «sei»
+       верно. du/wir/ihr в таблице нет — тоже не гадаем. */
+    if (!subj || /^(du|wir|ihr)$/i.test(subj)) return part;
+    return part.replace(/(^|[^\p{L}])(wisse|sei|könne|müsse|wolle|dürfe|solle|möge)(?=[^\p{L}]|$)/giu,
+      (m, pre, w) => pre + keepCase(w, DE_KONJ1[w.toLowerCase()][who]));
+  }).join('');
+  // 2) слияния предлога с артиклем — кроме придаточного после запятой
+  out = out.replace(/(^|[^,\s]\s+|^\s*)(in|an|zu|von|bei)\s+(dem|das|der)(?=\s+\p{L})/giu, (m, pre, pr, art) => {
+    const f = DE_FUSE[(pr + ' ' + art).toLowerCase()];
+    return f ? pre + keepCase(pr, f) : m;
+  });
+  return out;
+}
+/* Прогон по заданию целиком: эталон, варианты, каркас. Слово глоссария в старой форме
+   переименовывается, иначе тап по новой форме не найдёт карточку. Возвращает, было ли что. */
+function fixGermanItem(c, fields, cefr) {
+  if (!c || !deFormsApply(cefr)) return false;
+  let changed = false;
+  (fields || ['expected_target']).forEach(f => {
+    if (typeof c[f] !== 'string') return;
+    const v = fixGermanForms(c[f], cefr);
+    if (v !== c[f]) { c[f] = v; changed = true; }
+  });
+  ['accepted_answers', 'accepted_orders'].forEach(f => {
+    if (Array.isArray(c[f])) c[f] = c[f].map(x => typeof x === 'string' ? fixGermanForms(x, cefr) : x);
+  });
+  if (changed && Array.isArray(c.glossary)) c.glossary.forEach(g => {
+    const k = g && norm(g.term || '');
+    if (k && DE_KONJ1[k]) { g.term = DE_KONJ1[k].s3; g.translit = ''; }
+  });
+  if (changed) console.log('[AILEX] немецкие формы исправлены кодом:', c[(fields || ['expected_target'])[0]]);
+  return changed;
+}
+
 async function repairTargets(items, words) {
   const list = Array.isArray(items) ? items : [];
   if (!list.length) return list;
+  list.forEach(c => fixGermanItem(c));          // v159: до вычитки — она транскрибирует уже верную фразу
   /* 4.92: запрос уходит ВСЕГДА — вычитка нужна и тогда, когда код дефектов не нашёл.
      «He go train» кодом не ловится: согласование и предлоги для 72 языков он не проверяет. */
   const bad = [];
@@ -7583,6 +7656,7 @@ async function repairTargets(items, words) {
     });
     if (rewritten) console.log('[AILEX] вычитка переписала эталонов:', rewritten, 'из', list.length);
   } catch(e) { console.warn('repairTargets:', e && e.message); }
+  list.forEach(c => fixGermanItem(c));          // v159: и после — переписанный вычиткой эталон тоже
   return list;
 }
 
@@ -7642,6 +7716,7 @@ async function fetchReviewSentences(T, p, lvl) {
       rules: REVIEW_SENT_RULES
     }, REVIEW_SENT_SCHEMA);
     T.reviewDrills = (rv.items||[]).filter(i=>i.word && i.sentence);
+    T.reviewDrills.forEach(i => fixGermanItem(i, ['sentence'], lvl));   // v159
     await fillGlossaryGaps(T.reviewDrills, 'sentence');
   } catch(_) { T.reviewDrills = []; }
 }
@@ -10649,7 +10724,7 @@ function drillChips(s) {
     const left = T.filter(x => x.status !== 'ok').length;
     const hint = $('#chipsHint');
     if (hint) hint.textContent =
-        phase === 'retry'  ? t('Верные свернулись. Осталось поправить:') + ' ' + left
+        phase === 'retry'  ? t('Попробуйте ещё раз.')
       : phase === 'done'   ? t('Все фразы верны.')
       : phase === 'answer' ? t('Верный порядок показан.')
       : t('Нажмите слово — оно встанет в строку. Нажмите в строке — вернётся обратно.');
@@ -10668,6 +10743,18 @@ function drillChips(s) {
       const ok = x.accepted.some(a => chipsOrderKey(a) === key);
       x.status = ok ? 'ok' : 'bad';
       if (attempt === 1) firstTry('st' + L.i + '_' + k, ok);
+      /* v159: ВТОРАЯ ПОПЫТКА — С ЧИСТОЙ СТРОКИ. Прогон 24.09.2026: после первой ошибки все
+         плашки оставались в строке, набор внизу был пуст, подсказка «нажмите в строке —
+         вернётся» сменялась счётчиком. Экран выглядел застывшим: Константин пробовал тянуть
+         слова пальцем, а про тап-возврат ничего не говорило. Теперь неверная фраза целиком
+         возвращается в перемешанный набор и собирается заново тем же тапом, что и в первый
+         раз, — других действий знать не нужно. Заодно «Проверить» без пересборки больше
+         не сжигает вторую попытку: пустая строка не пропускает проверку. */
+      if (!ok && attempt === 1) {
+        let bank = shuffle(x.chips.map((_, i) => i));
+        if (x.chips.length > 1 && bank.every((v, i) => v === i)) bank = bank.slice(1).concat(bank[0]);
+        x.bank = bank; x.placed = [];
+      }
       if (!ok && attempt >= 2) {
         /* Ближайший из допустимых порядков — тот, с которым совпадает самое длинное начало:
            расхождение показываем относительно того, что человек, видимо, и собирал. */
@@ -10713,6 +10800,7 @@ async function validateScene(sc, p, cefr, mustUse) {
      то есть проверяет память на чужую формулировку вместо владения языком. Снимаем его на
      верхних ступенях независимо от того, прислала ли его модель. */
   if (cefr === 'C1' || cefr === 'C2') sc.scaffold = '';
+  fixGermanItem(sc, ['expected_target', 'scaffold', 'scene_text'], cefr);   // v159: Konjunktiv I, слияния
   await fillSceneWords(sc);                     // 4.70: тап по слову сцены отвечает локально
   sc = await fixPromptLanguage(sc, p);              // 4.70: условие — на родном языке
   sc = stripMustUseFromPrompt(sc, mustUse || []);   // 4.69: условие не называет требуемые слова
