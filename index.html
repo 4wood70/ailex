@@ -344,7 +344,7 @@ a{color:var(--cyan)}
    =================================================================== */
 "use strict";
 /* Версия сборки — должна совпадать с CACHE в sw.js. Показывается в шапке. */
-const APP_VERSION = 'v160';
+const APP_VERSION = 'v161';
 
 /* =====================================================================
    4.100 (Л-48) — ЧЁРНЫЙ ЭКРАН НЕ ИМЕЕТ ПРАВА МОЛЧАТЬ
@@ -2542,16 +2542,21 @@ const Gemini = {
     for (const m of order) {
       // до 3 попыток на модель: при 429 (лимит запросов) ждём и повторяем ту же модель
       for (let attempt = 0; attempt < 3; attempt++) {
+        /* 4.109 (v161): ТАЙМАУТ ОБЯЗАН ДОЖИТЬ ДО КОНЦА ОТВЕТА. Прежде таймер снимался, едва приходили
+           заголовки, а тело читалось уже без ограничения: соединение, замершее на середине ответа,
+           держало экран вечно — ровно то, от чего таймаут ставили в 4.64. Теперь он снимается
+           только когда попытка закончена целиком (finally ниже). */
+        let killer = null;
         try {
           const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-          const killer = ac ? setTimeout(() => { try { ac.abort(); } catch(_){} }, REQ_TIMEOUT) : null;
+          killer = ac ? setTimeout(() => { try { ac.abort(); } catch(_){} }, REQ_TIMEOUT) : null;
           let r;
-          try {
+          {
             r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`,
               Object.assign({ method:'POST', headers:{'Content-Type':'application/json'},
                               body: JSON.stringify(Object.assign({}, body, { generationConfig: cfgFor(m) })) },
                             ac ? { signal: ac.signal } : {}));
-          } finally { if (killer) clearTimeout(killer); }
+          }
           if (r.status === 400) {
             const j = await r.json().catch(()=>null);
             const why = this._why400(j);
@@ -2597,7 +2602,7 @@ const Gemini = {
         } catch(e) {
           if (String(e.message).startsWith('KEY:')) throw e;
           lastErr = e; break;
-        }
+        } finally { if (killer) clearTimeout(killer); }
       }
     }
     throw lastErr || new Error('GEMINI_FAIL');
@@ -3484,13 +3489,17 @@ const Core = {
   },
 
   // порция урока (раздел 5): 5 новых + 2 неправильных глагола, гарантированно
-  pickPortion(lvl){
+  /* 4.109 (v161): `skip` — слова, уже отданные другому собранному, но ещё не пройденному уроку
+     (LessonQueue.reserved). Слово помечается «выдано» только в конце урока, поэтому без резерва
+     два урока, собранные подряд, получали одну и ту же порцию. */
+  pickPortion(lvl, skip){
     try {
       const m = this.meta(); if (!m.closedDone) return null;
       const li = CORE_LEVELS.indexOf(CORE_LEVELS.includes(lvl) ? lvl : 'A1');
       const inVocab = new Set((DB.vocab||[]).map(w => norm(w.term)));
       const avail = f => this.list().filter(w => w.status === 'склад'
         && CORE_LEVELS.indexOf(w.cefr) <= li && !inVocab.has(norm(w.term)) && !isNonLexicalCode(w.term)
+        && !(skip && skip.has(norm(w.term)))
         && sayable(w) && f(w));
       /* 4.85 (Л-02): у слова должен быть хотя бы ОДИН способ произнесения — голос устройства
          или транскрипция родными буквами. Если языка нет у синтезатора, а транскрипция пуста
@@ -3595,7 +3604,7 @@ const GrammarCore = {
   /* Карта собрана по прежним правилам (например, с парадигмой, разрезанной по родам) —
      пересобрать один раз. Уроки, словарь и Свод правил не трогаются: меняется только карта тем. */
   needsRebuild(){
-    if (this._failed || !DB || !DB.profile) return false;
+    if (this._failed || this._rebuildFailed || !DB || !DB.profile) return false;   // 4.109: сбой пересборки — до следующего запуска
     if (DB.profile.cefr === 'A0') return false;
     const m = this.meta();
     if (!m.built) return false;
@@ -4026,6 +4035,12 @@ async function coreBuildScreen(next){
     // Сбой не критичен: остаётся прежняя карта, пересборку повторим при следующем запуске.
     try { await GrammarCore.rebuild(msg => Screen.loader(msg || 'Обновляю карту грамматики — это один раз…')); }
     catch(e){
+      /* 4.109 (v161): «ПОВТОРИМ ПРИ СЛЕДУЮЩЕМ ЗАПУСКЕ» ДОЛЖНО БЫТЬ ПРАВДОЙ. Сбой пересборки ничем
+         не помечался, а этот экран зовёт главное меню, которое первым делом снова спрашивает
+         `needsRebuild` — и получает «да». Меню и сборка вызывали друг друга без конца: без сети
+         приложение замирало намертво, при лимите ключа — крутило запросы и до меню не доходило.
+         Метка живёт до конца сеанса; флаги карты не трогаются, следующий запуск попробует снова. */
+      GrammarCore._rebuildFailed = true;
       if (String(e.message||'').startsWith('KEY:')) return keyWizard(true);
       toast('Карту грамматики обновим позже — занятия работают', true);
     }
@@ -6907,16 +6922,21 @@ async function startLesson(code, _prefetch) {
      записи, из которых словарная форма собирается вместе с артиклем. */
   const knownRecs = DB.vocab.slice(-300);
   let words;
+  /* 4.109 (v161): слова, занятые другим собранным уроком (запас, сборка в фоне, незавершённый
+     урок), в эту порцию не идут — иначе следующий урок повторяет набор предыдущего. */
+  const reservedTerms = LessonQueue.reserved(code);
+  const reservedSet = new Set(reservedTerms.map(x => norm(x)));
   // ИНТЕНСИВ: если есть импортированные, ещё не показанные слова — урок учит ИХ (а не генерирует посторонние)
-  const importedNew = DB.vocab.filter(w => w.source==='import' && (w.status==='новое') && w.seen!==true);
+  const importedNew = DB.vocab.filter(w => w.source==='import' && (w.status==='новое') && w.seen!==true
+                                           && !reservedSet.has(norm(w.term)));
   if (DB.intensive && importedNew.length >= 3) {
     words = importedNew.slice(0, 7);
   } else {
   // 4.26: порцию собирает ПРИЛОЖЕНИЕ из Ядра языка — без запроса к Gemini (раздел 5).
   // Выбор слов = методика, методика принадлежит приложению. Урок стартует мгновенно.
-  words = Core.pickPortion(lvl);
+  words = Core.pickPortion(lvl, reservedSet);
   if (!words) {                       // Ядро исчерпано или не построено → резервный путь
-    try { words = await legacyVocabPortion(p, lvl, survN, known); }
+    try { words = await legacyVocabPortion(p, lvl, survN, known.concat(reservedTerms)); }
     catch(e) {
       /* =====================================================================
          4.94 — ФОНОВАЯ ЗАГОТОВКА НЕ ВЫНОСИТ СВОИ СБОИ НА ЭКРАН
@@ -6934,6 +6954,7 @@ async function startLesson(code, _prefetch) {
   }
   }
 
+  if (_prefetch) LessonQueue._picked[code] = words;   // 4.109: порция фоновой сборки занята с этой секунды
   // --- Recap: до 7 задач повторения (спека 4.27: срочный слой → подошедшие по дате) ---
   const recapPool = [];
   // пункт 3: импортированные слова, ещё не показанные, не идут в повторение, пока не «увидены»
@@ -7044,16 +7065,49 @@ const LessonQueue = {
   DEPTH: 2,
   _ready: {},        // code → собранный урок
   _busy: {},         // code → идёт сборка
-  _key(){ return (DB.profile && DB.profile.id) || ''; },
+  _picked: {},       // code → порция слов урока, который собирается прямо сейчас (4.109)
+  /* 4.109 (v161): ЗАПАС ПРИНАДЛЕЖИТ ПРОФИЛЮ. Ключом был `DB.profile.id` — поля, которого в
+     профиле нет и не было: ключ всегда выходил пустым, запас не сбрасывался никогда, и урок,
+     собранный для одного профиля, открывался другому при совпадении кода урока. Метка
+     принадлежности у базы есть с 4.90 — `_pid`, её ставит хранилище при чтении и записи. */
+  _key(){ return (DB && DB._pid) || ''; },
   _owner: '',
-  _reset(){ const k = this._key(); if (k !== this._owner) { this._ready = {}; this._busy = {}; this._owner = k; } },
+  _reset(){ const k = this._key(); if (k !== this._owner) { this._ready = {}; this._busy = {}; this._picked = {}; this._owner = k; } },
   // 4.82: смена уровня в настройках — заготовленные уроки принадлежат прежнему уровню
-  clear(){ this._ready = {}; this._busy = {}; },
+  clear(){ this._ready = {}; this._busy = {}; this._picked = {}; },
+  /* 4.109 (v161): СЛОВА СОБРАННОГО УРОКА ЗАНЯТЫ, ПОКА УРОК НЕ ПРОЙДЕН.
+     Ядро помечает слово «выдано» в конце урока (finishLesson), а порцию выбирает по складу.
+     Два урока запаса собираются подряд при неизменном складе — и получали одни и те же семь
+     слов: следующий урок повторял только что выученное. Занятыми считаются слова готового
+     запаса, уроков в сборке, урока на экране и незавершённого урока в снимке — всех, кроме
+     самого урока `exceptCode`. */
+  reserved(exceptCode){
+    const out = [];
+    const add = ws => (Array.isArray(ws) ? ws : []).forEach(w => { if (w && w.term) out.push(String(w.term)); });
+    try {
+      this._reset();
+      Object.keys(this._ready).forEach(c => { if (c !== exceptCode) add(this._ready[c] && this._ready[c].words); });
+      Object.keys(this._picked).forEach(c => { if (c !== exceptCode) add(this._picked[c]); });
+      if (L && !L.isSuper && L.code !== exceptCode) add(L.words);
+      const snap = Episodes.latest('lesson');
+      if (snap && snap.code !== exceptCode) add(snap.words);
+    } catch(_) {}
+    return out;
+  },
   take(code){
     this._reset();
     const l = this._ready[code];
     if (!l) return null;
     delete this._ready[code];
+    /* 4.109: страховка поверх резерва — запас, чьи слова уже выучены другим уроком, не отдаётся. */
+    try {
+      const learned = new Set((DB.vocab||[]).filter(v => v && (v.lesson || (v.source === 'import' && v.seen === true)))
+                                             .map(v => norm(v.term)));
+      if ((l.words||[]).some(w => w && learned.has(norm(w.term)))) {
+        console.log('[AILEX] запас устарел (слова уже выучены) — пересобираем:', code);
+        return null;
+      }
+    } catch(_) {}
     /* Билд мог смениться, пока урок лежал в запасе: содержимое собрано прежней методикой.
        Тот же признак, что у снимка незавершённого урока (4.53). */
     if (l._contentBuild !== APP_VERSION) return null;
@@ -7079,15 +7133,22 @@ const LessonQueue = {
   async refill(){
     this._reset();
     if (!Storage.getKey()) return;               // без ключа фоновая сборка бессмысленна
+    const owner = this._key();
+    // 4.109: пройденный урок в запасе — мусор, и его слова не должны числиться занятыми
+    try { Object.keys(this._ready).forEach(c => { if (Episodes._isDone(c)) delete this._ready[c]; }); } catch(_) {}
     for (const code of this._codes()) {
+      if (this._key() !== owner) return;         // 4.109: профиль сменился — эта сборка больше не нужна
       if (this._ready[code] || this._busy[code]) continue;
       if (LessonCache.lesson(code)) continue;    // незавершённый урок важнее заготовки
       this._busy[code] = true;
       try {
         const l = await startLesson(code, true);
+        /* 4.109: сборка шла минуту-две; если за это время открыт другой профиль, готовый урок
+           принадлежит прежнему и в запас нового не кладётся. */
+        if (this._key() !== owner) { console.log('[AILEX] заготовка отброшена — профиль сменился:', code); return; }
         if (l) { this._ready[code] = l; console.log('[AILEX] урок заготовлен:', code); }
       } catch(e) { console.warn('[AILEX] заготовка не удалась:', code, e && e.message); }
-      finally { delete this._busy[code]; }
+      finally { if (this._key() === owner) { delete this._busy[code]; delete this._picked[code]; } }
     }
   }
 };
@@ -9817,10 +9878,41 @@ function editDistance(a, b) {
   return dp[m][n];
 }
 const tokenize = s => norm(s).replace(/[.,!?;:()«»"]/g,' ').split(/\s+/).filter(Boolean);
+/* =====================================================================
+   4.109 (v161) — НАДСТРОЧНЫЙ ЗНАК ПРОЩАЕТСЯ, НО НЕ МОЛЧА
+   `norm()` снимает диакритику: так задумано, чтобы человек без нужной раскладки не упирался в
+   стену. Но вместе с этим «konnte» и «könnte», «Apfel» и «Äpfel», «заика» и «зайка» становились
+   ТОЧНЫМ совпадением — без единого слова. В немецком умлаут различает число и наклонение, и
+   приложение молча подтверждало неверное написание как верное.
+   Правило то же, что у опечатки (4.84): ответ засчитывается, верное написание показывается.
+   Не считаются расхождением: регистр, «ё/е» (в русском «е» вместо «ё» — норма письма),
+   «ß/ss» (швейцарское написание), румынские ş/ș и ţ/ț (два кода одной буквы).
+   ===================================================================== */
+// слова как они написаны: то же деление, что у norm(), но регистр и диакритика сохранены
+function rawTokens(s){
+  return String(s || '').normalize('NFC').replace(/[.,!?;:«»"'’\-–—()]/g,' ').replace(/\s*\/\s*/g,'/')
+    .replace(/\s+/g,' ').trim().split(' ').filter(Boolean);
+}
+const diaFold = w => String(w || '').toLowerCase().normalize('NFC')
+  .replace(/ё/g,'е').replace(/ß/g,'ss').replace(/ş/g,'ș').replace(/ţ/g,'ț');
+// ответ совпал с эталоном, если не смотреть на надстрочные знаки → { got, exp }; иначе null
+function diacriticSlip(user, correct){
+  try {
+    const u = rawTokens(user), c = rawTokens(correct);
+    if (!u.length || u.length !== c.length) return null;
+    for (let i = 0; i < c.length; i++) if (norm(u[i]) !== norm(c[i])) return null;   // слова разные — не наш случай
+    for (let i = 0; i < c.length; i++) if (diaFold(u[i]) !== diaFold(c[i])) return { got: u[i], exp: c[i] };
+    return null;
+  } catch(_) { return null; }
+}
+function diacriticNoteHTML(slip){
+  return slip ? `<br><span style="color:var(--orange);font-size:13px">✍️ ${lbl('Верно, опечатка:')} <b>${esc(slip.exp)}</b></span>` : '';
+}
 // сравнить ответ с эталоном локально: 'exact' | 'typo' | 'article' | null(надо звать Gemini)
 function localVerdict(user, correct) {
   const u = tokenize(user), c = tokenize(correct);
-  if (u.join(' ') === c.join(' ')) return { kind:'exact' };
+  const sameOrSlip = () => { const ds = diacriticSlip(user, correct); return ds ? { kind:'typo', detail: ds, diacritic:true } : { kind:'exact' }; };
+  if (u.join(' ') === c.join(' ')) return sameOrSlip();
   /* Отличие только в артиклях (4.35). Условие «одинаковое число слов» снято: именно оно запирало
      ученика, который дописал артикль, пропущенный в эталоне («Der Motor startet nicht» против
      «Motor startet nicht»). Разводим два случая: ученик ДОБАВИЛ артикль, которого в эталоне нет,
@@ -9831,7 +9923,7 @@ function localVerdict(user, correct) {
     const uNoArt = u.filter(w=>!A.has(w)), cNoArt = c.filter(w=>!A.has(w));
     if (uNoArt.join(' ') === cNoArt.join(' ')) {
       const uArt = u.filter(w=>A.has(w)), cArt = c.filter(w=>A.has(w));
-      if (uArt.join(' ') === cArt.join(' ')) return { kind:'exact' };
+      if (uArt.join(' ') === cArt.join(' ')) return sameOrSlip();
       const kept = cArt.every(a => uArt.includes(a));
       if (kept && uArt.length > cArt.length) return { kind:'exact', added:true };
       const wrong = cArt.filter(a => !uArt.includes(a));
@@ -9852,7 +9944,10 @@ function localVerdict(user, correct) {
   // мелкая опечатка: те же слова, общее расстояние ≤2, и одинаковое число слов
   if (u.length === c.length) {
     let dist = 0, wrongPair = null;
-    for (let i=0;i<c.length;i++) { const d = editDistance(u[i], c[i]); dist += d; if (d>0 && !wrongPair) wrongPair = { got:u[i], exp:c[i] }; }
+    /* 4.109: в замечании слово показывается как пишется — с заглавной буквой и надстрочными
+       знаками. Раньше сюда шла нормализованная форма, и «правильно» выглядело как «madchen». */
+    const ur = rawTokens(user), cr = rawTokens(correct), rawOK = ur.length === u.length && cr.length === c.length;
+    for (let i=0;i<c.length;i++) { const d = editDistance(u[i], c[i]); dist += d; if (d>0 && !wrongPair) wrongPair = rawOK ? { got:ur[i], exp:cr[i] } : { got:u[i], exp:c[i] }; }
     if (dist > 0 && dist <= 2) return { kind:'typo', detail: wrongPair };
   }
   return null; // непонятно локально — спросим Gemini (смысл/синонимы)
@@ -10118,6 +10213,9 @@ function drillReviewContext(s, rd) {
     const typoOK  = !exactOK && (editDistance(norm(a),norm(answer))<=1
             || norm(a).length > 3 && editDistance(norm(a), norm(fullSentence)) <= 1
             || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1));
+    /* 4.109: совпало всё, кроме надстрочного знака, — засчитано, но написание показываем. */
+    const diaSlip = !exactOK ? null : (diacriticSlip(a, answer) || diacriticSlip(a, w.term) || diacriticSlip(a, fullSentence)
+            || (extracted !== null ? diacriticSlip(extracted, answer) : null));
     let ok = !apoMiss && (exactOK || typoOK);
     /* 4.56: локальное сравнение строк — не приговор. Ответ пишется целиком, поэтому верный
        синоним или иной порядок слов сравнение не признаёт; и наоборот, ошибка в роде («Das
@@ -10149,10 +10247,11 @@ function drillReviewContext(s, rd) {
     if (ok) {
       /* 4.84: фразу ученика показываем образцом только когда в ней нечего править. С опечаткой
          образцом идёт эталон — иначе приложение само предъявит неверное написание как верное. */
-      const shown = typoOK ? fullSentence : shownSentence(a, fullSentence, res);   // 4.57 (QUEUE-179)
+      const shown = (typoOK || diaSlip) ? fullSentence : shownSentence(a, fullSentence, res);   // 4.57 (QUEUE-179)
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (typoOK ? `<br><span style="color:var(--orange);font-size:13px">✍️ ${lbl('Верно, опечатка:')} ${highlightDiff(a, fullSentence)}</span>` : '')
+        + diacriticNoteHTML(diaSlip)
         + noteForAnswer(res, a, fullSentence);     // 4.100 (Л-54): замечание не к своему же эталону
       attachTapAll($('#fb'), tapWordsFor(rd.glossary));
       speak(shown, DB.profile.targetLang);
@@ -10278,6 +10377,9 @@ function drillContext(s) {
     const typoOK  = !exactOK && (editDistance(norm(a),norm(answer))<=1
             || norm(a).length > 3 && editDistance(norm(a), norm(fullSentence)) <= 1
             || (extracted !== null && editDistance(norm(extracted), norm(answer)) <= 1));
+    /* 4.109: совпало всё, кроме надстрочного знака, — засчитано, но написание показываем. */
+    const diaSlip = !exactOK ? null : (diacriticSlip(a, answer) || diacriticSlip(a, dictWord) || diacriticSlip(a, fullSentence)
+            || (extracted !== null ? diacriticSlip(extracted, answer) : null));
     let ok = !apoMiss && (exactOK || typoOK || (!grammarKnown && rootMatch));
     /* 4.56: локальное сравнение строк — не приговор. Ответ пишется целиком, поэтому верный
        синоним или иной порядок слов сравнение не признаёт; и наоборот, ошибка в роде («Das
@@ -10313,10 +10415,11 @@ function drillContext(s) {
          точным, чем эталон, — и тут же под ним стояло «Ich entriegele Fronttür.» без артикля.
          Эталон уместен только когда вписано одно пропущенное слово: тогда фразы ученика просто
          нет. То же правило, что в «сборке фразы» с 4.54. */
-      const shown = typoOK ? fullSentence : shownSentence(a, fullSentence, res);   // 4.84
+      const shown = (typoOK || diaSlip) ? fullSentence : shownSentence(a, fullSentence, res);   // 4.84
       $('#fb').className='feedback ok';
       $('#fb').innerHTML = `✅ <span class="target">${tapAllWordsHTML(shown)}</span>` + sayBtn(shown)
         + (typoOK ? `<br><span style="color:var(--orange);font-size:13px">✍️ ${lbl('Верно, опечатка:')} ${highlightDiff(a, fullSentence)}</span>` : '')
+        + diacriticNoteHTML(diaSlip)
         + noteForAnswer(res, a, fullSentence);     // 4.100 (Л-54): замечание не к своему же эталону
       attachTapAll($('#fb'), tapWordsFor(item.glossary));
       speak(shown, DB.profile.targetLang);
@@ -10382,7 +10485,8 @@ function drillWrite(s) {
     if (!mustRetype) firstTry(key, ok, 'writing');
     if (ok) {
       $('#fb').className='feedback ok';
-      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term);
+      $('#fb').innerHTML = `✅ Верно: <b>${esc(w.term)}</b> <span style="color:var(--orange)">${esc(showTranslit(w.translit))}</span>` + sayBtn(w.term)
+        + diacriticNoteHTML(diacriticSlip(a, w.term));   // 4.109: надстрочный знак — засчитано, но показано
       speak(w.term, DB.profile.targetLang);
       $('#check').textContent = I18N.t('Дальше');
       $('#check').onclick = () => { L.i++; renderStep(); };
@@ -10514,7 +10618,10 @@ function drillConstruct(s) {
     if (answersListOf(c).some(alt => { const va = localVerdict(a, alt); return va && va.kind === 'exact'; })) {
       firstTry(key, true, 'writing'); return passOK(null, a);
     }
-    const v = localVerdict(a, correctForm);
+    /* 4.109: ответ совпал с одним из вариантов с точностью до надстрочного знака — тот же
+       разговор, что с эталоном: засчитано, написание показано. */
+    const vAlt = answersListOf(c).map(alt => localVerdict(a, alt)).find(x => x && x.kind === 'typo' && x.diacritic) || null;
+    const v = localVerdict(a, correctForm) || vAlt;
     if (v && v.kind==='exact') { firstTry(key, true, 'writing'); return passOK(null, a); }
     if (v && v.kind==='typo') { firstTry(key, true, 'writing');
       return passOK({ note:`Верно, маленькая опечатка: правильно «${v.detail.exp}», вы написали «${v.detail.got}».` }); }
@@ -11164,7 +11271,7 @@ async function runQuest(cfg) {
         if (norm(a) === norm(correctForm) || (vr && (vr.kind==='exact'||vr.kind==='typo'||vr.kind==='article'))) return pass();
         $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
       }
-      if (correctForm && norm(a) === norm(correctForm)) return pass();
+      if (correctForm && norm(a) === norm(correctForm) && !diacriticSlip(a, correctForm)) return pass();   // 4.109
       // локальная человечная проверка: опечатка / только артикль — засчитываем
       if (correctForm) {
         const v = localVerdict(a, correctForm);
@@ -11258,7 +11365,11 @@ const DIAG_TYPES  = ['recognition','spelling','verb_conjugation','word_order','v
 const DIAG_TRENDS = ['improving','stable','declining'];
 
 async function finishLesson() {
-  LessonCache.clearLesson(L.code);   // урок завершён — снимок больше не нужен
+  /* 4.109 (v161): СНАЧАЛА ЗАПИСЬ, ПОТОМ СЕТЬ. Снимок урока стирался первой строкой, затем шёл
+     запрос диагностики к модели (до десятков секунд при лимите ключа), и только после него
+     результат ложился в базу. Закрытое в эти секунды приложение теряло урок целиком: снимка
+     уже нет, записи ещё нет. Теперь итог пишется в базу сразу, снимок снимается после записи,
+     а диагностика идёт последней и лишь дополняет сохранённое. */
   const acc = L.ft.total ? +(L.ft.ok / L.ft.total).toFixed(2) : 1;
   // QUEUE-62: сравниваем с последним замером, а не с последней записью: разговор точности не даёт.
   const scoredPrev = DB.analytics.filter(x => typeof x.accuracy_first_try === 'number');
@@ -11307,18 +11418,10 @@ async function finishLesson() {
     }
   });
 
-  // --- 2) Диагностика (Gemini, строго из словаря категорий) ---
-  Screen.loader('Сохраняю и анализирую урок…');
+  // --- 2) Диагностика — ниже, после записи (4.109) ---
   let diag = null;
-  try {
-    const d = await Gemini.call({ task:'diagnose', native_lang: langId(DB.profile.nativeLang), cefr:curCefr(),
-      summary:{ accuracy_first_try:acc, errors_by_type:L.errors, hard_words:hard, prev_accuracy:prev } },
-      '{"dominant_error_type":"recognition|spelling|verb_conjugation|word_order|vocabulary_gap|none","risk_words":["..."],"confidence_trend":"improving|stable|declining","note_native":"1 короткое предложение на родном языке"}');
-    if (DIAG_TYPES.includes(d.dominant_error_type) && DIAG_TRENDS.includes(d.confidence_trend)) diag = d;
-  } catch(e){} // откат к чистым метрикам — обучение не блокируется
 
   // --- 3) Действие: жёсткие правила в коде ---
-  (diag?.risk_words||[]).forEach(t => { if (DB.vocab.some(v=>norm(v.term)===norm(t)) && !DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
   let next = nextAfterLesson(L.code), note = 'PASS';
   if (acc < 0.70) {                                   // слабый результат: идём дальше, но усиливаем повторение
     note = 'REVIEW';
@@ -11335,10 +11438,29 @@ async function finishLesson() {
   DB.nextStage = next;
   DB.profile.cefr = parseCode(next.startsWith('EXAM_') ? next.replace('EXAM_','')+'.01' : next)?.lvl || DB.profile.cefr;
   Storage.save(DB);
+  LessonCache.clearLesson(L.code);   // 4.109: итог записан — только теперь снимок больше не нужен
   toast('Сохранено ✓');
 
+  const code = L.code, hintsUsed = L.hints, dict = L.dictation || null;
+  const diagAsk = { task:'diagnose', native_lang: langId(DB.profile.nativeLang), cefr:curCefr(),
+      summary:{ accuracy_first_try:acc, errors_by_type:L.errors, hard_words:hard, prev_accuracy:prev } };
+  const mineDB = DB;
+  L = null;
+  // --- 2) Диагностика (Gemini, строго из словаря категорий) — урок уже сохранён ---
+  Screen.loader('Сохраняю и анализирую урок…');
+  try {
+    const d = await Gemini.call(diagAsk,
+      '{"dominant_error_type":"recognition|spelling|verb_conjugation|word_order|vocabulary_gap|none","risk_words":["..."],"confidence_trend":"improving|stable|declining","note_native":"1 короткое предложение на родном языке"}');
+    if (DIAG_TYPES.includes(d.dominant_error_type) && DIAG_TRENDS.includes(d.confidence_trend)) diag = d;
+  } catch(e){} // откат к чистым метрикам — обучение не блокируется
+  if (DB !== mineDB) return;          // за время запроса открыт другой профиль — дописывать некуда
+  if (diag && Array.isArray(diag.risk_words) && diag.risk_words.length) {
+    diag.risk_words.forEach(t => { if (DB.vocab.some(v=>norm(v.term)===norm(t)) && !DB.reviewQueue.includes(t)) DB.reviewQueue.push(t); });
+    try { Storage.save(DB); } catch(_) {}
+  }
+  if (!Screen.isLoader()) return;     // человек ушёл с экрана ожидания — итог не навязываем, урок сохранён
+
   // --- завершающий экран (5.1): простая фраза, крупные кнопки ---
-  const code = L.code, hintsUsed = L.hints, dict = L.dictation || null; L = null;
   /* 4.81 (QUEUE-252): урок пройден, курс сдвинулся — собираем запас под новый рубеж, пока
      человек читает итоги. `L` уже снят, гонки нет по построению. */
   try { if (!Gemini.rateLimited()) LessonQueue.refill(); } catch(_) {}   // 4.99 (Л-45): заготовка уступает лимит
@@ -11860,11 +11982,24 @@ const CardCache = {
   _mem: new Map(),
   _fly: new Map(),                           // запросы в полёте: два нажатия подряд не дают двух запросов
   _fix: new Map(),                           // починка на карточку — одна за сеанс, обещание переиспользуется
+  /* 4.109 (v161): ПАМЯТЬ СЕАНСА ПРИНАДЛЕЖИТ ПРОФИЛЮ. Ключ карточки — «изучаемый язык | слово»,
+     без родного языка, а память сеанса при смене профиля не чистилась: после профиля
+     «русский → немецкий» профиль «английский → немецкий» получал в том же сеансе карточки с
+     русским переводом. Хранимые карточки (`DB.cards`) лежат в базе своего профиля и были в
+     порядке; чинится только общая память: сменился профиль — она пуста. Запрос, начатый при
+     прежнем профиле, в базу нового не пишется. */
+  _own: '',
+  _pidNow(){ return (DB && DB._pid) || ''; },
+  _sync(){
+    const p = this._pidNow();
+    if (p !== this._own) { this._mem = new Map(); this._fly = new Map(); this._fix = new Map(); this._own = p; }
+  },
   key(tok){
     const lang = (DB && DB.profile && DB.profile.targetLang) || '';
     return lang + '|' + norm(stripArtG(tok));
   },
   get(tok){
+    this._sync();
     const k = this.key(tok);
     if (this._mem.has(k)) return this._mem.get(k);
     try {
@@ -11911,6 +12046,7 @@ const CardCache = {
   put(tok, card){
     if (!card) return card;
     if (this.contextBound(tok, card)) return card;
+    this._sync();
     const k = this.key(tok);
     this._mem.set(k, card);
     try {
@@ -11945,6 +12081,8 @@ const CardCache = {
      началась при отрисовке задания, за десятки секунд до нажатия. */
   _repair(card, tok, sentence){
     if (!card || card.mv >= TAP_CARD_V || card.unverified) return null;
+    this._sync();
+    const own = this._pidNow();
     const k = this.key(tok);
     if (this._fix.has(k)) return this._fix.get(k);
     /* 4.75: чинить надо то, чего не хватает. Дозапрос всегда шёл в режиме `termtr` —
@@ -11961,7 +12099,7 @@ const CardCache = {
                   && norm(card.term_translation) === norm(card.translation)) ? 'ctx'
                : 'termtr';
     const pr = fetchWordCard(tok, sentence, mode)
-      .then(c => (c && c.mv >= TAP_CARD_V) ? this.put(tok, c) : null)
+      .then(c => (c && c.mv >= TAP_CARD_V && this._pidNow() === own) ? this.put(tok, c) : null)
       .catch(() => null);
     this._fix.set(k, pr);
     return pr;
@@ -11971,11 +12109,13 @@ const CardCache = {
     if (hit) return (hit.mv >= TAP_CARD_V) ? hit : ((await this._repair(hit, tok, sentence)) || hit);
     const k = this.key(tok);
     if (this._fly.has(k)) return await this._fly.get(k);
+    const own = this._pidNow();
     const pr = (async () => {
       const loc = this.fromVocab(tok);
       if (loc) return this.put(tok, loc);
       const card = await fetchWordCard(tok, sentence);
       if (!card) return card;
+      if (this._pidNow() !== own) return card;     // 4.109: профиль сменился — в чужую базу не пишем
       this.put(tok, card);
       return (await this._repair(card, tok, sentence)) || card;
     })();
@@ -13289,7 +13429,7 @@ async function runSuperquestAct(cfg) {
         if (norm(a) === norm(correctForm) || (vr && (vr.kind==='exact'||vr.kind==='typo'||vr.kind==='article'))) return pass();
         $('#fb').className='feedback bad'; $('#fb').innerHTML=`Введите точно: <b>${esc(correctForm)}</b>`; return;
       }
-      if (correctForm && norm(a) === norm(correctForm)) return pass();
+      if (correctForm && norm(a) === norm(correctForm) && !diacriticSlip(a, correctForm)) return pass();   // 4.109
       // локальная человечная проверка: опечатка / только артикль — засчитываем
       if (correctForm) {
         const v = localVerdict(a, correctForm);
